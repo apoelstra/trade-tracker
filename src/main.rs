@@ -126,8 +126,10 @@ fn main() -> Result<(), anyhow::Error> {
             data_path.pop();
         }
         Command::UpdatePriceData { url } => {
+            data_path.push("pricedata");
             let mut history =
                 Historic::read_json_from(&data_path, "2020").context("reading price history")?;
+            data_path.pop();
             let data = reqwest::blocking::get(&url)
                 .with_context(|| format!("getting data from {}", url))?;
             history
@@ -196,7 +198,8 @@ fn main() -> Result<(), anyhow::Error> {
                 strike.to_f64().unwrap(),
                 0.04f64, // risk free rate
                 years,
-            ).unwrap();
+            )
+            .unwrap();
             println!("Implied volatility: {} %", 100.0 * vol);
         }
         Command::PricePut {
@@ -246,7 +249,8 @@ fn main() -> Result<(), anyhow::Error> {
                 strike.to_f64().unwrap(),
                 0.04f64, // risk free rate
                 years,
-            ).unwrap();
+            )
+            .unwrap();
             println!("Implied volatility: {} %", 100.0 * vol);
         }
     }

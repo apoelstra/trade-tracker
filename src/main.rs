@@ -33,7 +33,8 @@ fn from_date(s: &str) -> Result<time::Date, anyhow::Error> {
 }
 
 fn from_datetime(s: &str) -> Result<time::PrimitiveDateTime, anyhow::Error> {
-    time::PrimitiveDateTime::parse(s, "%F %T").or(from_date(s).map(|d| d.midnight()))
+    time::PrimitiveDateTime::parse(s, "%F %T")
+        .or(from_date(s).map(|d| d.with_time(time::time!(21:00))))
 }
 
 fn from_offset_datetime(s: &str) -> Result<time::OffsetDateTime, anyhow::Error> {

@@ -133,12 +133,27 @@ impl Historic {
 
     /// Reads all price records from cache
     pub fn read_json<P: AsRef<Path>>(datadir: P) -> Result<Self, anyhow::Error> {
+        Historic::read_json_from(datadir, "")
+    }
+
+    /// Reads all price records from cache, starting from files
+    /// whose name is >= the given `min_date``
+    pub fn read_json_from<P: AsRef<Path>>(
+        datadir: P,
+        min_date: &str,
+    ) -> Result<Self, anyhow::Error> {
         let mut new = Historic::default();
         for file in fs::read_dir(datadir).context("opening pricedata directory")? {
-            let input = fs::File::open(file.context("getting file path")?.path()).context("opening json file")?;
-            let prices: Vec<BitcoinPrice> = serde_json::from_reader(input).context("decoding json")?;
-            for price in prices {
-                new.record(price);
+            let filepath = file.context("getting file path")?.path();
+            let filename = filepath.to_string_lossy();
+
+            if filename.rsplit('/').next() >= Some(min_date) {
+                let input = fs::File::open(filepath).context("opening json file")?;
+                let prices: Vec<BitcoinPrice> =
+                    serde_json::from_reader(input).context("decoding json")?;
+                for price in prices {
+                    new.record(price);
+                }
             }
         }
         Ok(new)
@@ -156,9 +171,12 @@ impl Historic {
                 if last_year_mo > 0 {
                     datadir.push(format!("{:06}.json", last_year_mo));
                     serde_json::to_writer(
-                        io::BufWriter::new(fs::File::create(&datadir).context("creating json file")?),
+                        io::BufWriter::new(
+                            fs::File::create(&datadir).context("creating json file")?,
+                        ),
                         &mo_entries,
-                    ).context("writing json")?;
+                    )
+                    .context("writing json")?;
                     datadir.pop();
                 }
                 mo_entries.clear();
@@ -173,7 +191,8 @@ impl Historic {
             serde_json::to_writer(
                 io::BufWriter::new(fs::File::create(&datadir).context("creating json file")?),
                 &mo_entries,
-            ).context("writing json")?;
+            )
+            .context("writing json")?;
             datadir.pop();
         }
 

@@ -64,7 +64,40 @@ enum Command {
         expiry: time::OffsetDateTime,
         /// Assumed BTC price volatility
         #[clap(long, short)]
-        volatility: f32,
+        volatility: f64,
+    },
+    ImpliedVolatilityCall {
+        #[clap(long, short)]
+        /// Strike price of the proposed call option
+        strike: Decimal,
+        /// Expiry date of the proposed call option
+        #[clap(long, short, parse(try_from_str = from_offset_datetime))]
+        expiry: time::OffsetDateTime,
+        /// Price
+        #[clap(long, short)]
+        price: Decimal,
+    },
+    PricePut {
+        #[clap(long, short)]
+        /// Strike price of the proposed call option
+        strike: Decimal,
+        /// Expiry date of the proposed call option
+        #[clap(long, short, parse(try_from_str = from_offset_datetime))]
+        expiry: time::OffsetDateTime,
+        /// Assumed BTC price volatility
+        #[clap(long, short)]
+        volatility: f64,
+    },
+    ImpliedVolatilityPut {
+        #[clap(long, short)]
+        /// Strike price of the proposed call option
+        strike: Decimal,
+        /// Expiry date of the proposed call option
+        #[clap(long, short, parse(try_from_str = from_offset_datetime))]
+        expiry: time::OffsetDateTime,
+        /// Price
+        #[clap(long, short)]
+        price: Decimal,
     },
 }
 
@@ -129,18 +162,92 @@ fn main() -> Result<(), anyhow::Error> {
             let now = time::OffsetDateTime::now_utc();
             let current_price = history.price_at(now);
             println!("Using price: {}", current_price);
+            println!("Using risk-free-rate: 4% (assumed)");
 
             let years: f64 = (expiry - now) / time::Duration::days(365);
-            let price = black_scholes_pricer::bs_single::bs_price(
-                black_scholes_pricer::OptionDir::CALL,
-                current_price.btc_price.to_f32().unwrap(),
-                strike.to_f32().unwrap(),
-                years as f32,
-                1.04f32, // risk free rate
+            let price = black_scholes::call(
+                current_price.btc_price.to_f64().unwrap(),
+                strike.to_f64().unwrap(),
+                0.04f64, // risk free rate
                 volatility,
-                0.0, // lol bitcoin
+                years,
             );
             println!("Price: {}", price);
+        }
+        Command::ImpliedVolatilityCall {
+            strike,
+            expiry,
+            price,
+        } => {
+            data_path.push("pricedata");
+            let history =
+                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            data_path.pop();
+
+            let now = time::OffsetDateTime::now_utc();
+            let current_price = history.price_at(now);
+            println!("Using price: {}", current_price);
+            println!("Using risk-free-rate: 4% (assumed)");
+
+            let years: f64 = (expiry - now) / time::Duration::days(365);
+            let vol = black_scholes::call_iv(
+                price.to_f64().unwrap(),
+                current_price.btc_price.to_f64().unwrap(),
+                strike.to_f64().unwrap(),
+                0.04f64, // risk free rate
+                years,
+            ).unwrap();
+            println!("Implied volatility: {} %", 100.0 * vol);
+        }
+        Command::PricePut {
+            strike,
+            expiry,
+            volatility,
+        } => {
+            data_path.push("pricedata");
+            let history =
+                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            data_path.pop();
+
+            let now = time::OffsetDateTime::now_utc();
+            let current_price = history.price_at(now);
+            println!("Using price: {}", current_price);
+            println!("Using risk-free-rate: 4% (assumed)");
+
+            let years: f64 = (expiry - now) / time::Duration::days(365);
+            let price = black_scholes::put(
+                current_price.btc_price.to_f64().unwrap(),
+                strike.to_f64().unwrap(),
+                0.04f64, // risk free rate
+                volatility,
+                years,
+            );
+            println!("Price: {}", price);
+        }
+        Command::ImpliedVolatilityPut {
+            strike,
+            expiry,
+            price,
+        } => {
+            data_path.push("pricedata");
+            let history =
+                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            data_path.pop();
+
+            let now = time::OffsetDateTime::now_utc();
+            let current_price = history.price_at(now);
+            println!("Using price: {}", current_price);
+            println!("Using risk-free-rate: 4% (assumed)");
+
+            let years: f64 = (expiry - now) / time::Duration::days(365);
+            let vol = black_scholes::put_iv(
+                price.to_f64().unwrap(),
+                current_price.btc_price.to_f64().unwrap(),
+                strike.to_f64().unwrap(),
+                0.04f64, // risk free rate
+                years,
+            ).unwrap();
+            println!("Implied volatility: {} %", 100.0 * vol);
         }
     }
 

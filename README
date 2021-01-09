@@ -1,0 +1,40 @@
+
+# Trade Tracker
+
+Utility I use to keep track of my trades. This repository includes a copy
+of historic Bitstamp price data that I obtained on 2021-01-09 from
+[Bitcoincharts](https://bitcoincharts.com/about/markets-api/), but data
+beyond that (though it can be found on Bitcoincharts) is assumed to be
+downloaded in real-time.
+
+## Security / Robustness
+
+This is not a cryptography-related crate. I have made no effort to minimize
+my dependency tree, maintain a particular minimum supported Rust version,
+maintain a stable API or even command-line interface, etc. etc. It is
+published on Github mainly as a means of archival. Use at your own risk.
+
+Having said that, PRs and issues are welcome.
+
+## Price Data
+
+This utility records historic Bitcoin price data at 30-minute increments,
+using the last trade from Bitstamp at each time. You can load it with
+initial data using
+
+    trade-tracker initialize-price-data prices.csv
+
+where you get `prices.csv` from Bitcoincharts, or by decompressing the
+`xz` file included in this repo, or whatever. You can later update it
+using
+
+    trade-tracker update-price-data 'http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD'
+
+though please, for the sake of keeping that API free, don't do this
+more than every half hour. The tool will just throw away non-30-minute
+data anyway.
+
+## Usage
+
+
+

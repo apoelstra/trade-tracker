@@ -193,6 +193,7 @@ fn main() -> Result<(), anyhow::Error> {
             println!("Using risk-free-rate: 4% (assumed)");
 
             let years: f64 = (expiry - now) / time::Duration::days(365);
+            println!("Years to expiry: {} (inv {})", years, 1.0 / years);
             let vol = black_scholes::call_iv(
                 price.to_f64().unwrap(),
                 current_price.btc_price.to_f64().unwrap(),
@@ -202,6 +203,14 @@ fn main() -> Result<(), anyhow::Error> {
             )
             .unwrap();
             println!("Implied volatility: {} %", 100.0 * vol);
+            println!(
+                "Annualized return if expires worthless: {} %",
+                100.0
+                    * (1.0f64
+                        + price.to_f64().unwrap() / current_price.btc_price.to_f64().unwrap())
+                    .powf(1.0f64 / years)
+                    - 100.0
+            );
         }
         Command::PricePut {
             strike,

@@ -68,7 +68,7 @@ impl BitcoinPrice {
 
 impl fmt::Display for BitcoinPrice {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}@{}", self.btc_price, self.timestamp)
+        write!(f, "{} @ {}", self.btc_price, self.timestamp)
     }
 }
 

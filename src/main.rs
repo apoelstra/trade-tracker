@@ -106,6 +106,10 @@ fn main() -> Result<(), anyhow::Error> {
     let mut data_path = dirs::data_dir().context("getting XDG config directory")?;
     data_path.push("trade-tracker");
 
+    println!("Trade tracker version [whatever]");
+    println!("Price data pulled from http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD -- call `update-price-data` to update");
+    println!("");
+
     match Command::parse() {
         Command::InitializePriceData { csv } => {
             let mut history = Historic::default();
@@ -187,13 +191,16 @@ fn main() -> Result<(), anyhow::Error> {
                 Historic::read_json_from(&data_path, "2021").context("reading price history")?;
             data_path.pop();
 
+            println!("Call: strike {} exp {} price {}", strike, expiry, price);
+            println!("");
+
             let now = time::OffsetDateTime::now_utc();
             let current_price = history.price_at(now);
-            println!("Using price: {}", current_price);
+            println!("Using price: {:.2}", current_price);
             println!("Using risk-free-rate: 4% (assumed)");
 
             let years: f64 = (expiry - now) / time::Duration::days(365);
-            println!("Years to expiry: {} (inv {})", years, 1.0 / years);
+            println!("Years to expiry: {:.8} (inv {:.6})", years, 1.0 / years);
             let vol = black_scholes::call_iv(
                 price.to_f64().unwrap(),
                 current_price.btc_price.to_f64().unwrap(),
@@ -202,9 +209,17 @@ fn main() -> Result<(), anyhow::Error> {
                 years,
             )
             .unwrap();
-            println!("Implied volatility: {} %", 100.0 * vol);
+            println!("Implied volatility: {:.6} %", 100.0 * vol);
+            let theta = black_scholes::call_theta(
+                current_price.btc_price.to_f64().unwrap(),
+                strike.to_f64().unwrap(),
+                0.04f64, // risk free rate
+                vol,
+                years,
+            ) / 365.0;
+            println!("Theta: {:.6}", theta);
             println!(
-                "Annualized return if expires worthless: {} %",
+                "Annualized return if expires worthless: {:.6} %",
                 100.0
                     * (1.0f64
                         + price.to_f64().unwrap() / current_price.btc_price.to_f64().unwrap())
@@ -247,21 +262,44 @@ fn main() -> Result<(), anyhow::Error> {
                 Historic::read_json_from(&data_path, "2021").context("reading price history")?;
             data_path.pop();
 
+            println!("Put: strike {} exp {} price {}", strike, expiry, price);
+            println!("");
+
             let now = time::OffsetDateTime::now_utc();
             let current_price = history.price_at(now);
             println!("Using price: {}", current_price);
             println!("Using risk-free-rate: 4% (assumed)");
 
             let years: f64 = (expiry - now) / time::Duration::days(365);
+            println!("Years to expiry: {:.8} (inv {:.6})", years, 1.0 / years);
             let vol = black_scholes::put_iv(
                 price.to_f64().unwrap(),
                 current_price.btc_price.to_f64().unwrap(),
                 strike.to_f64().unwrap(),
                 0.04f64, // risk free rate
                 years,
-            )
-            .unwrap();
-            println!("Implied volatility: {} %", 100.0 * vol);
+            );
+            if let Ok(vol) = vol {
+                println!("Implied volatility: {:.6} %", 100.0 * vol);
+                let theta = black_scholes::put_theta(
+                    current_price.btc_price.to_f64().unwrap(),
+                    strike.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    years,
+                ) / 365.0;
+                println!("Theta: {:.6}", theta);
+            } else {
+                println!("Implied volatility: (cannot compute) %");
+                println!("Theta: (cannot compute) %");
+            }
+            println!(
+                "Annualized return if expires worthless: {:.6} %",
+                100.0
+                    * (1.0f64 + price.to_f64().unwrap() / strike.to_f64().unwrap())
+                        .powf(1.0f64 / years)
+                    - 100.0
+            );
         }
     }
 

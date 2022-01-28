@@ -226,6 +226,16 @@ fn main() -> Result<(), anyhow::Error> {
                     .powf(1.0f64 / years)
                     - 100.0
             );
+            // Print data in excel form
+            println!("");
+            println!(
+                "{:0.8}\t{:0.8}\t{:6.2}",
+                vol,
+                (1.0f64 + price.to_f64().unwrap() / current_price.btc_price.to_f64().unwrap())
+                    .powf(1.0f64 / years)
+                    - 1.0,
+                current_price.btc_price.to_f64().unwrap()
+            );
         }
         Command::PricePut {
             strike,
@@ -299,6 +309,15 @@ fn main() -> Result<(), anyhow::Error> {
                     * (1.0f64 + price.to_f64().unwrap() / strike.to_f64().unwrap())
                         .powf(1.0f64 / years)
                     - 100.0
+            );
+            // Print data in excel form
+            println!("");
+            println!(
+                "{:0.8}\t{:0.8}\t{:6.2}",
+                vol.unwrap_or(0.0),
+                (1.0f64 + price.to_f64().unwrap() / strike.to_f64().unwrap()).powf(1.0f64 / years)
+                    - 1.0,
+                current_price.btc_price.to_f64().unwrap()
             );
         }
     }

@@ -113,7 +113,7 @@ impl Historic {
                 .with_context(|| format!("decoding price \"{}\" at {}", entry, lineno))?;
 
             let half_hour =
-                2 * price.timestamp.time().hour() + price.timestamp.time().minute() / 30;
+                12 * price.timestamp.time().hour() + price.timestamp.time().minute() / 5;
             if last_half_hour != half_hour {
                 last_half_hour = half_hour;
                 self.record(price);

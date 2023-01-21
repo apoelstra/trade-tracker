@@ -156,7 +156,8 @@ impl Historic {
             let filename = filepath.to_string_lossy();
 
             if filename.rsplit('/').next() >= Some(min_date) {
-                let input = fs::File::open(filepath).context("opening json file")?;
+                let input =
+                    io::BufReader::new(fs::File::open(filepath).context("opening json file")?);
                 let prices: Vec<BitcoinPrice> =
                     serde_json::from_reader(input).context("decoding json")?;
                 for price in prices {

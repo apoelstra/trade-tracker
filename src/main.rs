@@ -22,13 +22,14 @@ pub mod trade;
 
 use anyhow::Context;
 use clap::Clap;
-use clipboard::x11_clipboard::{Clipboard, X11ClipboardContext};
-use clipboard::ClipboardProvider;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::{fs, path::PathBuf, thread, time::Duration};
+use std::{fs, path::PathBuf};
 
 use price::{BitcoinPrice, Historic};
+
+/// Don't bother loading historical price data from before this date
+const MIN_PRICE_DATE: &str = "2023";
 
 fn from_date(s: &str) -> Result<time::Date, anyhow::Error> {
     Ok(time::Date::parse(s, "%F")?)
@@ -140,8 +141,8 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::UpdatePriceData { url } => {
             data_path.push("pricedata");
-            let mut history =
-                Historic::read_json_from(&data_path, "2020").context("reading price history")?;
+            let mut history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
             data_path.pop();
             let data = minreq::get(&url)
                 .with_timeout(10)
@@ -160,8 +161,8 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::LatestPrice {} => {
             data_path.push("pricedata");
-            let history =
-                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
             data_path.pop();
 
             let now = time::OffsetDateTime::now_utc();
@@ -173,8 +174,8 @@ fn main() -> Result<(), anyhow::Error> {
             volatility,
         } => {
             data_path.push("pricedata");
-            let history =
-                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
             data_path.pop();
 
             let now = time::OffsetDateTime::now_utc();
@@ -199,8 +200,8 @@ fn main() -> Result<(), anyhow::Error> {
             btc_price,
         } => {
             data_path.push("pricedata");
-            let history =
-                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
             data_path.pop();
 
             println!("Call: strike {} exp {} price {}", strike, expiry, price);
@@ -240,19 +241,6 @@ fn main() -> Result<(), anyhow::Error> {
                     .powf(1.0f64 / years)
                     - 100.0
             );
-            // Print data in excel form
-            let clipboard = X11ClipboardContext::<Clipboard>::new();
-            if let Ok(mut clipboard) = clipboard {
-                let _ = clipboard.set_contents(format!(
-                    "{:0.8}\t{:0.8}\t{:6.2}",
-                    vol,
-                    (1.0f64 + price.to_f64().unwrap() / current_price.btc_price.to_f64().unwrap())
-                        .powf(1.0f64 / years)
-                        - 1.0,
-                    current_price.btc_price.to_f64().unwrap()
-                ));
-                thread::sleep(Duration::from_secs(30));
-            }
         }
         Command::PricePut {
             strike,
@@ -260,8 +248,8 @@ fn main() -> Result<(), anyhow::Error> {
             volatility,
         } => {
             data_path.push("pricedata");
-            let history =
-                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
             data_path.pop();
 
             let now = time::OffsetDateTime::now_utc();
@@ -286,8 +274,8 @@ fn main() -> Result<(), anyhow::Error> {
             btc_price,
         } => {
             data_path.push("pricedata");
-            let history =
-                Historic::read_json_from(&data_path, "2021").context("reading price history")?;
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
             data_path.pop();
 
             println!("Put: strike {} exp {} price {}", strike, expiry, price);
@@ -330,19 +318,6 @@ fn main() -> Result<(), anyhow::Error> {
                         .powf(1.0f64 / years)
                     - 100.0
             );
-            // Print data in excel form
-            let clipboard = X11ClipboardContext::<Clipboard>::new();
-            if let Ok(mut clipboard) = clipboard {
-                let _ = clipboard.set_contents(format!(
-                    "{:0.8}\t{:0.8}\t{:6.2}",
-                    vol.unwrap_or(0.0),
-                    (1.0f64 + price.to_f64().unwrap() / strike.to_f64().unwrap())
-                        .powf(1.0f64 / years)
-                        - 1.0,
-                    current_price.btc_price.to_f64().unwrap()
-                ));
-                thread::sleep(Duration::from_secs(30));
-            }
         }
     }
 

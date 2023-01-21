@@ -39,6 +39,14 @@ pub struct BitcoinPrice {
 }
 
 impl BitcoinPrice {
+    /// Turn a `Decimal` into a price at the current timestamp
+    pub fn from_current(num: Decimal) -> BitcoinPrice {
+        BitcoinPrice {
+            timestamp: time::OffsetDateTime::now_utc(),
+            btc_price: num,
+        }
+    }
+
     /// Parse a price from CSV data
     pub fn from_csv(data: &str) -> Result<BitcoinPrice, anyhow::Error> {
         let mut data = data.split(',');

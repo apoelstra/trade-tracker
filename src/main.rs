@@ -22,11 +22,13 @@ pub mod trade;
 
 use anyhow::Context;
 use clap::Clap;
+use clipboard::x11_clipboard::{Clipboard, X11ClipboardContext};
+use clipboard::ClipboardProvider;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, thread, time::Duration};
 
-use price::Historic;
+use price::{BitcoinPrice, Historic};
 
 fn from_date(s: &str) -> Result<time::Date, anyhow::Error> {
     Ok(time::Date::parse(s, "%F")?)
@@ -77,6 +79,9 @@ enum Command {
         /// Price
         #[clap(long, short)]
         price: Decimal,
+        /// Bitcoin Price, if provided
+        #[clap(long, short)]
+        btc_price: Option<Decimal>,
     },
     PricePut {
         #[clap(long, short)]
@@ -99,6 +104,9 @@ enum Command {
         /// Price
         #[clap(long, short)]
         price: Decimal,
+        /// Bitcoin Price, if provided
+        #[clap(long, short)]
+        btc_price: Option<Decimal>,
     },
 }
 
@@ -185,6 +193,7 @@ fn main() -> Result<(), anyhow::Error> {
             strike,
             expiry,
             price,
+            btc_price,
         } => {
             data_path.push("pricedata");
             let history =
@@ -195,7 +204,9 @@ fn main() -> Result<(), anyhow::Error> {
             println!("");
 
             let now = time::OffsetDateTime::now_utc();
-            let current_price = history.price_at(now);
+            let current_price = btc_price
+                .map(|d| BitcoinPrice::from_current(d))
+                .unwrap_or(history.price_at(now));
             println!("Using price: {:.2}", current_price);
             println!("Using risk-free-rate: 4% (assumed)");
 
@@ -227,15 +238,18 @@ fn main() -> Result<(), anyhow::Error> {
                     - 100.0
             );
             // Print data in excel form
-            println!("");
-            println!(
-                "{:0.8}\t{:0.8}\t{:6.2}",
-                vol,
-                (1.0f64 + price.to_f64().unwrap() / current_price.btc_price.to_f64().unwrap())
-                    .powf(1.0f64 / years)
-                    - 1.0,
-                current_price.btc_price.to_f64().unwrap()
-            );
+            let clipboard = X11ClipboardContext::<Clipboard>::new();
+            if let Ok(mut clipboard) = clipboard {
+                let _ = clipboard.set_contents(format!(
+                    "{:0.8}\t{:0.8}\t{:6.2}",
+                    vol,
+                    (1.0f64 + price.to_f64().unwrap() / current_price.btc_price.to_f64().unwrap())
+                        .powf(1.0f64 / years)
+                        - 1.0,
+                    current_price.btc_price.to_f64().unwrap()
+                ));
+                thread::sleep(Duration::from_secs(30));
+            }
         }
         Command::PricePut {
             strike,
@@ -266,6 +280,7 @@ fn main() -> Result<(), anyhow::Error> {
             strike,
             expiry,
             price,
+            btc_price,
         } => {
             data_path.push("pricedata");
             let history =
@@ -276,7 +291,9 @@ fn main() -> Result<(), anyhow::Error> {
             println!("");
 
             let now = time::OffsetDateTime::now_utc();
-            let current_price = history.price_at(now);
+            let current_price = btc_price
+                .map(|d| BitcoinPrice::from_current(d))
+                .unwrap_or(history.price_at(now));
             println!("Using price: {}", current_price);
             println!("Using risk-free-rate: 4% (assumed)");
 
@@ -311,14 +328,18 @@ fn main() -> Result<(), anyhow::Error> {
                     - 100.0
             );
             // Print data in excel form
-            println!("");
-            println!(
-                "{:0.8}\t{:0.8}\t{:6.2}",
-                vol.unwrap_or(0.0),
-                (1.0f64 + price.to_f64().unwrap() / strike.to_f64().unwrap()).powf(1.0f64 / years)
-                    - 1.0,
-                current_price.btc_price.to_f64().unwrap()
-            );
+            let clipboard = X11ClipboardContext::<Clipboard>::new();
+            if let Ok(mut clipboard) = clipboard {
+                let _ = clipboard.set_contents(format!(
+                    "{:0.8}\t{:0.8}\t{:6.2}",
+                    vol.unwrap_or(0.0),
+                    (1.0f64 + price.to_f64().unwrap() / strike.to_f64().unwrap())
+                        .powf(1.0f64 / years)
+                        - 1.0,
+                    current_price.btc_price.to_f64().unwrap()
+                ));
+                thread::sleep(Duration::from_secs(30));
+            }
         }
     }
 

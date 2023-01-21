@@ -143,10 +143,13 @@ fn main() -> Result<(), anyhow::Error> {
             let mut history =
                 Historic::read_json_from(&data_path, "2020").context("reading price history")?;
             data_path.pop();
-            let data = reqwest::blocking::get(&url)
-                .with_context(|| format!("getting data from {}", url))?;
+            let data = minreq::get(&url)
+                .with_timeout(10)
+                .send()
+                .with_context(|| format!("getting data from {}", url))?
+                .into_bytes();
             history
-                .read_csv(data)
+                .read_csv(&data[..])
                 .with_context(|| format!("decoding CSV data from {}", url))?;
 
             data_path.push("pricedata");

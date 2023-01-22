@@ -17,6 +17,7 @@
 //! Personal-use barely-maintained tool for keeping track of trades
 //!
 
+pub mod option;
 pub mod price;
 pub mod trade;
 
@@ -24,7 +25,7 @@ use anyhow::Context;
 use clap::Clap;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::{fs, path::PathBuf};
+use std::{convert::TryInto, fs, path::PathBuf};
 
 use price::{BitcoinPrice, Historic};
 
@@ -59,6 +60,20 @@ enum Command {
         url: String,
     },
     LatestPrice {},
+    Price {
+        #[clap(name = "option")]
+        option: option::Option,
+        /// Specific volatility, if provided
+        #[clap(long, short)]
+        volatility: Option<f64>,
+    },
+    Iv {
+        #[clap(name = "option")]
+        option: option::Option,
+        /// Specific price, if provided
+        #[clap(long, short)]
+        price: Option<Decimal>,
+    },
     PriceCall {
         #[clap(long, short)]
         /// Strike price of the proposed call option
@@ -167,6 +182,79 @@ fn main() -> Result<(), anyhow::Error> {
 
             let now = time::OffsetDateTime::now_utc();
             println!("{}", history.price_at(now));
+        }
+        Command::Price { option, volatility } => {
+            data_path.push("pricedata");
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
+            data_path.pop();
+
+            let now = time::OffsetDateTime::now_utc();
+            let yte = option.years_to_expiry(&now);
+            let current_price = history.price_at(now);
+            println!("BTC price: {}", current_price);
+            println!("Risk-free rate: 4% (assumed)");
+            println!(
+                "Option: {} (years to expiry: {:7.6} or 1/{:7.6})",
+                option,
+                yte,
+                1.0 / yte
+            );
+            println!("");
+            for vol in 0..21 {
+                let vol = volatility.unwrap_or(0.5) + 0.05 * (vol as f64);
+                println!(
+                    "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}",
+                    vol,
+                    option.bs_price(&now, current_price.btc_price, vol),
+                    option.bs_theta(&now, current_price.btc_price, vol),
+                );
+            }
+        }
+        Command::Iv { option, price } => {
+            data_path.push("pricedata");
+            let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
+                .context("reading price history")?;
+            data_path.pop();
+
+            let now = time::OffsetDateTime::now_utc();
+            let yte = option.years_to_expiry(&now);
+            let current_price = history.price_at(now);
+            println!("BTC price: {}", current_price);
+            println!("Risk-free rate: 4% (assumed)");
+            println!(
+                "Option: {} (years to expiry: {:7.6} or 1/{:7.6})",
+                option,
+                yte,
+                1.0 / yte
+            );
+            println!("");
+
+            let center = match price {
+                Some(price) => price,
+                None => option
+                    .bs_price(&now, current_price.btc_price, 0.75)
+                    .try_into()
+                    .unwrap_or(Decimal::from(0)),
+            };
+            let mut price = center / Decimal::from(2);
+            while price - center <= center / Decimal::from(2) {
+                match option.bs_iv(&now, current_price.btc_price, price) {
+                    Ok(vol) => println!(
+                        "Price ($) {:8.2}   Vol: {:5.4}   Theta ($): {:5.2}",
+                        price,
+                        vol,
+                        option.bs_theta(&now, current_price.btc_price, vol),
+                    ),
+                    Err(vol) => println!(
+                        "EE Price ($) {:8.2}   Vol: {:3.2}   Theta ($): {:5.2}",
+                        price,
+                        vol,
+                        option.bs_theta(&now, current_price.btc_price, vol),
+                    ),
+                }
+                price += center / Decimal::from(20);
+            }
         }
         Command::PriceCall {
             strike,

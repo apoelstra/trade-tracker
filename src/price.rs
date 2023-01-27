@@ -169,7 +169,8 @@ impl Historic {
     }
 
     /// Writes out all price records
-    pub fn write_out(&self, datadir: &mut PathBuf) -> Result<(), anyhow::Error> {
+    pub fn write_out(&self, datadir: &PathBuf) -> Result<(), anyhow::Error> {
+        let mut datadir = datadir.clone();
         let mut last_year_mo = 0;
         let mut mo_entries = vec![];
         fs::create_dir_all(&datadir).context("creating pricedata directory")?;

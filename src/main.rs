@@ -64,6 +64,8 @@ enum Command {
 fn main() -> Result<(), anyhow::Error> {
     let mut data_path = dirs::data_dir().context("getting XDG config directory")?;
     data_path.push("trade-tracker");
+    data_path.push("pricedata");
+    let data_path = data_path; // drop mut
 
     println!("Trade tracker version [whatever]");
     println!("Price data pulled from http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD -- call `update-price-data` to update");
@@ -74,12 +76,11 @@ fn main() -> Result<(), anyhow::Error> {
         // unused when initializing price data, just pick something
         Historic::default()
     } else {
-        data_path.push("pricedata");
         let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
             .context("reading price history")?;
-        data_path.pop();
         history
     };
+    let now = time::OffsetDateTime::now_utc();
 
     match Command::parse() {
         Command::InitializePriceData { csv } => {
@@ -92,14 +93,12 @@ fn main() -> Result<(), anyhow::Error> {
                 .read_csv(input)
                 .with_context(|| format!("decoding CSV data from {}", csv_name))?;
 
-            data_path.push("pricedata");
-            history.write_out(&mut data_path).with_context(|| {
+            history.write_out(&data_path).with_context(|| {
                 format!(
                     "writing out price history to {}",
                     data_path.to_string_lossy()
                 )
             })?;
-            data_path.pop();
         }
         Command::UpdatePriceData { url } => {
             let mut history = history; // lol rust
@@ -112,18 +111,14 @@ fn main() -> Result<(), anyhow::Error> {
                 .read_csv(&data[..])
                 .with_context(|| format!("decoding CSV data from {}", url))?;
 
-            data_path.push("pricedata");
             history
-                .write_out(&mut data_path)
+                .write_out(&data_path)
                 .context("writing out price history")?;
-            data_path.pop();
         }
         Command::LatestPrice {} => {
-            let now = time::OffsetDateTime::now_utc();
             println!("{}", history.price_at(now));
         }
         Command::Price { option, volatility } => {
-            let now = time::OffsetDateTime::now_utc();
             let yte = option.years_to_expiry(&now);
             let current_price = history.price_at(now);
             println!("BTC price: {}", current_price);
@@ -146,7 +141,6 @@ fn main() -> Result<(), anyhow::Error> {
             }
         }
         Command::Iv { option, price } => {
-            let now = time::OffsetDateTime::now_utc();
             let yte = option.years_to_expiry(&now);
             let current_price = history.price_at(now);
             println!("BTC price: {}", current_price);

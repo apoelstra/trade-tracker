@@ -163,4 +163,28 @@ impl Option {
             }
         }
     }
+
+    /// Compute the dual delta of the option at a given price
+    pub fn bs_dual_delta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
+        match self.pc {
+            PutCall::Call => {
+                crate::local_bs::call_dual_delta(
+                    btc_price.to_f64().unwrap(),
+                    self.strike.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    self.years_to_expiry(now),
+                )
+            }
+            PutCall::Put => {
+                crate::local_bs::put_dual_delta(
+                    btc_price.to_f64().unwrap(),
+                    self.strike.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    self.years_to_expiry(now),
+                )
+            }
+        }
+    }
 }

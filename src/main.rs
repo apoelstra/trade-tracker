@@ -17,6 +17,7 @@
 //! Personal-use barely-maintained tool for keeping track of trades
 //!
 
+pub mod local_bs;
 pub mod option;
 pub mod price;
 pub mod trade;
@@ -133,10 +134,11 @@ fn main() -> Result<(), anyhow::Error> {
             for vol in 0..51 {
                 let vol = volatility.unwrap_or(0.5) + 0.02 * (vol as f64);
                 println!(
-                    "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}",
+                    "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}  DDel: {:3.2}%",
                     vol,
                     option.bs_price(&now, current_price.btc_price, vol),
                     option.bs_theta(&now, current_price.btc_price, vol),
+                    option.bs_dual_delta(&now, current_price.btc_price, vol),
                 );
             }
         }

@@ -74,11 +74,12 @@ checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
 name = "black_scholes"
-version = "0.5.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aece270f957242c33170fd16e03a5031ce0f457cf52a0aec1bc6fc1ed229e937"
+checksum = "693c41975c4621fba0ebde1c478dad0cc434698ec9bc70d31f18bb1579a6a5ee"
 dependencies = [
  "nrfind",
+ "serde",
  "special",
 ]
 
@@ -374,6 +375,12 @@ name = "libc"
 version = "0.2.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89203f3fba0a3795506acaad8ebce3c80c0af93f994d5a1d7a0b1eeb23271929"
+
+[[package]]
+name = "libm"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "348108ab3fba42ec82ff6e9564fc4ca0247bdccdc68dd8af9764bbc79c3c8ffb"
 
 [[package]]
 name = "log"
@@ -801,11 +808,11 @@ checksum = "2579985fda508104f7587689507983eadd6a6e84dd35d6d115361f530916fa0d"
 
 [[package]]
 name = "special"
-version = "0.7.8"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4970a4eb4acfd6cc4662773584551e35bb0d279ef8ff07ff6dcf1a6cb56a8164"
+checksum = "322ed043a063dd3cabb4b53b2a37bce115854d94df19acf766d9dacaff218c5a"
 dependencies = [
- "libc",
+ "libm",
 ]
 
 [[package]]

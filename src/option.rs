@@ -29,12 +29,14 @@ pub enum PutCall {
     /// A put
     Put,
 }
+/// Re-export these so users don't have to keep writing PutCall::Call
+pub use PutCall::{Call, Put};
 
 impl PutCall {
     fn to_char(self) -> char {
         match self {
-            PutCall::Call => 'C',
-            PutCall::Put => 'P',
+            Call => 'C',
+            Put => 'P',
         }
     }
 }
@@ -52,13 +54,8 @@ pub struct Option {
 
 impl fmt::Display for Option {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}{}{}",
-            self.expiry.date(),
-            self.pc.to_char(),
-            self.strike,
-        )
+        let s = format!("{}{}{}", self.expiry.date(), self.pc.to_char(), self.strike,);
+        f.pad(&s)
     }
 }
 
@@ -78,8 +75,8 @@ impl str::FromStr for Option {
             .map(|dt| dt.assume_utc().to_offset(time::UtcOffset::UTC))
             .map_err(|e| format!("Parsing time in option {}: {}", s, e))?;
         let pc = match s.as_bytes()[10] {
-            b'C' | b'c' => PutCall::Call,
-            b'P' | b'p' => PutCall::Put,
+            b'C' | b'c' => Call,
+            b'P' | b'p' => Put,
             x => return Err(format!("Unknown put/call symbol {} in {}", x, s)),
         };
         let strike = Decimal::from_str(&s[11..])
@@ -90,22 +87,52 @@ impl str::FromStr for Option {
 }
 
 impl Option {
+    /// Construct a new call option
+    pub fn new_call(strike: Decimal, expiry: time::OffsetDateTime) -> Self {
+        Option {
+            pc: Call,
+            strike,
+            expiry,
+        }
+    }
+
+    /// Construct a new put option
+    pub fn new_put(strike: Decimal, expiry: time::OffsetDateTime) -> Self {
+        Option {
+            pc: Put,
+            strike,
+            expiry,
+        }
+    }
+
     /// Compute the number of years to expiry, as a float, given current time
     pub fn years_to_expiry(&self, now: &time::OffsetDateTime) -> f64 {
         (self.expiry - *now) / time::Duration::days(365)
     }
 
+    /// Whether the option is ITM or not. Considers options exactly at the money
+    /// to be "in the money".
+    ///
+    /// If you need a more nuanced notion of OTM/ATM/ITM you will need to manually
+    /// do it using the `strike` field.
+    pub fn in_the_money(&self, btc_price: Decimal) -> bool {
+        match self.pc {
+            Call => self.strike <= btc_price,
+            Put => self.strike >= btc_price,
+        }
+    }
+
     /// Compute the price of the option at a given volatility
     pub fn bs_price(&self, now: &time::OffsetDateTime, btc_price: Decimal, volatility: f64) -> f64 {
         match self.pc {
-            PutCall::Call => black_scholes::call(
+            Call => black_scholes::call(
                 btc_price.to_f64().unwrap(),
                 self.strike.to_f64().unwrap(),
                 0.04f64, // risk free rate
                 volatility,
                 self.years_to_expiry(now),
             ),
-            PutCall::Put => black_scholes::put(
+            Put => black_scholes::put(
                 btc_price.to_f64().unwrap(),
                 self.strike.to_f64().unwrap(),
                 0.04f64, // risk free rate
@@ -123,14 +150,14 @@ impl Option {
         price: Decimal,
     ) -> Result<f64, f64> {
         match self.pc {
-            PutCall::Call => black_scholes::call_iv(
+            Call => black_scholes::call_iv(
                 price.to_f64().unwrap(),
                 btc_price.to_f64().unwrap(),
                 self.strike.to_f64().unwrap(),
                 0.04f64, // risk free rate
                 self.years_to_expiry(now),
             ),
-            PutCall::Put => black_scholes::put_iv(
+            Put => black_scholes::put_iv(
                 price.to_f64().unwrap(),
                 btc_price.to_f64().unwrap(),
                 self.strike.to_f64().unwrap(),
@@ -143,7 +170,7 @@ impl Option {
     /// Compute the theta of the option at a given price
     pub fn bs_theta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
         match self.pc {
-            PutCall::Call => {
+            Call => {
                 black_scholes::call_theta(
                     btc_price.to_f64().unwrap(),
                     self.strike.to_f64().unwrap(),
@@ -152,7 +179,7 @@ impl Option {
                     self.years_to_expiry(now),
                 ) / 365.0
             }
-            PutCall::Put => {
+            Put => {
                 black_scholes::put_theta(
                     btc_price.to_f64().unwrap(),
                     self.strike.to_f64().unwrap(),
@@ -167,7 +194,7 @@ impl Option {
     /// Compute the dual delta of the option at a given price
     pub fn bs_dual_delta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
         match self.pc {
-            PutCall::Call => {
+            Call => {
                 crate::local_bs::call_dual_delta(
                     btc_price.to_f64().unwrap(),
                     self.strike.to_f64().unwrap(),
@@ -176,8 +203,32 @@ impl Option {
                     self.years_to_expiry(now),
                 )
             }
-            PutCall::Put => {
+            Put => {
                 crate::local_bs::put_dual_delta(
+                    btc_price.to_f64().unwrap(),
+                    self.strike.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    self.years_to_expiry(now),
+                )
+            }
+        }
+    }
+
+    /// Compute the dual delta of the option at a given price
+    pub fn bs_delta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
+        match self.pc {
+            Call => {
+                black_scholes::call_delta(
+                    btc_price.to_f64().unwrap(),
+                    self.strike.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    self.years_to_expiry(now),
+                )
+            }
+            Put => {
+                black_scholes::put_delta(
                     btc_price.to_f64().unwrap(),
                     self.strike.to_f64().unwrap(),
                     0.04f64, // risk free rate

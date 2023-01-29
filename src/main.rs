@@ -17,6 +17,7 @@
 //! Personal-use barely-maintained tool for keeping track of trades
 //!
 
+pub mod ledgerx;
 pub mod local_bs;
 pub mod option;
 pub mod price;
@@ -25,7 +26,7 @@ pub mod trade;
 use anyhow::Context;
 use clap::Clap;
 use rust_decimal::Decimal;
-use std::{convert::TryInto, fs, path::PathBuf};
+use std::{collections::HashMap, convert::TryInto, fs, path::PathBuf};
 
 use price::Historic;
 
@@ -59,6 +60,10 @@ enum Command {
         /// Specific price, if provided
         #[clap(long, short)]
         price: Option<Decimal>,
+    },
+    Connect {
+        #[clap(name = "token")]
+        api_key: String,
     },
 }
 
@@ -134,11 +139,12 @@ fn main() -> Result<(), anyhow::Error> {
             for vol in 0..51 {
                 let vol = volatility.unwrap_or(0.5) + 0.02 * (vol as f64);
                 println!(
-                    "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}  DDel: {:3.2}%",
+                    "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}  DDel: {:3.2}%  Del: {:3.2}%",
                     vol,
                     option.bs_price(&now, current_price.btc_price, vol),
                     option.bs_theta(&now, current_price.btc_price, vol),
-                    option.bs_dual_delta(&now, current_price.btc_price, vol),
+                    option.bs_dual_delta(&now, current_price.btc_price, vol) * 100.0,
+                    option.bs_delta(&now, current_price.btc_price, vol) * 100.0,
                 );
             }
         }
@@ -180,6 +186,116 @@ fn main() -> Result<(), anyhow::Error> {
                 }
                 price += center / Decimal::from(40);
             }
+        }
+        Command::Connect { api_key } => {
+            let data = minreq::get("https://api.ledgerx.com/trading/contracts")
+                .with_timeout(10)
+                .send()
+                .with_context(|| "getting data from trading/contracts endpoint")?
+                .into_bytes();
+
+            let all_contracts: Vec<ledgerx::Contract> = ledgerx::from_json_dot_data(&data)
+                .with_context(|| "parsing contract list from json")?;
+
+            let current_price = history.price_at(now);
+            println!("BTC price: {}", current_price);
+            println!("Risk-free rate: 4% (assumed)");
+            let btc_price = current_price.btc_price; // drop price timestamp
+
+            let mut contracts = HashMap::new();
+            for contr in all_contracts {
+                // Ignore non-BTC options
+                if contr.underlying != ledgerx::Asset::Btc {
+                    continue;
+                }
+
+                if let Some(opt) = contr.as_option() {
+                    if opt.in_the_money(btc_price) && opt.expiry >= now {
+                        let option = contr.as_option().unwrap();
+                        let ddelta80 = option.bs_dual_delta(&now, btc_price, 0.80);
+                        if ddelta80.abs() < 0.01 {
+                            println!(
+                                "Contract {:17} has DDelta80 of {:5.4}%",
+                                option,
+                                ddelta80 * 100.0
+                            );
+                        }
+                    }
+                }
+
+                contracts.insert(contr.id, contr);
+            }
+            println!("Loaded contracts. Watching feed.");
+
+            loop {
+                let mut sock = tungstenite::client::connect(format!(
+                    "wss://api.ledgerx.com/ws?token={}",
+                    api_key
+                ))?;
+                while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
+                    let json: serde_json::Value = serde_json::from_str(&msg)
+                        .with_context(|| "parsing json from trading/contracts endpoint")?;
+                    if let Some(order) = ledgerx::Order::from_json(&json)
+                        .map_err(|e| anyhow::Error::msg(e))
+                        .with_context(|| "parsing json from trading/contracts endpoint")?
+                    {
+                        // Assume that if we don't know the option it's an ETH thing or something
+                        // and ignore it.
+                        let contract = match contracts.get(&order.contract_id) {
+                            Some(contract) => {
+                                assert_eq!(contract.underlying, ledgerx::Asset::Btc);
+                                contract
+                            }
+                            None => continue,
+                        };
+                        // Ignore non-options for now
+                        let opt = match contract.as_option() {
+                            Some(opt) => opt,
+                            None => continue,
+                        };
+
+                        if opt.in_the_money(btc_price)
+                            || order.bid_ask != ledgerx::datafeed::BidAsk::Bid
+                            || order.size < 10
+                            || order.price < Decimal::from(5)
+                        {
+                            continue;
+                        }
+
+                        let option = contract.as_option().unwrap();
+                        let dte = option.years_to_expiry(&now) * 365.0;
+                        if let Ok(vol) = option.bs_iv(&now, btc_price, order.price) {
+                            let ddelta80 = option.bs_dual_delta(&now, btc_price, 0.80);
+                            if vol < 0.8 && ddelta80.abs() > 0.05 {
+                                continue;
+                            }
+                            println!(
+                                "{:17} dte: {:5.2} {:4}@${:8.2} [${:8.2}]    sigma: {:5.4}  theta ($): {:5.2}  DDelta80: {:3.2}%",
+                                option,
+                                dte,
+                                order.size,
+                                order.price,
+                                order.price * Decimal::from(order.size) / Decimal::from(100),
+                                vol,
+                                option.bs_theta(&now, btc_price, vol),
+                                ddelta80 * 100.0,
+                            );
+                        } else {
+                            if opt.strike + order.price - btc_price > Decimal::from(500) {
+                                println!(
+                                    "Apparent free money (strike {} + price {} is {}, vs BTC price {}",
+                                    opt.strike,
+                                    order.price,
+                                    opt.strike + order.price,
+                                    btc_price,
+                                );
+                                println!("    contract {} order {:?}", contract.label, order);
+                            }
+                        }
+                    } // if let Some(order)
+                } // while let
+                  //                println!("Lost websocket connection, reconnecting");
+            } // loop
         }
     }
 

@@ -98,6 +98,99 @@ pub enum UpdateResponse<'c> {
     },
 }
 
+fn log_if_interesting(
+    order: &Order,
+    opt: &crate::option::Option,
+    now: OffsetDateTime,
+    btc_bid: Decimal,
+    btc_ask: Decimal,
+) {
+    // ignore anything for less than $10 or single-contract orders
+    if order.size < 2 || order.price < Decimal::from(10) {
+        return;
+    }
+
+    if order.bid_ask == Bid {
+        log_bid_if_interesting(order, opt, now, btc_bid, btc_ask);
+    } else {
+        log_ask_if_interesting(order, opt, now, btc_bid, btc_ask);
+    }
+}
+
+fn log_bid_if_interesting(
+    order: &Order,
+    opt: &crate::option::Option,
+    now: OffsetDateTime,
+    btc_bid: Decimal,
+    btc_ask: Decimal,
+) {
+    // For bids we'll just use the midpoint since we're not thinking
+    // about any short-option-delta-neutral strategies. If we were
+    // trying to go delta-neutral we should use the best BTC ask instead.
+    let btc_price = (btc_bid + btc_ask) / Decimal::from(2);
+    // For bids, we need to be able to compute volatility (otherwise
+    // this is a "free money" bid, which we don't want to be short.
+    if let Ok(vol) = opt.bs_iv(now, btc_price, order.price) {
+        let arr = opt.arr(now, btc_price, order.price);
+        let ddelta80 = opt.bs_dual_delta(now, btc_price, 0.80).abs();
+
+        if arr < 0.1 {
+            return;
+        } // ignore low-yield bids
+        if ddelta80 > 0.3 {
+            return;
+        } // ignore bids with high likelihood of getting assigned
+        if vol < 0.5 {
+            return;
+        } // ignore bids with low volatility
+
+        print!("Interesting bid: ");
+        opt.print_option_data(now, btc_price);
+        print!("    Price: ");
+        opt.print_order_data(now, btc_price, order.price, order.size);
+    }
+}
+fn log_ask_if_interesting(
+    order: &Order,
+    opt: &crate::option::Option,
+    now: OffsetDateTime,
+    btc_bid: Decimal,
+    btc_ask: Decimal,
+) {
+    // Add a fudge factor because there's a race condition involved in
+    // executing on something like this, so we want a nontrivial payout
+    let btc_price = if opt.pc == crate::option::Call {
+        btc_bid - Decimal::from(100)
+    } else {
+        btc_ask + Decimal::from(100)
+    };
+    // Asks are only interesting if they're "free money", that is, if we
+    // can open a delta-neutral position which is guaranteed to pay out
+    if order.price < opt.intrinsic_value(btc_price) {
+        print!("Apparent free money offer: ");
+        opt.print_option_data(now, btc_price);
+        print!("    Price: ");
+        opt.print_order_data(now, btc_price, order.price, order.size);
+        if opt.pc == crate::option::Call {
+            println!(
+                "       (strike {} + price {} is {}, vs BTC price {}",
+                opt.strike,
+                order.price,
+                opt.strike + order.price,
+                btc_price,
+            );
+        } else {
+            println!(
+                "       (strike {} - price {} is {}, vs BTC price {}",
+                opt.strike,
+                order.price,
+                opt.strike - order.price,
+                btc_price,
+            );
+        }
+    }
+}
+
 impl LedgerX {
     /// Create a new empty LX tracker
     pub fn new(btc_price: crate::price::BitcoinPrice) -> Self {
@@ -131,10 +224,10 @@ impl LedgerX {
             let (btc_price, now) = self.current_price();
             if !opt.in_the_money(btc_price) && opt.expiry >= now {
                 let option = c.as_option().unwrap();
-                let ddelta80 = option.bs_dual_delta(&now, btc_price, 0.80);
+                let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
                 if ddelta80.abs() < 0.01 {
                     print!("Interesting contract: ");
-                    option.print_option_data(&now, btc_price);
+                    option.print_option_data(now, btc_price);
                 }
             }
         }
@@ -149,58 +242,44 @@ impl LedgerX {
 
     /// Inserts a new order into the book
     pub fn insert_order(&mut self, order: Order) -> UpdateResponse {
-        let (btc_price, now) = self.current_price(); // get price reference prior to mutable borrow
+        let (_, now) = self.current_price(); // get price reference prior to mutable borrow
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => return UpdateResponse::Ignored,
         };
-        // For day-ahead swaps, update the price reference. For options, (maybe) log.
-        if let contract::Type::Option { opt, .. } = contract.ty() {
-            if order.size > 10 && order.price > Decimal::from(5) {
-                if let Ok(vol) = opt.bs_iv(&now, btc_price, order.price) {
-                    let ddelta80 = opt.bs_dual_delta(&now, btc_price, 0.80);
-                    if order.bid_ask == Bid && (vol > 0.8 || ddelta80.abs() < 0.05) {
-                        print!("Interesting bid: ");
-                        opt.print_option_data(&now, btc_price);
-                        print!("    Price: ");
-                        opt.print_order_data(&now, btc_price, order.price, order.size);
-                    }
-                } else if opt.in_the_money(btc_price) && order.bid_ask == Ask {
-                    if opt.strike + order.price < btc_price - Decimal::from(250) {
-                        print!("Apparent free money offer: ");
-                        opt.print_option_data(&now, btc_price);
-                        print!("    Price: ");
-                        opt.print_order_data(&now, btc_price, order.price, order.size);
-                        println!(
-                            "       (strike {} + price {} is {}, vs BTC price {}",
-                            opt.strike,
-                            order.price,
-                            opt.strike + order.price,
-                            btc_price,
-                        );
-                    }
-                }
-            }
-        }
         // Insert the order and signal if the best bid/ask has changed.
-        let old_bb = book_state.best_bid();
-        let old_ba = book_state.best_ask();
         book_state.insert_order(order);
         let new_bb = book_state.best_bid();
         let new_ba = book_state.best_ask();
-        // For day-ahead swaps update the current BTC price reference
-        if let contract::Type::NextDay { .. } = contract.ty() {
-            self.last_btc_bid = new_bb.0;
-            self.last_btc_ask = new_ba.0;
-            self.last_btc_time = order.timestamp;
+
+        let is_bb = order.bid_ask == Bid && new_bb.0 == order.price;
+        let is_ba = order.bid_ask == Ask && new_ba.0 == order.price;
+        if is_bb || is_ba {
+            match contract.ty() {
+                // For option we just log
+                contract::Type::Option { opt, .. } => {
+                    log_if_interesting(&order, &opt, now, self.last_btc_bid, self.last_btc_ask);
+                }
+                // For day-ahead swaps update the current BTC price reference
+                contract::Type::NextDay { .. } => {
+                    if is_bb {
+                        self.last_btc_bid = new_bb.0;
+                    }
+                    if is_ba {
+                        self.last_btc_ask = new_ba.0;
+                    }
+                    self.last_btc_time = order.timestamp;
+                }
+                contract::Type::Future { .. } => { /* ignore */ }
+            }
         }
-        if old_bb != new_bb {
+        if is_bb {
             UpdateResponse::NewBestBid {
                 contract: contract,
                 price: new_bb.0,
                 size: new_bb.1,
             }
-        } else if old_ba != new_ba {
+        } else if is_ba {
             UpdateResponse::NewBestAsk {
                 contract: contract,
                 price: new_ba.0,

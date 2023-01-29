@@ -232,6 +232,7 @@ pub enum DataFeedObject {
     ExposureReports {},
     ContactAdded {},
     ContactRemoved {},
+    ContactConnected {},
     ContactDisconnected {},
     StateManifest {},
     BookTop {

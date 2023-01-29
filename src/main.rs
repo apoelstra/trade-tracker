@@ -127,7 +127,7 @@ fn main() -> Result<(), anyhow::Error> {
             println!("{}", history.price_at(now));
         }
         Command::Price { option, volatility } => {
-            let yte = option.years_to_expiry(&now);
+            let yte = option.years_to_expiry(now);
             let current_price = history.price_at(now);
             println!("BTC price: {}", current_price);
             println!("Risk-free rate: 4% (assumed)");
@@ -143,15 +143,15 @@ fn main() -> Result<(), anyhow::Error> {
                 println!(
                     "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}  DDel: {:3.2}%  Del: {:3.2}%",
                     vol,
-                    option.bs_price(&now, current_price.btc_price, vol),
-                    option.bs_theta(&now, current_price.btc_price, vol),
-                    option.bs_dual_delta(&now, current_price.btc_price, vol) * 100.0,
-                    option.bs_delta(&now, current_price.btc_price, vol) * 100.0,
+                    option.bs_price(now, current_price.btc_price, vol),
+                    option.bs_theta(now, current_price.btc_price, vol),
+                    option.bs_dual_delta(now, current_price.btc_price, vol) * 100.0,
+                    option.bs_delta(now, current_price.btc_price, vol) * 100.0,
                 );
             }
         }
         Command::Iv { option, price } => {
-            let yte = option.years_to_expiry(&now);
+            let yte = option.years_to_expiry(now);
             let current_price = history.price_at(now);
             println!("BTC price: {}", current_price);
             println!("Risk-free rate: 4% (assumed)");
@@ -166,24 +166,24 @@ fn main() -> Result<(), anyhow::Error> {
             let center = match price {
                 Some(price) => price,
                 None => option
-                    .bs_price(&now, current_price.btc_price, 0.75)
+                    .bs_price(now, current_price.btc_price, 0.75)
                     .try_into()
                     .unwrap_or(Decimal::from(0)),
             };
             let mut price = center / Decimal::from(2);
             while price - center <= center / Decimal::from(2) {
-                match option.bs_iv(&now, current_price.btc_price, price) {
+                match option.bs_iv(now, current_price.btc_price, price) {
                     Ok(vol) => println!(
                         "Price ($) {:8.2}   Vol: {:5.4}   Theta ($): {:5.2}",
                         price,
                         vol,
-                        option.bs_theta(&now, current_price.btc_price, vol),
+                        option.bs_theta(now, current_price.btc_price, vol),
                     ),
                     Err(vol) => println!(
                         "EE Price ($) {:8.2}   Vol: {:3.2}   Theta ($): {:5.2}",
                         price,
                         vol,
-                        option.bs_theta(&now, current_price.btc_price, vol),
+                        option.bs_theta(now, current_price.btc_price, vol),
                     ),
                 }
                 price += center / Decimal::from(40);

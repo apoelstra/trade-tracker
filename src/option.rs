@@ -21,6 +21,7 @@ use crate::terminal::{format_color, format_redgreen};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::{fmt, str};
+use time::OffsetDateTime;
 
 /// Whether an option is a put or a call
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -50,7 +51,7 @@ pub struct Option {
     /// Strike price
     pub strike: Decimal,
     /// Expiry date
-    pub expiry: time::OffsetDateTime,
+    pub expiry: OffsetDateTime,
 }
 
 impl fmt::Display for Option {
@@ -89,7 +90,7 @@ impl str::FromStr for Option {
 
 impl Option {
     /// Construct a new call option
-    pub fn new_call(strike: Decimal, expiry: time::OffsetDateTime) -> Self {
+    pub fn new_call(strike: Decimal, expiry: OffsetDateTime) -> Self {
         Option {
             pc: Call,
             strike,
@@ -98,7 +99,7 @@ impl Option {
     }
 
     /// Construct a new put option
-    pub fn new_put(strike: Decimal, expiry: time::OffsetDateTime) -> Self {
+    pub fn new_put(strike: Decimal, expiry: OffsetDateTime) -> Self {
         Option {
             pc: Put,
             strike,
@@ -107,8 +108,8 @@ impl Option {
     }
 
     /// Compute the number of years to expiry, as a float, given current time
-    pub fn years_to_expiry(&self, now: &time::OffsetDateTime) -> f64 {
-        (self.expiry - *now) / time::Duration::days(365)
+    pub fn years_to_expiry(&self, now: OffsetDateTime) -> f64 {
+        (self.expiry - now) / time::Duration::days(365)
     }
 
     /// Whether the option is ITM or not. Considers options exactly at the money
@@ -123,8 +124,41 @@ impl Option {
         }
     }
 
+    /// Computes the "annualized rate of return" of an OTM short option modeled as a loan
+    ///
+    /// Assuming that we were to sell an option which would then expire worthless, we
+    /// can model this as a loan (from the seller's POV; the buyer can model this as
+    /// a money fire). That is, for the remaining option lifetime, the seller must lock
+    /// up some amount of collateral, and in exchange they receive some premium, or
+    /// "interest".
+    pub fn arr(&self, now: OffsetDateTime, btc_price: Decimal, self_price: Decimal) -> f64 {
+        let yte = self.years_to_expiry(now);
+        assert!(yte > 0.0);
+        match self.pc {
+            Put => {
+                // For 100 put contracts, we lock up strike_price much cash
+                // and receive self_price much cash. Easy.
+                (self_price / self.strike).to_f64().unwrap().powf(1.0 / yte)
+            }
+            Call => {
+                // For a call, we lock up 1 BTC at current price and receive
+                // self_price much cash.
+                (self_price / btc_price).to_f64().unwrap().powf(1.0 / yte)
+            }
+        }
+    }
+
+    /// The "intrinsic value" of the option, which is what it would be worth if
+    /// it expired instantly at the current price
+    pub fn intrinsic_value(&self, btc_price: Decimal) -> Decimal {
+        match self.pc {
+            Call => btc_price - self.strike,
+            Put => self.strike - btc_price,
+        }
+    }
+
     /// Compute the price of the option at a given volatility
-    pub fn bs_price(&self, now: &time::OffsetDateTime, btc_price: Decimal, volatility: f64) -> f64 {
+    pub fn bs_price(&self, now: OffsetDateTime, btc_price: Decimal, volatility: f64) -> f64 {
         match self.pc {
             Call => black_scholes::call(
                 btc_price.to_f64().unwrap(),
@@ -146,7 +180,7 @@ impl Option {
     /// Compute the IV of the option at a given price
     pub fn bs_iv(
         &self,
-        now: &time::OffsetDateTime,
+        now: OffsetDateTime,
         btc_price: Decimal,
         price: Decimal,
     ) -> Result<f64, f64> {
@@ -169,7 +203,7 @@ impl Option {
     }
 
     /// Compute the theta of the option at a given price
-    pub fn bs_theta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
+    pub fn bs_theta(&self, now: OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
         match self.pc {
             Call => {
                 black_scholes::call_theta(
@@ -193,7 +227,7 @@ impl Option {
     }
 
     /// Compute the dual delta of the option at a given price
-    pub fn bs_dual_delta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
+    pub fn bs_dual_delta(&self, now: OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
         match self.pc {
             Call => {
                 crate::local_bs::call_dual_delta(
@@ -217,7 +251,7 @@ impl Option {
     }
 
     /// Compute the dual delta of the option at a given price
-    pub fn bs_delta(&self, now: &time::OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
+    pub fn bs_delta(&self, now: OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
         match self.pc {
             Call => {
                 black_scholes::call_delta(
@@ -241,17 +275,11 @@ impl Option {
     }
 
     /// Print option data
-    pub fn print_option_data(&self, now: &time::OffsetDateTime, btc_price: Decimal) {
-        let dte = self.years_to_expiry(&now) * 365.0;
-        let dd80 = self.bs_dual_delta(&now, btc_price, 0.80).abs();
+    pub fn print_option_data(&self, now: OffsetDateTime, btc_price: Decimal) {
+        let dte = self.years_to_expiry(now) * 365.0;
+        let dd80 = self.bs_dual_delta(now, btc_price, 0.80).abs();
         let intrinsic_str = if self.in_the_money(btc_price) {
-            format!(
-                "{:5.2}",
-                match self.pc {
-                    Call => btc_price - self.strike,
-                    Put => self.strike - btc_price,
-                }
-            )
+            format!("{:5.2}", self.intrinsic_value(btc_price))
         } else {
             " OTM ".into()
         };
@@ -269,13 +297,13 @@ impl Option {
     /// Print black-scholes data
     pub fn print_order_data(
         &self,
-        now: &time::OffsetDateTime,
+        now: OffsetDateTime,
         btc_price: Decimal,
         self_price: Decimal,
         size: u64,
     ) {
-        let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(&now, btc_price, self_price) {
-            let theta = self.bs_theta(&now, btc_price, vol);
+        let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(now, btc_price, self_price) {
+            let theta = self.bs_theta(now, btc_price, vol);
             (
                 format_redgreen(format_args!("{:3.2}", vol * 100.0), vol, 0.5, 1.5),
                 format_redgreen(
@@ -289,8 +317,9 @@ impl Option {
             ("XXX".into(), "XXX".into())
         };
         let total = self_price * Decimal::from(size) / Decimal::from(100);
+        let arr = self.arr(now, btc_price, self_price);
         println!(
-            "${} [size: {} total: {}]  Vol: {}%  Theta: {}",
+            "${} [size: {} total: {}]  Vol: {}%  ARR: {}%, Theta: {}",
             format_redgreen(
                 format_args!("{:8.2}", self_price),
                 self_price.to_f64().unwrap().log10(),
@@ -305,6 +334,7 @@ impl Option {
                 5.0
             ),
             vol_str,
+            format_redgreen(format_args!("{:4.2}", arr), arr, 0.0, 0.2),
             theta_str,
         );
     }

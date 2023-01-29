@@ -99,6 +99,10 @@ impl Contract {
     pub fn label(&self) -> &str {
         &self.label
     }
+    /// Multiplier
+    pub fn multiplier(&self) -> usize {
+        self.multiplier
+    }
 }
 
 impl TryFrom<json::Contract> for Contract {

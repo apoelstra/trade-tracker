@@ -151,16 +151,10 @@ fn main() -> Result<(), anyhow::Error> {
             }
         }
         Command::Iv { option, price } => {
-            let yte = option.years_to_expiry(now);
             let current_price = history.price_at(now);
             println!("BTC price: {}", current_price);
             println!("Risk-free rate: 4% (assumed)");
-            println!(
-                "Option: {} (years to expiry: {:7.6} or 1/{:7.6})",
-                option,
-                yte,
-                1.0 / yte
-            );
+            option.print_option_data(now, current_price.btc_price);
             println!("");
 
             let center = match price {
@@ -172,20 +166,7 @@ fn main() -> Result<(), anyhow::Error> {
             };
             let mut price = center / Decimal::from(2);
             while price - center <= center / Decimal::from(2) {
-                match option.bs_iv(now, current_price.btc_price, price) {
-                    Ok(vol) => println!(
-                        "Price ($) {:8.2}   Vol: {:5.4}   Theta ($): {:5.2}",
-                        price,
-                        vol,
-                        option.bs_theta(now, current_price.btc_price, vol),
-                    ),
-                    Err(vol) => println!(
-                        "EE Price ($) {:8.2}   Vol: {:3.2}   Theta ($): {:5.2}",
-                        price,
-                        vol,
-                        option.bs_theta(now, current_price.btc_price, vol),
-                    ),
-                }
+                option.print_order_data(now, current_price.btc_price, price, 1);
                 price += center / Decimal::from(40);
             }
         }
@@ -203,6 +184,7 @@ fn main() -> Result<(), anyhow::Error> {
             println!("BTC price: {}", current_price);
             println!("Risk-free rate: 4% (assumed)");
 
+            let mut bscount = 0;
             let mut tracker = LedgerX::new(current_price);
             for contr in all_contracts {
                 // Ignore expired and non-BTC options
@@ -222,9 +204,15 @@ fn main() -> Result<(), anyhow::Error> {
                 let reply: ledgerx::json::BookStateMessage = serde_json::from_slice(&book_state)
                     .with_context(|| "parsing book state from json")?;
                 tracker.initialize_orderbooks(reply, now);
+                bscount += 1;
             }
-            println!("Loaded contracts. Watching feed.");
+            tracker.log_interesting_contracts();
+            println!(
+                "Loaded contracts ({} calls to book-states endpoint). Watching feed.",
+                bscount
+            );
 
+            let mut last_update = now;
             loop {
                 let mut sock = tungstenite::client::connect(format!(
                     "wss://api.ledgerx.com/ws?token={}",
@@ -240,6 +228,12 @@ fn main() -> Result<(), anyhow::Error> {
                         datafeed::Object::Order(order) => {
                             tracker.insert_order(order);
                         }
+                    }
+
+                    let update_time = time::OffsetDateTime::now_utc();
+                    if update_time - last_update > time::Duration::hours(1) {
+                        tracker.log_interesting_contracts();
+                        last_update = update_time;
                     }
                 } // while let
             } // loop

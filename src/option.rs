@@ -138,12 +138,20 @@ impl Option {
             Put => {
                 // For 100 put contracts, we lock up strike_price much cash
                 // and receive self_price much cash. Easy.
-                (self_price / self.strike).to_f64().unwrap().powf(1.0 / yte)
+                (Decimal::from(1) + self_price / self.strike)
+                    .to_f64()
+                    .unwrap()
+                    .powf(1.0 / yte)
+                    - 1.0
             }
             Call => {
                 // For a call, we lock up 1 BTC at current price and receive
                 // self_price much cash.
-                (self_price / btc_price).to_f64().unwrap().powf(1.0 / yte)
+                (Decimal::from(1) + self_price / btc_price)
+                    .to_f64()
+                    .unwrap()
+                    .powf(1.0 / yte)
+                    - 1.0
             }
         }
     }
@@ -319,7 +327,7 @@ impl Option {
         let total = self_price * Decimal::from(size) / Decimal::from(100);
         let arr = self.arr(now, btc_price, self_price);
         println!(
-            "${} [size: {} total: {}]  Vol: {}%  ARR: {}%, Theta: {}",
+            "${} x {} = {}  sigma: {}%  ARR: {}%, Theta: {}",
             format_redgreen(
                 format_args!("{:8.2}", self_price),
                 self_price.to_f64().unwrap().log10(),
@@ -334,7 +342,7 @@ impl Option {
                 5.0
             ),
             vol_str,
-            format_redgreen(format_args!("{:4.2}", arr), arr, 0.0, 0.2),
+            format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2),
             theta_str,
         );
     }

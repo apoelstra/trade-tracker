@@ -23,7 +23,7 @@ use serde::Deserialize;
 use time::OffsetDateTime;
 
 /// ID of a specific "manifest", which is the same across an order submission/edit/cancel/etc
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct ManifestId(pub [u8; 16]);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

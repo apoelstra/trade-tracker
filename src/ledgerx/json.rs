@@ -17,10 +17,10 @@
 //! Some utility methods for parsing json from the LX API
 //!
 
-use super::Asset;
 use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
 use serde_json::{Map, Value};
+use std::convert::TryFrom;
 use time::OffsetDateTime;
 
 pub fn parse_num(obj: &Map<String, Value>, field: &str) -> Result<u64, String> {
@@ -29,45 +29,6 @@ pub fn parse_num(obj: &Map<String, Value>, field: &str) -> Result<u64, String> {
         .ok_or(format!("missing field {} in contract", field))?
         .as_u64()
         .ok_or(format!("field {} in contract is not number", field))?)
-}
-
-pub fn parse_string(obj: &Map<String, Value>, field: &str) -> Result<String, String> {
-    Ok(obj
-        .get(field)
-        .ok_or(format!("missing field {} in contract", field))?
-        .as_str()
-        .ok_or(format!("field {} in contract is not string", field))?
-        .into())
-}
-
-pub fn parse_asset(obj: &Map<String, Value>, field: &str) -> Result<Asset, String> {
-    match obj.get(field) {
-        Some(Value::String(s)) => match &s[..] {
-            "CBTC" => Ok(Asset::Btc),
-            "ETH" => Ok(Asset::Eth),
-            "USD" => Ok(Asset::Usd),
-            x => Err(format!(
-                "unknown asset type {} in contract field {}",
-                x, field
-            )),
-        },
-        Some(x) => Err(format!(
-            "non-string asset {} in contract field {}",
-            x, field
-        )),
-        None => Err(format!("missing field {} in contract", field)),
-    }
-}
-
-pub fn parse_datetime(obj: &Map<String, Value>, field: &str) -> Result<OffsetDateTime, String> {
-    match obj.get(field) {
-        Some(Value::String(s)) => OffsetDateTime::parse(&s, "%F %T%z").map_err(|e| e.to_string()),
-        Some(x) => Err(format!(
-            "non-string datetime {} in contract field {}",
-            x, field
-        )),
-        None => Err(format!("missing field {} in contract", field)),
-    }
 }
 
 pub fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>
@@ -81,6 +42,19 @@ where
         })?)),
         None => Ok(None),
     }
+}
+
+pub fn deserialize_timestamp<'de, D>(deser: D) -> Result<OffsetDateTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: i64 = Deserialize::deserialize(deser)?;
+    Ok(OffsetDateTime::from_unix_timestamp_nanos(s.into()))
+    /*
+        .map_err(|_| {
+        de::Error::invalid_value(de::Unexpected::Signed(s as i64), &"nanoseconds since the epoch")
+    })
+        */
 }
 
 /// The type of the derivative
@@ -98,6 +72,71 @@ pub enum DerivativeType {
 pub enum Type {
     Put,
     Call,
+}
+
+/// From <https://docs.ledgerx.com/reference/action-report-status-codes>
+#[derive(Deserialize, Debug)]
+#[serde(try_from = "usize")]
+pub enum StatusType {
+    Inserted,
+    CrossTrade,
+    NotFilled,
+    Cancelled,
+    CancelledAndReplaced,
+    MessageAcknowledged,
+    ContractNotFound,
+    OrderIdNotFound,
+    OrderIdInvalid,
+    OrderRejected,
+    InsufficientCollateral,
+    ContractExpired,
+    PriceThresholdExceeded,
+    ContractNotActive,
+    InvalidBlockSize,
+}
+
+impl TryFrom<usize> for StatusType {
+    type Error = String;
+    fn try_from(x: usize) -> Result<Self, Self::Error> {
+        match x {
+            200 => Ok(StatusType::Inserted),
+            201 => Ok(StatusType::CrossTrade),
+            202 => Ok(StatusType::NotFilled),
+            203 => Ok(StatusType::Cancelled),
+            204 => Ok(StatusType::CancelledAndReplaced),
+            300 => Ok(StatusType::MessageAcknowledged),
+            600 => Ok(StatusType::ContractNotFound),
+            601 => Ok(StatusType::OrderIdNotFound),
+            602 => Ok(StatusType::OrderIdInvalid),
+            607 => Ok(StatusType::OrderRejected),
+            609 => Ok(StatusType::InsufficientCollateral),
+            610 => Ok(StatusType::ContractExpired),
+            613 => Ok(StatusType::PriceThresholdExceeded),
+            614 => Ok(StatusType::ContractNotActive),
+            616 => Ok(StatusType::InvalidBlockSize),
+            _ => Err(format!("unknown status type {}", x)),
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(try_from = "usize")]
+pub enum StatusReason {
+    NoReason,
+    FullFill,
+    CancelledByExchange,
+}
+
+impl TryFrom<usize> for StatusReason {
+    type Error = String;
+    fn try_from(x: usize) -> Result<Self, Self::Error> {
+        match x {
+            0 => Ok(StatusReason::NoReason),
+            52 => Ok(StatusReason::FullFill),
+            53 => Ok(StatusReason::CancelledByExchange),
+            _ => Err(format!("unknown status reason {}", x)),
+        }
+    }
 }
 
 /// Copy of the "contract" as returned from the /contracts endpoint
@@ -128,9 +167,110 @@ pub struct Contract {
     pub name: Option<String>,
 }
 
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+pub struct DataFeedMeta {
+    index: usize,
+    max_index: usize,
+    #[serde(deserialize_with = "hex::serde::deserialize")]
+    manifest_id: [u8; 16],
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum DataFeedObject {
+    ActionReport {
+        contract_id: usize,
+        open_interest: usize,
+        #[serde(deserialize_with = "hex::serde::deserialize")]
+        mid: [u8; 16],
+        /// Will always be `customer_limit_order`
+        order_type: String,
+        price: Decimal,
+        size: u64,
+        inserted_price: Decimal,
+        inserted_size: u64,
+        filled_price: Decimal,
+        filled_size: u64,
+        original_price: Decimal,
+        original_size: u64,
+        /// volume-weighted average price the order has been filled at
+        vwap: Decimal,
+        is_ask: bool,
+        /// Whether the order auto-cancels at 4PM
+        is_volatile: bool,
+        #[serde(default)]
+        cid: Option<usize>,
+        #[serde(default)]
+        mpid: Option<usize>,
+        status_type: StatusType,
+        #[serde(default)]
+        status_reason: Option<StatusReason>,
+        /// "The current clock for the entire contract"
+        clock: u64,
+        #[serde(deserialize_with = "deserialize_timestamp")]
+        timestamp: OffsetDateTime,
+        #[serde(deserialize_with = "deserialize_timestamp")]
+        inserted_time: OffsetDateTime,
+        #[serde(deserialize_with = "deserialize_timestamp")]
+        updated_time: OffsetDateTime,
+        #[serde(default)]
+        _meta: Option<DataFeedMeta>,
+    },
+    UnauthSuccess {},
+    AuthSuccess {},
+    ContractAdded {
+        data: Contract,
+    },
+    ContractRemoved {
+        data: Contract,
+    },
+    TradeBusted {},
+    Meta {},
+    OpenPositionsUpdate {},
+    CollateralBalanceUpdate {},
+    ExposureReports {},
+    ContactAdded {},
+    ContactRemoved {},
+    ContactDisconnected {},
+    StateManifest {},
+    BookTop {
+        contract_id: usize,
+        ask: Decimal,
+        ask_size: u64,
+        bid: Decimal,
+        bid_size: u64,
+        /// "The current clock for the entire contract"
+        clock: u64,
+    },
+    /// Lol AFAICT this one is just undocumented
+    Heartbeat {},
+}
+
+#[derive(Deserialize, Debug)]
+pub struct BookStateMessage {
+    pub data: BookStateData,
+}
+#[derive(Deserialize, Debug)]
+pub struct BookStateData {
+    pub contract_id: usize,
+    pub book_states: Vec<BookState>,
+}
+#[derive(Deserialize, Debug)]
+pub struct BookState {
+    pub clock: u64,
+    pub contract_id: usize,
+    #[serde(deserialize_with = "hex::serde::deserialize")]
+    pub mid: [u8; 16],
+    pub is_ask: bool,
+    pub price: Decimal,
+    pub size: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, io, io::BufRead};
 
     #[test]
     fn fixed_vector_contracts() {
@@ -140,6 +280,17 @@ mod tests {
 
         for v in vecs {
             let _des: Contract = serde_json::from_str(v).expect("successful parse");
+        }
+    }
+
+    #[test]
+    fn fixed_vector_datafeed() {
+        let fh = fs::File::open("src/ledgerx/test-datafeed.json").unwrap();
+        let fh = io::BufReader::new(fh);
+        for json in fh.lines() {
+            let json = json.unwrap();
+            println!("{}", json);
+            serde_json::from_str::<DataFeedObject>(&json).expect("successful parse");
         }
     }
 }

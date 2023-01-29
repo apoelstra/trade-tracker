@@ -17,6 +17,7 @@
 //! Data structure representing a single option
 //!
 
+use crate::terminal::{format_color, format_redgreen};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::{fmt, str};
@@ -237,5 +238,74 @@ impl Option {
                 )
             }
         }
+    }
+
+    /// Print option data
+    pub fn print_option_data(&self, now: &time::OffsetDateTime, btc_price: Decimal) {
+        let dte = self.years_to_expiry(&now) * 365.0;
+        let dd80 = self.bs_dual_delta(&now, btc_price, 0.80).abs();
+        let intrinsic_str = if self.in_the_money(btc_price) {
+            format!(
+                "{:5.2}",
+                match self.pc {
+                    Call => btc_price - self.strike,
+                    Put => self.strike - btc_price,
+                }
+            )
+        } else {
+            " OTM ".into()
+        };
+
+        println!(
+            "{}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
+            format_color(format_args!("{:17}", self), 64, 192, 255),
+            format_redgreen(format_args!("{:6.2}", dte), dte, 90.0, 0.0),
+            btc_price,
+            intrinsic_str,
+            format_redgreen(format_args!("{:4.2}%", dd80 * 100.0), dd80, 0.1, 0.0),
+        );
+    }
+
+    /// Print black-scholes data
+    pub fn print_order_data(
+        &self,
+        now: &time::OffsetDateTime,
+        btc_price: Decimal,
+        self_price: Decimal,
+        size: u64,
+    ) {
+        let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(&now, btc_price, self_price) {
+            let theta = self.bs_theta(&now, btc_price, vol);
+            (
+                format_redgreen(format_args!("{:3.2}", vol * 100.0), vol, 0.5, 1.5),
+                format_redgreen(
+                    format_args!("{:6.2}", theta),
+                    theta,
+                    0.0,
+                    -self_price.to_f64().unwrap(),
+                ),
+            )
+        } else {
+            ("XXX".into(), "XXX".into())
+        };
+        let total = self_price * Decimal::from(size) / Decimal::from(100);
+        println!(
+            "${} [size: {} total: {}]  Vol: {}%  Theta: {}",
+            format_redgreen(
+                format_args!("{:8.2}", self_price),
+                self_price.to_f64().unwrap().log10(),
+                1.0,
+                3.0
+            ),
+            format_redgreen(format_args!("{:4}", size), (size as f64).log10(), 1.0, 4.0),
+            format_redgreen(
+                format_args!("{:8.2}", total),
+                total.to_f64().unwrap().log10(),
+                1.5,
+                5.0
+            ),
+            vol_str,
+            theta_str,
+        );
     }
 }

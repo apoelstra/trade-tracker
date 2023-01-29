@@ -20,7 +20,7 @@
 use crate::{ledgerx::json, option};
 use rust_decimal::Decimal;
 use serde::Deserialize;
-use std::convert::TryFrom;
+use std::{convert::TryFrom, fmt};
 use time::OffsetDateTime;
 
 /// Type of contract
@@ -45,20 +45,60 @@ pub enum Type {
     },
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+pub struct ContractId(usize);
+
+impl From<usize> for ContractId {
+    fn from(u: usize) -> Self {
+        ContractId(u)
+    }
+}
+
+impl fmt::Display for ContractId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Structure representing a contract
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 #[serde(try_from = "json::Contract")]
 pub struct Contract {
     /// Contract ID
-    pub id: usize,
+    id: ContractId,
+    /// Whether the contract is active
+    active: bool,
     /// Whether the contract is a put or a call
-    pub ty: Type,
+    ty: Type,
     /// Underlying physical asset
-    pub underlying: super::Asset,
+    underlying: super::Asset,
     /// Human-readable label
-    pub label: String,
+    label: String,
     /// Multiplier (100 for BTC options, 10 for ETH options)
-    pub multiplier: usize,
+    multiplier: usize,
+}
+
+impl Contract {
+    /// Accessor for contract ID
+    pub fn id(&self) -> ContractId {
+        self.id
+    }
+    /// Whether the contract is active
+    pub fn active(&self) -> bool {
+        self.active
+    }
+    /// Type of the contract
+    pub fn ty(&self) -> Type {
+        self.ty
+    }
+    /// Underlying asset type
+    pub fn underlying(&self) -> super::Asset {
+        self.underlying
+    }
+    /// Contract label
+    pub fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 impl TryFrom<json::Contract> for Contract {
@@ -84,7 +124,8 @@ impl TryFrom<json::Contract> for Contract {
             json::DerivativeType::DayAheadSwap => Type::NextDay { expiry },
         };
         Ok(Contract {
-            id: js.id,
+            id: ContractId(js.id),
+            active: js.active,
             ty,
             underlying: js.underlying_asset,
             multiplier: js.multiplier,
@@ -94,52 +135,6 @@ impl TryFrom<json::Contract> for Contract {
 }
 
 impl Contract {
-    /// Parse a contract from the JSON output from the LX /contracts API
-    pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
-        let json = match json {
-            serde_json::Value::Object(json) => json,
-            _ => return Err(format!("contract json was not an object: {json}")),
-        };
-
-        let expiry = json::parse_datetime(&json, "date_expires")?;
-        let ty = match (
-            json.get("derivative_type").and_then(|js| js.as_str()),
-            json.get("is_call"),
-        ) {
-            (Some("options_contract"), Some(serde_json::Value::Bool(true))) => Type::Option {
-                exercise_date: json::parse_datetime(&json, "date_exercise")?,
-                opt: option::Option::new_call(
-                    Decimal::from(json::parse_num(&json, "strike_price")?) / Decimal::from(100),
-                    expiry,
-                ),
-            },
-            (Some("options_contract"), Some(serde_json::Value::Bool(false))) => Type::Option {
-                exercise_date: json::parse_datetime(&json, "date_exercise")?,
-                opt: option::Option::new_put(
-                    Decimal::from(json::parse_num(&json, "strike_price")?) / Decimal::from(100),
-                    expiry,
-                ),
-            },
-            (Some("day_ahead_swap"), Some(serde_json::Value::Null)) => Type::NextDay { expiry },
-            (Some("future_contract"), Some(serde_json::Value::Null)) => Type::Future { expiry },
-            _ => {
-                return Err(format!(
-                    "Could not make sense of contract derivative_type/is_call fields {:?} {:?}",
-                    json.get("derivative_type"),
-                    json.get("is_call"),
-                ))
-            }
-        };
-
-        Ok(Contract {
-            id: json::parse_num(&json, "id")? as usize,
-            ty,
-            underlying: json::parse_asset(&json, "underlying_asset")?,
-            multiplier: json::parse_num(&json, "multiplier")? as usize,
-            label: json::parse_string(&json, "label")?,
-        })
-    }
-
     /// For a put or a call, return the option
     pub fn as_option(&self) -> Option<option::Option> {
         match self.ty {
@@ -161,7 +156,8 @@ mod tests {
         assert_eq!(
             contract,
             Contract {
-                id: 22256321,
+                id: ContractId(22256321),
+                active: true,
                 ty: Type::Option {
                     exercise_date: OffsetDateTime::parse("2023-12-29 22:00:00+0000", "%F %T%z")
                         .unwrap(),
@@ -186,7 +182,8 @@ mod tests {
         assert_eq!(
             contract,
             Contract {
-                id: 22256298,
+                id: ContractId(22256298),
+                active: true,
                 ty: Type::Option {
                     exercise_date: OffsetDateTime::parse("2023-12-29 22:00:00+0000", "%F %T%z")
                         .unwrap(),
@@ -212,7 +209,8 @@ mod tests {
         assert_eq!(
             contract,
             Contract {
-                id: 22256348,
+                id: ContractId(22256348),
+                active: false,
                 ty: Type::NextDay {
                     expiry: OffsetDateTime::parse("2023-02-14 21:00:00+0000", "%F %T%z").unwrap(),
                 },
@@ -231,7 +229,8 @@ mod tests {
         assert_eq!(
             contract,
             Contract {
-                id: 22256410,
+                id: ContractId(22256410),
+                active: true,
                 ty: Type::Future {
                     expiry: OffsetDateTime::parse("2023-03-31 21:00:00+0000", "%F %T%z").unwrap(),
                 },

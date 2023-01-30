@@ -89,7 +89,6 @@ impl BookState {
     ) -> (u64, Decimal) {
         let mut ret_usd = Decimal::from(0);
         let mut ret_contr = 0;
-        println!("Start clear loop for option {}", option);
         for (_, order) in self.bids.iter() {
             let (max_sale, usd_per_contract) = match option.pc {
                 // For a call, we can sell as many as we have BTC to support
@@ -101,7 +100,6 @@ impl BookState {
                 Put => {
                     let locked_per_100 = option.strike - order.price + Decimal::from(25);
                     let locked_per_1 = locked_per_100 / Decimal::from(100);
-                    println!("locked_per_1 {}  max_usd {}", locked_per_1, max_usd);
                     ((max_usd / locked_per_1).to_u64().unwrap(), locked_per_1)
                 }
             };

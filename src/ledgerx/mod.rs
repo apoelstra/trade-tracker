@@ -235,24 +235,29 @@ impl LedgerX {
 
     /// Go through the list of all contracts we're tracking and log the interesting ones
     pub fn log_interesting_contracts(&self) {
-        for (_, &(ref c, ref book)) in &self.contracts {
-            // If this is an "interesting" contract then log it
-            if let Some(opt) = c.as_option() {
-                let (btc_price, now) = self.current_price();
-                if !opt.in_the_money(btc_price) && opt.expiry >= now {
-                    let option = c.as_option().unwrap();
-                    let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
-                    if ddelta80.abs() < 0.01 {
-                        println!("");
-                        print!("Interesting contract: ");
-                        option.print_option_data(now, btc_price);
-                        let (contr, usd) =
-                            book.clear_bids(&option, self.available_usd, self.available_btc);
-                        if contr > 0 {
-                            let avg = usd / Decimal::from(contr) * Decimal::from(c.multiplier());
-                            print!("      Order to clear: ");
-                            option.print_order_data(now, btc_price, avg, contr);
-                        }
+        for &(ref c, ref book) in self.contracts.values() {
+            self.log_interesting_contract(c, book);
+        }
+    }
+
+    /// Log a single interesting contract
+    fn log_interesting_contract(&self, c: &Contract, book: &BookState) {
+        // If this is an "interesting" contract then log it
+        if let Some(opt) = c.as_option() {
+            let (btc_price, now) = self.current_price();
+            if !opt.in_the_money(btc_price) && opt.expiry >= now {
+                let option = c.as_option().unwrap();
+                let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
+                if ddelta80.abs() < 0.01 {
+                    println!("");
+                    print!("Interesting contract: ");
+                    option.print_option_data(now, btc_price);
+                    let (contr, usd) =
+                        book.clear_bids(&option, self.available_usd, self.available_btc);
+                    if contr > 0 {
+                        let avg = usd / Decimal::from(contr) * Decimal::from(c.multiplier());
+                        print!("      Order to clear: ");
+                        option.print_order_data(now, btc_price, avg, contr);
                     }
                 }
             }
@@ -264,12 +269,15 @@ impl LedgerX {
     /// Some checks will be done as to whether this is an "interesting" option
     /// at the current price, and if so, we print a log message.
     pub fn add_contract(&mut self, c: Contract) {
+        println!("Add contract {}: {}", c.id(), c.label());
         self.contracts.insert(c.id(), (c, BookState::new()));
     }
 
     /// Remove a contract from the tracker
     pub fn remove_contract(&mut self, c_id: ContractId) {
-        self.contracts.remove(&c_id);
+        if let Some((c, _)) = self.contracts.remove(&c_id) {
+            println!("Remove contract {}: {}", c.id(), c.label());
+        }
     }
 
     /// Inserts a new order into the book
@@ -335,6 +343,11 @@ impl LedgerX {
     ) {
         for order in data.data.book_states {
             self.insert_order(Order::from((order, timestamp)));
+        }
+        if let Some(&(ref c, ref book)) =
+            self.contracts.get(&ContractId::from(data.data.contract_id))
+        {
+            self.log_interesting_contract(c, book);
         }
     }
 }

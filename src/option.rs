@@ -298,7 +298,7 @@ impl Option {
             format_redgreen(format_args!("{:6.2}", dte), dte, 90.0, 0.0),
             btc_price,
             intrinsic_str,
-            format_redgreen(format_args!("{:4.2}%", dd80 * 100.0), dd80, 0.1, 0.0),
+            format_redgreen(format_args!("{:4.2}%", dd80 * 100.0), dd80, 0.15, 0.0),
         );
     }
 
@@ -313,7 +313,7 @@ impl Option {
         let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(now, btc_price, self_price) {
             let theta = self.bs_theta(now, btc_price, vol);
             (
-                format_redgreen(format_args!("{:3.2}", vol * 100.0), vol, 0.5, 1.5),
+                format_redgreen(format_args!("{:3.2}", vol * 100.0), vol, 0.5, 1.2),
                 format_redgreen(
                     format_args!("{:6.2}", theta),
                     theta,

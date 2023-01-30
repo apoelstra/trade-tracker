@@ -235,10 +235,10 @@ pub enum DataFeedObject {
     UnauthSuccess {},
     AuthSuccess {},
     ContractAdded {
-        data: Contract,
+        data: crate::ledgerx::Contract,
     },
     ContractRemoved {
-        data: Contract,
+        data: crate::ledgerx::Contract,
     },
     TradeBusted {},
     Meta {},

@@ -17,7 +17,7 @@
 //! Streaming data from the data feed
 //!
 
-use super::{json, ContractId};
+use super::{json, Contract, ContractId};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -63,7 +63,7 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
 }
 
 /// Object from the data stream
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 #[serde(from = "json::DataFeedObject")]
 pub enum Object {
     /// A customer limit order
@@ -79,6 +79,8 @@ pub enum Object {
         btc: Decimal,
         usd: Decimal,
     },
+    ContractAdded(Contract),
+    ContractRemoved(ContractId),
     Other,
 }
 
@@ -121,6 +123,8 @@ impl From<json::DataFeedObject> for Object {
                     usd: collateral.available_balances.usd / Decimal::from(100),
                 }
             }
+            json::DataFeedObject::ContractAdded { data } => Object::ContractAdded(data),
+            json::DataFeedObject::ContractRemoved { data } => Object::ContractRemoved(data.id()),
             _ => Object::Other,
         }
     }

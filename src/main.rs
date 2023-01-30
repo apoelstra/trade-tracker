@@ -205,7 +205,7 @@ fn main() -> Result<(), anyhow::Error> {
             }
             println!("Loaded contracts. Watching feed.");
 
-            let mut last_update = now - time::Duration::minutes(59);
+            let mut last_update = now;
             loop {
                 let mut sock = tungstenite::client::connect(format!(
                     "wss://api.ledgerx.com/ws?token={}",
@@ -224,6 +224,15 @@ fn main() -> Result<(), anyhow::Error> {
                         datafeed::Object::AvailableBalances { usd, btc } => {
                             tracker.set_balances(usd, btc);
                         }
+                        datafeed::Object::ContractAdded(contr) => {
+                            cid_tx
+                                .send(contr.id())
+                                .expect("book-states endpoint thread has not panicked");
+                            tracker.add_contract(contr);
+                        }
+                        datafeed::Object::ContractRemoved(cid) => {
+                            tracker.remove_contract(cid);
+                        }
                     }
 
                     // Initialize at most one contract every message. FIXME parallelize this
@@ -232,7 +241,7 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     let update_time = time::OffsetDateTime::now_utc();
-                    if update_time - last_update > time::Duration::hours(1) {
+                    if update_time - last_update > time::Duration::hours(4) {
                         tracker.log_interesting_contracts();
                         last_update = update_time;
                     }

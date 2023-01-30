@@ -165,6 +165,35 @@ impl Option {
         }
     }
 
+    /// Given a certain amount of BTC and USD, determine how many of this option
+    /// we could short on LX without running out of cash/collateral.
+    ///
+    /// Assumes a fee on puts of $25/100 contracts. Returns the number of contracts
+    /// that could be sold along with the cost in USD of each
+    pub fn max_sale(
+        &self,
+        sale_price: Decimal,
+        available_usd: Decimal,
+        available_btc: Decimal,
+    ) -> (u64, Decimal) {
+        match self.pc {
+            // For a call, we can sell as many as we have BTC to support
+            Call => (
+                (available_btc * Decimal::from(100)).to_u64().unwrap(),
+                Decimal::from(0),
+            ),
+            // For a put it's a little more involved
+            Put => {
+                let locked_per_100 = self.strike - sale_price + Decimal::from(25);
+                let locked_per_1 = locked_per_100 / Decimal::from(100);
+                (
+                    (available_usd / locked_per_1).to_u64().unwrap(),
+                    locked_per_1,
+                )
+            }
+        }
+    }
+
     /// Compute the price of the option at a given volatility
     pub fn bs_price(&self, now: OffsetDateTime, btc_price: Decimal, volatility: f64) -> f64 {
         match self.pc {

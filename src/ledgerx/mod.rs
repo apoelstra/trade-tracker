@@ -32,6 +32,75 @@ pub use book::BookState;
 pub use contract::{Contract, ContractId};
 pub use datafeed::{BidAsk::Ask, BidAsk::Bid, ManifestId, Order};
 
+/// Thresholds of interestingness
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Interestingness {
+    pub min_arr: f64,
+    pub min_vol: f64,
+    pub max_loss80: f64,
+    pub min_size: u64,
+    pub min_yield: Decimal,
+}
+
+/// Threshold for a bid to be interesting enough for us to snipe
+pub static BID_INTERESTING: Interestingness = Interestingness {
+    min_arr: 0.05,
+    min_vol: 0.5,
+    max_loss80: 0.20,
+    min_size: 1,
+    min_yield: Decimal::TEN,
+};
+/// Threshold for a ask to be interesting enough for us to match
+pub static ASK_INTERESTING: Interestingness = Interestingness {
+    min_arr: 0.10,
+    min_vol: 0.75,
+    max_loss80: 0.10,
+    min_size: 1,
+    min_yield: Decimal::ZERO,
+};
+
+impl Interestingness {
+    pub fn is_interesting(
+        &self,
+        opt: &crate::option::Option,
+        now: OffsetDateTime,
+        btc_price: Decimal,
+        order_price: Decimal,
+        order_size: u64,
+    ) -> bool {
+        // Easy check: size
+        if order_size < self.min_size {
+            return false;
+        }
+        if order_price * Decimal::from(order_size) / Decimal::from(100) < self.min_yield {
+            return false;
+        }
+        // Next, if the option is "free money" we consider it uninteresting for
+        // now. We will do a manual free-money check where it makessense.
+        let vol = match opt.bs_iv(now, btc_price, order_price) {
+            Ok(vol) => vol,
+            Err(_) => return false,
+        };
+
+        let arr = opt.arr(now, btc_price, order_price);
+        let loss80 = opt.bs_loss80(now, btc_price, order_price).abs();
+
+        if opt.in_the_money(btc_price) {
+            return false;
+        } // Ignore ITM bids, we don't really have a strategy for shorting ITMs
+        if arr < self.min_arr {
+            return false;
+        } // ignore low-yield bids
+        if loss80 > self.max_loss80 {
+            return false;
+        } // ignore bids with high likelihood of loss
+        if vol < self.min_vol {
+            return false;
+        }
+        true
+    }
+}
+
 /// The underlying physical asset
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub enum Asset {
@@ -159,6 +228,9 @@ impl LedgerX {
             // Log the contract itself
             if let Some(opt) = c.as_option() {
                 if !opt.in_the_money(btc_price) && opt.expiry >= now {
+                    let (bid, bid_size) = book.best_bid();
+                    let (ask, ask_size) = book.best_ask();
+
                     let option = c.as_option().unwrap();
                     let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
                     if ddelta80.abs() < 0.01 {
@@ -172,6 +244,20 @@ impl LedgerX {
                             print!("      Order to clear: ");
                             option.print_order_data(now, btc_price, avg, contr);
                         }
+
+                        print!("            Best bid: ");
+                        opt.print_order_data(now, btc_price, bid, bid_size);
+                        print!(" Best ask (max size): ");
+                        let (max_ask_size, _) =
+                            option.max_sale(ask, self.available_usd, self.available_btc);
+                        opt.print_order_data(now, btc_price, ask, max_ask_size);
+                        c.last_log = Some(now);
+                    } else if ASK_INTERESTING.is_interesting(&opt, now, btc_price, ask, ask_size) {
+                        println!("");
+                        print!("Could match ask: ");
+                        opt.print_option_data(now, btc_price);
+                        print!("    Price: ");
+                        opt.print_order_data(now, btc_price, ask, ask_size);
                         c.last_log = Some(now);
                     }
                 }

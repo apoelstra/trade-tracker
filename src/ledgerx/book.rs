@@ -19,7 +19,6 @@
 
 use super::{Ask, Bid, ManifestId, Order};
 use crate::option::{Call, Put};
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::cmp;
 use std::collections::BTreeMap;
@@ -91,19 +90,7 @@ impl BookState {
         let mut ret_usd = Decimal::from(0);
         let mut ret_contr = 0;
         for (_, order) in self.bids.iter() {
-            let (max_sale, usd_per_contract) = match option.pc {
-                // For a call, we can sell as many as we have BTC to support
-                Call => (
-                    (max_btc * Decimal::from(100)).to_u64().unwrap(),
-                    Decimal::from(0),
-                ),
-                // For a put it's a little more involved
-                Put => {
-                    let locked_per_100 = option.strike - order.price + Decimal::from(25);
-                    let locked_per_1 = locked_per_100 / Decimal::from(100);
-                    ((max_usd / locked_per_1).to_u64().unwrap(), locked_per_1)
-                }
-            };
+            let (max_sale, usd_per_contract) = option.max_sale(order.price, max_usd, max_btc);
             let sale = cmp::min(max_sale, order.size);
             if sale == 0 {
                 break;
@@ -154,22 +141,7 @@ fn log_bid_if_interesting(
     let btc_price = (btc_bid + btc_ask) / Decimal::from(2);
     // For bids, we need to be able to compute volatility (otherwise
     // this is a "free money" bid, which we don't want to be short.
-    if let Ok(vol) = opt.bs_iv(now, btc_price, order.price) {
-        let arr = opt.arr(now, btc_price, order.price);
-        let ddelta80 = opt.bs_dual_delta(now, btc_price, 0.80).abs();
-
-        if opt.in_the_money(btc_price) {
-            return;
-        } // Ignore ITM bids, we don't really have a strategy for shorting ITMs
-        if arr < 0.05 {
-            return;
-        } // ignore low-yield bids
-        if ddelta80 > 0.25 {
-            return;
-        } // ignore bids with high likelihood of getting assigned
-        if vol < 0.5 {
-            return;
-        } // ignore bids with low volatility
+    if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order.size) {
         println!("");
         print!("Interesting bid: ");
         opt.print_option_data(now, btc_price);

@@ -33,7 +33,7 @@ pub enum BidAsk {
 }
 pub use BidAsk::{Ask, Bid};
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Order {
     /// Whether the order is a bid or an ask
     pub bid_ask: BidAsk,
@@ -47,6 +47,8 @@ pub struct Order {
     pub manifest_id: ManifestId,
     /// Timestamp that the order occured on
     pub timestamp: OffsetDateTime,
+    /// The most recent time this order was logged as "interesting"
+    pub last_log: Option<OffsetDateTime>,
 }
 
 impl From<(json::BookState, OffsetDateTime)> for Order {
@@ -58,6 +60,7 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
             price: data.0.price / Decimal::from(100),
             manifest_id: ManifestId(data.0.mid),
             timestamp: data.1,
+            last_log: None,
         }
     }
 }
@@ -102,6 +105,7 @@ impl From<json::DataFeedObject> for Object {
                 price: price / Decimal::from(100),
                 bid_ask: if is_ask { Ask } else { Bid },
                 timestamp,
+                last_log: None,
             }),
             json::DataFeedObject::BookTop {
                 contract_id,
@@ -151,6 +155,7 @@ mod tests {
                     0x77, 0x60, 0x00,
                 ]),
                 timestamp: OffsetDateTime::from_unix_timestamp_nanos(1674839748016616735),
+                last_log: None,
             })
         );
     }

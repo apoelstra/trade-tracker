@@ -23,6 +23,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::cmp;
 use std::collections::BTreeMap;
+use time::OffsetDateTime;
 
 /// Book state for a specific contract
 #[derive(Clone, PartialEq, Eq, Debug, Default, Hash)]
@@ -116,5 +117,115 @@ impl BookState {
             }
         }
         (ret_contr, ret_usd)
+    }
+
+    pub fn log_interesting_orders(
+        &mut self,
+        opt: &crate::option::Option,
+        now: OffsetDateTime,
+        btc_bid: Decimal,
+        btc_ask: Decimal,
+    ) {
+        for bid in self.bids.values_mut() {
+            log_bid_if_interesting(bid, opt, now, btc_bid, btc_ask);
+        }
+        for ask in self.asks.values_mut() {
+            log_ask_if_interesting(ask, opt, now, btc_bid, btc_ask);
+        }
+    }
+}
+
+fn log_bid_if_interesting(
+    order: &mut Order,
+    opt: &crate::option::Option,
+    now: OffsetDateTime,
+    btc_bid: Decimal,
+    btc_ask: Decimal,
+) {
+    if let Some(last_log) = order.last_log {
+        // Refuse to log the same order more than once every 4 hours
+        if now - last_log < time::Duration::hours(4) {
+            return;
+        }
+    }
+    // For bids we'll just use the midpoint since we're not thinking
+    // about any short-option-delta-neutral strategies. If we were
+    // trying to go delta-neutral we should use the best BTC ask instead.
+    let btc_price = (btc_bid + btc_ask) / Decimal::from(2);
+    // For bids, we need to be able to compute volatility (otherwise
+    // this is a "free money" bid, which we don't want to be short.
+    if let Ok(vol) = opt.bs_iv(now, btc_price, order.price) {
+        let arr = opt.arr(now, btc_price, order.price);
+        let ddelta80 = opt.bs_dual_delta(now, btc_price, 0.80).abs();
+
+        if opt.in_the_money(btc_price) {
+            return;
+        } // Ignore ITM bids, we don't really have a strategy for shorting ITMs
+        if arr < 0.05 {
+            return;
+        } // ignore low-yield bids
+        if ddelta80 > 0.25 {
+            return;
+        } // ignore bids with high likelihood of getting assigned
+        if vol < 0.5 {
+            return;
+        } // ignore bids with low volatility
+        println!("");
+        print!("Interesting bid: ");
+        opt.print_option_data(now, btc_price);
+        print!("    Price: ");
+        opt.print_order_data(now, btc_price, order.price, order.size);
+
+        order.last_log = Some(now);
+    }
+}
+
+fn log_ask_if_interesting(
+    order: &mut Order,
+    opt: &crate::option::Option,
+    now: OffsetDateTime,
+    btc_bid: Decimal,
+    btc_ask: Decimal,
+) {
+    if let Some(last_log) = order.last_log {
+        // Refuse to log the same order more than once every 4 hours
+        if now - last_log < time::Duration::hours(4) {
+            return;
+        }
+    }
+    // Add a fudge factor because there's a race condition involved in
+    // executing on something like this, so we want a nontrivial payout
+    let btc_price = if opt.pc == crate::option::Call {
+        btc_bid - Decimal::from(150)
+    } else {
+        btc_ask + Decimal::from(150)
+    };
+    // Asks are only interesting if they're "free money", that is, if we
+    // can open a delta-neutral position which is guaranteed to pay out
+    if order.price < opt.intrinsic_value(btc_price) {
+        println!("");
+        print!("Apparent free money offer: ");
+        opt.print_option_data(now, btc_price);
+        print!("    Price: ");
+        opt.print_order_data(now, btc_price, order.price, order.size);
+        if opt.pc == crate::option::Call {
+            println!(
+                "       (strike {} + price {} is {}, vs BTC price {}",
+                opt.strike,
+                order.price,
+                opt.strike + order.price,
+                btc_price,
+            );
+        } else {
+            println!(
+                "       (strike {} - price {} is {}, vs BTC price {}",
+                opt.strike,
+                order.price,
+                opt.strike - order.price,
+                btc_price,
+            );
+        }
+
+        order.last_log = Some(now);
     }
 }

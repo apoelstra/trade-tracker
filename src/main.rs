@@ -241,7 +241,10 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     let update_time = time::OffsetDateTime::now_utc();
-                    if update_time - last_update > time::Duration::hours(4) {
+                    if update_time - last_update > time::Duration::seconds(30) {
+                        if update_time.hour() != last_update.hour() {
+                            println!("Time changed to {}", update_time);
+                        }
                         tracker.log_interesting_contracts();
                         last_update = update_time;
                     }

@@ -258,6 +258,32 @@ impl Option {
         }
     }
 
+    /// Compute the "loss 80" which is the probability that the option will wind up
+    /// so far ITM that even the premium is lost
+    pub fn bs_loss80(&self, now: OffsetDateTime, btc_price: Decimal, self_price: Decimal) -> f64 {
+        let vol = 0.8;
+        match self.pc {
+            Call => {
+                crate::local_bs::call_dual_delta(
+                    btc_price.to_f64().unwrap(),
+                    self.strike.to_f64().unwrap() + self_price.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    self.years_to_expiry(now),
+                )
+            }
+            Put => {
+                crate::local_bs::put_dual_delta(
+                    btc_price.to_f64().unwrap(),
+                    self.strike.to_f64().unwrap() - self_price.to_f64().unwrap(),
+                    0.04f64, // risk free rate
+                    vol,
+                    self.years_to_expiry(now),
+                )
+            }
+        }
+    }
+
     /// Compute the dual delta of the option at a given price
     pub fn bs_delta(&self, now: OffsetDateTime, btc_price: Decimal, vol: f64) -> f64 {
         match self.pc {
@@ -326,8 +352,11 @@ impl Option {
         };
         let total = self_price * Decimal::from(size) / Decimal::from(100);
         let arr = self.arr(now, btc_price, self_price);
+        // The "loss 80" is the likelihood that the option will end so far ITM that
+        // even with preimum, it's a net loss, at an assumed 80% volatility
+        let loss80 = self.bs_loss80(now, btc_price, self_price).abs();
         println!(
-            "${} x {} = {}  sigma: {}%  ARR: {}%, Theta: {}",
+            "${} x {} = {}  sigma: {}%  ARR: {}%, Theta: {}  loss80: {}",
             format_redgreen(
                 format_args!("{:8.2}", self_price),
                 self_price.to_f64().unwrap().log10(),
@@ -344,6 +373,7 @@ impl Option {
             vol_str,
             format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2),
             theta_str,
+            format_redgreen(format_args!("{:4.2}%", loss80 * 100.0), loss80, 0.15, 0.0),
         );
     }
 }

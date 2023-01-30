@@ -74,6 +74,8 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LedgerX {
     contracts: HashMap<ContractId, (Contract, BookState)>,
+    available_usd: Decimal,
+    available_btc: Decimal,
     last_btc_bid: Decimal,
     last_btc_ask: Decimal,
     last_btc_time: OffsetDateTime,
@@ -202,10 +204,21 @@ impl LedgerX {
     pub fn new(btc_price: crate::price::BitcoinPrice) -> Self {
         LedgerX {
             contracts: HashMap::new(),
+            available_usd: Decimal::from(0),
+            available_btc: Decimal::from(0),
             last_btc_bid: btc_price.btc_price,
             last_btc_ask: btc_price.btc_price,
             last_btc_time: btc_price.timestamp,
         }
+    }
+
+    /// Sets the "available balances" counter
+    pub fn set_balances(&mut self, usd: Decimal, btc: Decimal) {
+        if self.available_usd != usd || self.available_btc != btc {
+            println!("Update balances: ${}, {} BTC", usd, btc);
+        }
+        self.available_usd = usd;
+        self.available_btc = btc;
     }
 
     /// Returns the current BTC price, as seen by the tracker
@@ -233,7 +246,8 @@ impl LedgerX {
                         println!("");
                         print!("Interesting contract: ");
                         option.print_option_data(now, btc_price);
-                        let (contr, usd) = book.clear_bids();
+                        let (contr, usd) =
+                            book.clear_bids(&option, self.available_usd, self.available_btc);
                         if contr > 0 {
                             let avg = usd / Decimal::from(contr) * Decimal::from(c.multiplier());
                             print!("      Order to clear: ");

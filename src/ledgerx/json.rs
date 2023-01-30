@@ -177,6 +177,21 @@ pub struct DataFeedMeta {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct Balances {
+    #[serde(rename = "USD")]
+    pub usd: Decimal,
+    #[serde(rename = "CBTC")]
+    pub btc: Decimal,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct AllBalances {
+    pub available_balances: Balances,
+    pub deliverable_locked_balances: Balances,
+    pub position_locked_balances: Balances,
+}
+
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum DataFeedObject {
     ActionReport {
@@ -228,7 +243,9 @@ pub enum DataFeedObject {
     TradeBusted {},
     Meta {},
     OpenPositionsUpdate {},
-    CollateralBalanceUpdate {},
+    CollateralBalanceUpdate {
+        collateral: AllBalances,
+    },
     ExposureReports {},
     ContactAdded {},
     ContactRemoved {},

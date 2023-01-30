@@ -75,6 +75,10 @@ pub enum Object {
         bid: Decimal,
         bid_size: u64,
     },
+    AvailableBalances {
+        btc: Decimal,
+        usd: Decimal,
+    },
     Other,
 }
 
@@ -111,6 +115,12 @@ impl From<json::DataFeedObject> for Object {
                 bid: bid / Decimal::from(100),
                 bid_size,
             },
+            json::DataFeedObject::CollateralBalanceUpdate { collateral } => {
+                Object::AvailableBalances {
+                    btc: collateral.available_balances.btc / Decimal::from(100000000),
+                    usd: collateral.available_balances.usd / Decimal::from(100),
+                }
+            }
             _ => Object::Other,
         }
     }

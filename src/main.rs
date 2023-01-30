@@ -27,7 +27,13 @@ pub mod trade;
 use anyhow::Context;
 use clap::Clap;
 use rust_decimal::Decimal;
-use std::{convert::TryInto, fs, path::PathBuf};
+use std::{
+    convert::TryInto,
+    fs,
+    path::PathBuf,
+    sync::mpsc::{channel, Receiver, Sender},
+    thread,
+};
 
 use ledgerx::{datafeed, LedgerX};
 use price::Historic;
@@ -184,35 +190,22 @@ fn main() -> Result<(), anyhow::Error> {
             println!("BTC price: {}", current_price);
             println!("Risk-free rate: 4% (assumed)");
 
-            let mut bscount = 0;
             let mut tracker = LedgerX::new(current_price);
+            let (cid_tx, book_state_rx) = spawn_contract_lookup_thread(api_key.clone());
             for contr in all_contracts {
                 // Ignore expired and non-BTC options
                 if !contr.active() || contr.underlying() != ledgerx::Asset::Btc {
                     continue;
                 }
 
-                let id = contr.id(); // save ID before moving into tracker
+                cid_tx
+                    .send(contr.id())
+                    .expect("book-states endpoint thread has not panicked");
                 tracker.add_contract(contr);
-                let book_state =
-                    minreq::get(format!("https://trade.ledgerx.com/api/book-states/{}", id))
-                        .with_header("Authorization", format!("JWT {}", api_key))
-                        .with_timeout(10)
-                        .send()
-                        .with_context(|| "getting data from trading/contracts endpoint")?
-                        .into_bytes();
-                let reply: ledgerx::json::BookStateMessage = serde_json::from_slice(&book_state)
-                    .with_context(|| "parsing book state from json")?;
-                tracker.initialize_orderbooks(reply, now);
-                bscount += 1;
             }
-            tracker.log_interesting_contracts();
-            println!(
-                "Loaded contracts ({} calls to book-states endpoint). Watching feed.",
-                bscount
-            );
+            println!("Loaded contracts. Watching feed.");
 
-            let mut last_update = now;
+            let mut last_update = now - time::Duration::minutes(59);
             loop {
                 let mut sock = tungstenite::client::connect(format!(
                     "wss://api.ledgerx.com/ws?token={}",
@@ -228,6 +221,14 @@ fn main() -> Result<(), anyhow::Error> {
                         datafeed::Object::Order(order) => {
                             tracker.insert_order(order);
                         }
+                        datafeed::Object::AvailableBalances { usd, btc } => {
+                            tracker.set_balances(usd, btc);
+                        }
+                    }
+
+                    // Initialize at most one contract every message. FIXME parallelize this
+                    if let Ok(reply) = book_state_rx.try_recv() {
+                        tracker.initialize_orderbooks(reply, now);
                     }
 
                     let update_time = time::OffsetDateTime::now_utc();
@@ -241,4 +242,33 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+fn spawn_contract_lookup_thread(
+    api_key: String,
+) -> (
+    Sender<ledgerx::ContractId>,
+    Receiver<ledgerx::json::BookStateMessage>,
+) {
+    let (tx_cid, rx_cid) = channel();
+    let (tx_resp, rx_resp) = channel();
+    thread::spawn(move || {
+        for contract_id in rx_cid.iter() {
+            let book_state = minreq::get(format!(
+                "https://trade.ledgerx.com/api/book-states/{}",
+                contract_id
+            ))
+            .with_header("Authorization", format!("JWT {}", api_key))
+            .with_timeout(10)
+            .send()
+            .with_context(|| "getting data from trading/contracts endpoint")
+            .expect("accessing book-states endpoint")
+            .into_bytes();
+            let reply: ledgerx::json::BookStateMessage = serde_json::from_slice(&book_state)
+                .with_context(|| "parsing book state from json")
+                .expect("parsing json from book-states endpoint");
+            tx_resp.send(reply).unwrap();
+        }
+    });
+    (tx_cid, rx_resp)
 }

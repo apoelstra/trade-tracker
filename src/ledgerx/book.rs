@@ -18,7 +18,10 @@
 //!
 
 use super::{Ask, Bid, ManifestId, Order};
+use crate::option::{Call, Put};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use std::cmp;
 use std::collections::BTreeMap;
 
 /// Book state for a specific contract
@@ -78,12 +81,41 @@ impl BookState {
     }
 
     /// Returns the (cost in contracts, gain in USD) of selling into every bid
-    pub fn clear_bids(&self) -> (u64, Decimal) {
+    pub fn clear_bids(
+        &self,
+        option: &crate::option::Option,
+        mut max_usd: Decimal,
+        mut max_btc: Decimal,
+    ) -> (u64, Decimal) {
         let mut ret_usd = Decimal::from(0);
         let mut ret_contr = 0;
+        println!("Start clear loop for option {}", option);
         for (_, order) in self.bids.iter() {
-            ret_usd += order.price * Decimal::from(order.size) / Decimal::from(100);
-            ret_contr += order.size;
+            let (max_sale, usd_per_contract) = match option.pc {
+                // For a call, we can sell as many as we have BTC to support
+                Call => (
+                    (max_btc * Decimal::from(100)).to_u64().unwrap(),
+                    Decimal::from(0),
+                ),
+                // For a put it's a little more involved
+                Put => {
+                    let locked_per_100 = option.strike - order.price + Decimal::from(25);
+                    let locked_per_1 = locked_per_100 / Decimal::from(100);
+                    println!("locked_per_1 {}  max_usd {}", locked_per_1, max_usd);
+                    ((max_usd / locked_per_1).to_u64().unwrap(), locked_per_1)
+                }
+            };
+            let sale = cmp::min(max_sale, order.size);
+            if sale == 0 {
+                break;
+            }
+
+            ret_usd += order.price * Decimal::from(sale) / Decimal::from(100);
+            ret_contr += sale;
+            match option.pc {
+                Call => max_btc -= Decimal::from(sale) / Decimal::from(100),
+                Put => max_usd -= Decimal::from(sale) * usd_per_contract,
+            }
         }
         (ret_contr, ret_usd)
     }

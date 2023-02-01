@@ -44,9 +44,15 @@ impl BookState {
             Ask => &mut self.asks,
         };
 
-        if order.size == 0 {
-            book.remove(&(order.price, order.manifest_id));
-        } else {
+        // Annoyingly the price on a cancelled order is set to 0 (which I suppose makes
+        // some sort of sense since it's a "null order") so we can't just look it up
+        // by its (price, mid) pair. Similarly edited orders will have a different price
+        // than their original price (we have an "original_price" field but I don't
+        // believe it will do the right thing for repeated edits.)
+        //
+        // So we have to scan the whole book to find the mid.
+        book.retain(|(_, mid), _| *mid != order.manifest_id);
+        if order.size > 0 {
             book.insert((order.price, order.manifest_id), order);
         }
     }
@@ -143,6 +149,7 @@ fn log_bid_if_interesting(
     // this is a "free money" bid, which we don't want to be short.
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order.size) {
         println!("");
+        println!("Date: {}", now);
         print!("Interesting bid: ");
         opt.print_option_data(now, btc_price);
         print!("    Price: ");
@@ -176,6 +183,7 @@ fn log_ask_if_interesting(
     // can open a delta-neutral position which is guaranteed to pay out
     if order.price < opt.intrinsic_value(btc_price) {
         println!("");
+        println!("Date: {}", now);
         print!("Apparent free money offer: ");
         opt.print_option_data(now, btc_price);
         print!("    Price: ");

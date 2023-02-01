@@ -150,23 +150,14 @@ pub struct LedgerX {
     last_btc_time: OffsetDateTime,
 }
 
-pub enum UpdateResponse<'c> {
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+pub enum UpdateResponse {
     /// Update was accepted; no new interesting info
     Accepted,
     /// Update was ignored (probably: updated a contract that was not being tracked)
     Ignored,
-    /// Update caused the best bid on a contract to change
-    NewBestBid {
-        contract: &'c Contract,
-        price: Decimal,
-        size: u64,
-    },
-    /// Update caused the best ask on a contract to change
-    NewBestAsk {
-        contract: &'c Contract,
-        price: Decimal,
-        size: u64,
-    },
+    /// Update was accepted and was for a day-ahead sway
+    AcceptedBtc,
 }
 
 impl LedgerX {
@@ -235,6 +226,7 @@ impl LedgerX {
                     let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
                     if ddelta80.abs() < 0.01 {
                         println!("");
+                        println!("Date: {}", now);
                         print!("Interesting contract: ");
                         option.print_option_data(now, btc_price);
                         let (contr, usd) =
@@ -254,10 +246,13 @@ impl LedgerX {
                         c.last_log = Some(now);
                     } else if ASK_INTERESTING.is_interesting(&opt, now, btc_price, ask, ask_size) {
                         println!("");
+                        println!("Date: {}", now);
                         print!("Could match ask: ");
                         opt.print_option_data(now, btc_price);
+                        let (max_ask_size, _) =
+                            option.max_sale(ask, self.available_usd, self.available_btc);
                         print!("    Price: ");
-                        opt.print_order_data(now, btc_price, ask, ask_size);
+                        opt.print_order_data(now, btc_price, ask, max_ask_size);
                         c.last_log = Some(now);
                     }
                 }
@@ -305,9 +300,9 @@ impl LedgerX {
 
         let is_bb = old_bb != new_bb;
         let is_ba = old_ba != new_ba;
-        if is_bb || is_ba {
-            // For day-ahead swaps update the current BTC price reference
-            if let contract::Type::NextDay { .. } = contract.ty() {
+        // For day-ahead swaps update the current BTC price reference
+        if let contract::Type::NextDay { .. } = contract.ty() {
+            if is_bb || is_ba {
                 if is_bb && new_bb.0 > Decimal::from(0) {
                     self.last_btc_bid = new_bb.0;
                 }
@@ -316,19 +311,7 @@ impl LedgerX {
                 }
                 self.last_btc_time = timestamp;
             }
-        }
-        if is_bb {
-            UpdateResponse::NewBestBid {
-                contract: contract,
-                price: new_bb.0,
-                size: new_bb.1,
-            }
-        } else if is_ba {
-            UpdateResponse::NewBestAsk {
-                contract: contract,
-                price: new_ba.0,
-                size: new_ba.1,
-            }
+            UpdateResponse::AcceptedBtc
         } else {
             UpdateResponse::Accepted
         }

@@ -172,6 +172,11 @@ fn main() -> Result<(), anyhow::Error> {
             };
             let mut price = center / Decimal::from(2);
             while price - center <= center / Decimal::from(2) {
+                if price == center {
+                    print!("->");
+                } else {
+                    print!("  ");
+                }
                 option.print_order_data(now, current_price.btc_price, price, 1);
                 price += center / Decimal::from(40);
             }
@@ -219,7 +224,9 @@ fn main() -> Result<(), anyhow::Error> {
                         datafeed::Object::Other => { /* ignore */ }
                         datafeed::Object::BookTop { .. } => { /* ignore */ }
                         datafeed::Object::Order(order) => {
-                            tracker.insert_order(order);
+                            if tracker.insert_order(order) == ledgerx::UpdateResponse::AcceptedBtc {
+                                //println!("{}", msg);
+                            }
                         }
                         datafeed::Object::AvailableBalances { usd, btc } => {
                             tracker.set_balances(usd, btc);
@@ -235,15 +242,19 @@ fn main() -> Result<(), anyhow::Error> {
                         }
                     }
 
-                    // Initialize at most one contract every message. FIXME parallelize this
-                    if let Ok(reply) = book_state_rx.try_recv() {
+                    // Initialize any pending contracts
+                    while let Ok(reply) = book_state_rx.try_recv() {
                         tracker.initialize_orderbooks(reply, now);
                     }
 
                     let update_time = time::OffsetDateTime::now_utc();
                     if update_time - last_update > time::Duration::seconds(30) {
                         if update_time.hour() != last_update.hour() {
-                            println!("Time changed to {}", update_time);
+                            println!(
+                                "Time changed to {}. LX BTC price {}.",
+                                update_time,
+                                tracker.current_price().0,
+                            );
                         }
                         tracker.log_interesting_contracts();
                         last_update = update_time;

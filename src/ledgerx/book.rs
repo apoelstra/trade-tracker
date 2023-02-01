@@ -19,6 +19,7 @@
 
 use super::{Ask, Bid, ManifestId, Order};
 use crate::option::{Call, Put};
+use crate::terminal::format_color;
 use rust_decimal::Decimal;
 use std::cmp;
 use std::collections::BTreeMap;
@@ -150,7 +151,7 @@ fn log_bid_if_interesting(
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order.size) {
         println!("");
         println!("Date: {}", now);
-        print!("Interesting bid: ");
+        print!("{}", format_color("Interesting bid: ", 110, 250, 250));
         opt.print_option_data(now, btc_price);
         print!("    Price: ");
         opt.print_order_data(now, btc_price, order.price, order.size);
@@ -184,7 +185,7 @@ fn log_ask_if_interesting(
     if order.price < opt.intrinsic_value(btc_price) {
         println!("");
         println!("Date: {}", now);
-        print!("Apparent free money offer: ");
+        print!("{}", format_color("Apparent free money ask: ", 80, 255, 80));
         opt.print_option_data(now, btc_price);
         print!("    Price: ");
         opt.print_order_data(now, btc_price, order.price, order.size);

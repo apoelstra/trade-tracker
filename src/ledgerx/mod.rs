@@ -22,6 +22,7 @@ pub mod contract;
 pub mod datafeed;
 pub mod json;
 
+use crate::terminal::format_color;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json;
@@ -227,7 +228,7 @@ impl LedgerX {
                     if ddelta80.abs() < 0.01 {
                         println!("");
                         println!("Date: {}", now);
-                        print!("Interesting contract: ");
+                        print!("{}", format_color("Interesting contract: ", 250, 110, 250));
                         option.print_option_data(now, btc_price);
                         let (contr, usd) =
                             book.clear_bids(&option, self.available_usd, self.available_btc);
@@ -247,7 +248,7 @@ impl LedgerX {
                     } else if ASK_INTERESTING.is_interesting(&opt, now, btc_price, ask, ask_size) {
                         println!("");
                         println!("Date: {}", now);
-                        print!("Could match ask: ");
+                        print!("{}", format_color("Interesting bid: ", 100, 250, 250));
                         opt.print_option_data(now, btc_price);
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);

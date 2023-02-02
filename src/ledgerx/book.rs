@@ -119,9 +119,19 @@ impl BookState {
         now: OffsetDateTime,
         btc_bid: Decimal,
         btc_ask: Decimal,
+        available_usd: Decimal,
+        available_btc: Decimal,
     ) {
         for bid in self.bids.values_mut() {
-            log_bid_if_interesting(bid, opt, now, btc_bid, btc_ask);
+            log_bid_if_interesting(
+                bid,
+                opt,
+                now,
+                btc_bid,
+                btc_ask,
+                available_usd,
+                available_btc,
+            );
         }
         for ask in self.asks.values_mut() {
             log_ask_if_interesting(ask, opt, now, btc_bid, btc_ask);
@@ -135,6 +145,8 @@ fn log_bid_if_interesting(
     now: OffsetDateTime,
     btc_bid: Decimal,
     btc_ask: Decimal,
+    available_usd: Decimal,
+    available_btc: Decimal,
 ) {
     if let Some(last_log) = order.last_log {
         // Refuse to log the same order more than once every 4 hours
@@ -146,15 +158,20 @@ fn log_bid_if_interesting(
     // about any short-option-delta-neutral strategies. If we were
     // trying to go delta-neutral we should use the best BTC ask instead.
     let btc_price = (btc_bid + btc_ask) / Decimal::from(2);
+    // Also, cap the order size at the amount that we could actually
+    // take. Puts especially may seem worthwhile but unless we have
+    // a big pile of cash on hand, we can only get a couple bucks out.
+    let (max_size, _) = opt.max_sale(order.price, available_usd, available_btc);
+    let order_size = cmp::min(max_size, order.size);
     // For bids, we need to be able to compute volatility (otherwise
     // this is a "free money" bid, which we don't want to be short.
-    if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order.size) {
+    if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order_size) {
         println!("");
         println!("Date: {}", now);
         print!("{}", format_color("Interesting bid: ", 110, 250, 250));
         opt.print_option_data(now, btc_price);
         print!("    Price: ");
-        opt.print_order_data(now, btc_price, order.price, order.size);
+        opt.print_order_data(now, btc_price, order.price, order_size);
 
         order.last_log = Some(now);
     }

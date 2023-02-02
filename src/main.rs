@@ -198,14 +198,13 @@ fn main() -> Result<(), anyhow::Error> {
             let mut tracker = LedgerX::new(current_price);
             let (cid_tx, book_state_rx) = spawn_contract_lookup_thread(api_key.clone());
             for contr in all_contracts {
-                // Ignore expired and non-BTC options
-                if !contr.active() || contr.underlying() != ledgerx::Asset::Btc {
-                    continue;
+                // For expired or non-BTC options, fetch the full book. Otherwise
+                // just record the contract's existence.
+                if contr.active() && contr.underlying() == ledgerx::Asset::Btc {
+                    cid_tx
+                        .send(contr.id())
+                        .expect("book-states endpoint thread has not panicked");
                 }
-
-                cid_tx
-                    .send(contr.id())
-                    .expect("book-states endpoint thread has not panicked");
                 tracker.add_contract(contr);
             }
             println!("Loaded contracts. Watching feed.");
@@ -217,15 +216,19 @@ fn main() -> Result<(), anyhow::Error> {
                     api_key
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
-                    //println!("{}", msg);
+                    let current_time = time::OffsetDateTime::now_utc();
+                    println!("{}", msg);
                     let obj: datafeed::Object = serde_json::from_str(&msg)
                         .with_context(|| "parsing json from trading/contracts endpoint")?;
                     match obj {
                         datafeed::Object::Other => { /* ignore */ }
                         datafeed::Object::BookTop { .. } => { /* ignore */ }
                         datafeed::Object::Order(order) => {
-                            if tracker.insert_order(order) == ledgerx::UpdateResponse::AcceptedBtc {
-                                //println!("{}", msg);
+                            if let ledgerx::UpdateResponse::UnknownContract(order) =
+                                tracker.insert_order(order)
+                            {
+                                println!("WARN: unknown CID {}", order.contract_id);
+                                println!("WARN: full msg {}", msg);
                             }
                         }
                         datafeed::Object::AvailableBalances { usd, btc } => {
@@ -244,20 +247,19 @@ fn main() -> Result<(), anyhow::Error> {
 
                     // Initialize any pending contracts
                     while let Ok(reply) = book_state_rx.try_recv() {
-                        tracker.initialize_orderbooks(reply, now);
+                        tracker.initialize_orderbooks(reply, current_time);
                     }
 
-                    let update_time = time::OffsetDateTime::now_utc();
-                    if update_time - last_update > time::Duration::seconds(30) {
-                        if update_time.hour() != last_update.hour() {
+                    if current_time - last_update > time::Duration::seconds(30) {
+                        if current_time.hour() != last_update.hour() {
                             println!(
                                 "Time changed to {}. LX BTC price {}.",
-                                update_time,
+                                current_time,
                                 tracker.current_price().0,
                             );
                         }
                         tracker.log_interesting_contracts();
-                        last_update = update_time;
+                        last_update = current_time;
                     }
                 } // while let
             } // loop

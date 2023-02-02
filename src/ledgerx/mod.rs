@@ -151,12 +151,14 @@ pub struct LedgerX {
     last_btc_time: OffsetDateTime,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum UpdateResponse {
     /// Update was accepted; no new interesting info
     Accepted,
-    /// Update was ignored (probably: updated a contract that was not being tracked)
-    Ignored,
+    /// Order was ignored because we didn't know the contract
+    UnknownContract(Order),
+    /// Order was ignored because it wasn't a bitcoin order
+    NonBtcOrder,
     /// Update was accepted and was for a day-ahead sway
     AcceptedBtc,
 }
@@ -211,6 +213,10 @@ impl LedgerX {
         let (btc_price, now) = self.current_price();
         if let Some(&mut (ref mut c, ref mut book)) = self.contracts.get_mut(&ContractId::from(cid))
         {
+            // Only log BTC contracts
+            if c.underlying() != Asset::Btc {
+                return;
+            }
             if let Some(last_log) = c.last_log {
                 // Refuse to log the same contract more than once every 4 hours
                 if now - last_log < time::Duration::hours(4) {
@@ -260,7 +266,14 @@ impl LedgerX {
             }
             // Log open orders
             if let contract::Type::Option { opt, .. } = c.ty() {
-                book.log_interesting_orders(&opt, now, self.last_btc_bid, self.last_btc_ask);
+                book.log_interesting_orders(
+                    &opt,
+                    now,
+                    self.last_btc_bid,
+                    self.last_btc_ask,
+                    self.available_usd,
+                    self.available_btc,
+                );
             }
         }
     }
@@ -285,8 +298,11 @@ impl LedgerX {
     pub fn insert_order(&mut self, order: Order) -> UpdateResponse {
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
-            None => return UpdateResponse::Ignored,
+            None => return UpdateResponse::UnknownContract(order),
         };
+        if contract.underlying() != Asset::Btc {
+            return UpdateResponse::NonBtcOrder;
+        }
         let timestamp = order.timestamp;
         // Insert the order and signal if the best bid/ask has changed.
         // Note that we check whether it changed by comparing the before-and-after values.
@@ -303,7 +319,7 @@ impl LedgerX {
         let is_ba = old_ba != new_ba;
         // For day-ahead swaps update the current BTC price reference
         if let contract::Type::NextDay { .. } = contract.ty() {
-            if is_bb || is_ba {
+            if contract.underlying() == Asset::Btc && (is_bb || is_ba) {
                 if is_bb && new_bb.0 > Decimal::from(0) {
                     self.last_btc_bid = new_bb.0;
                 }

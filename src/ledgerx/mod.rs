@@ -49,7 +49,7 @@ pub static BID_INTERESTING: Interestingness = Interestingness {
     min_vol: 0.5,
     max_loss80: 0.20,
     min_size: 1,
-    min_yield: Decimal::TEN,
+    min_yield: Decimal::from_parts(25, 0, 0, false, 0), // $25
 };
 /// Threshold for a ask to be interesting enough for us to match
 pub static ASK_INTERESTING: Interestingness = Interestingness {
@@ -254,7 +254,10 @@ impl LedgerX {
                     } else if ASK_INTERESTING.is_interesting(&opt, now, btc_price, ask, ask_size) {
                         println!("");
                         println!("Date: {}", now);
-                        print!("{}", format_color("Interesting bid: ", 100, 250, 250));
+                        print!(
+                            "{}",
+                            format_color("Interesting ask (to match): ", 100, 250, 250)
+                        );
                         opt.print_option_data(now, btc_price);
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);

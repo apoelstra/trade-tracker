@@ -246,7 +246,7 @@ impl LedgerX {
 
                         print!("            Best bid: ");
                         opt.print_order_data(now, btc_price, bid, bid_size);
-                        print!(" Best ask (max size): ");
+                        print!(" Best ask  (matched): ");
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);
                         opt.print_order_data(now, btc_price, ask, max_ask_size);
@@ -256,7 +256,7 @@ impl LedgerX {
                         println!("Date: {}", now);
                         print!(
                             "{}",
-                            format_color("Interesting ask (to match): ", 100, 250, 250)
+                            format_color("Interesting ask (to match): ", 180, 180, 250)
                         );
                         opt.print_option_data(now, btc_price);
                         let (max_ask_size, _) =

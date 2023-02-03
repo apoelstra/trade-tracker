@@ -357,10 +357,10 @@ impl Option {
             "{}{}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
             prefix,
             format_color(format_args!("{:17}", self), 64, 192, 255),
-            format_redgreen(format_args!("{:6.2}", dte), dte, 90.0, 0.0),
+            format_redgreen(format_args!("{:6.3}", dte), dte, 90.0, 0.0),
             btc_price,
             intrinsic_str,
-            format_redgreen(format_args!("{:4.2}%", dd80 * 100.0), dd80, 0.15, 0.0),
+            format_redgreen(format_args!("{:5.3}%", dd80 * 100.0), dd80, 0.15, 0.0),
         );
     }
 
@@ -387,13 +387,13 @@ impl Option {
         } else {
             ("XXX".into(), "XXX".into())
         };
-        let total = self_price * Decimal::from(size) / Decimal::from(100);
+        let total = self_price * Decimal::new(size as i64, 2);
         let arr = self.arr(now, btc_price, self_price);
         // The "loss 80" is the likelihood that the option will end so far ITM that
         // even with preimum, it's a net loss, at an assumed 80% volatility
         let loss80 = self.bs_loss80(now, btc_price, self_price).abs();
         info!(
-            "{}${}{}  sigma: {}%  ARR: {}%, Theta: {}  loss80: {}",
+            "{}${}{}  sigma: {}%  loss80: {}  ARR: {}%, Theta: {}",
             prefix,
             format_redgreen(
                 format_args!("{:8.2}", self_price),
@@ -416,9 +416,9 @@ impl Option {
                 "".into()
             },
             vol_str,
+            format_redgreen(format_args!("{:5.3}%", loss80 * 100.0), loss80, 0.15, 0.0),
             format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2),
             theta_str,
-            format_redgreen(format_args!("{:4.2}%", loss80 * 100.0), loss80, 0.15, 0.0),
         );
     }
 }

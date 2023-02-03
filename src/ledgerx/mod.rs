@@ -240,12 +240,10 @@ impl LedgerX {
             if let Some(opt) = c.as_option() {
                 if !opt.in_the_money(btc_price) && opt.expiry >= now {
                     let (bid, bid_size) = book.best_bid();
-                    let (ask, ask_size) = book.best_ask();
 
                     let option = c.as_option().unwrap();
                     let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
                     if ddelta80.abs() < 0.01 {
-                        crate::newline();
                         option.log_option_data(
                             format_color("Interesting contract: ", 250, 110, 250),
                             now,
@@ -265,6 +263,7 @@ impl LedgerX {
                         }
 
                         opt.log_order_data("            Best bid: ", now, btc_price, bid, bid_size);
+                        let (ask, _) = book.best_ask();
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);
                         opt.log_order_data(
@@ -274,17 +273,6 @@ impl LedgerX {
                             ask,
                             max_ask_size,
                         );
-                        c.last_log = Some(now);
-                    } else if ASK_INTERESTING.is_interesting(&opt, now, btc_price, ask, ask_size) {
-                        crate::newline();
-                        opt.log_option_data(
-                            format_color("Interesting ask (to match): ", 180, 180, 250),
-                            now,
-                            btc_price,
-                        );
-                        let (max_ask_size, _) =
-                            option.max_sale(ask, self.available_usd, self.available_btc);
-                        opt.log_order_data("    Price: ", now, btc_price, ask, max_ask_size);
                         c.last_log = Some(now);
                     }
                 }

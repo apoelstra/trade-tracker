@@ -82,7 +82,7 @@ impl BookState {
         let mut ret_usd = Decimal::from(0);
         let mut ret_contr = 0;
         for (_, order) in self.asks.iter() {
-            ret_usd += order.price * Decimal::from(order.size) / Decimal::from(100);
+            ret_usd += order.price * Decimal::new(order.size as i64, 2);
             ret_contr += order.size;
         }
         (ret_contr, ret_usd)
@@ -104,10 +104,10 @@ impl BookState {
                 break;
             }
 
-            ret_usd += order.price * Decimal::from(sale) / Decimal::from(100);
+            ret_usd += order.price * Decimal::new(sale as i64, 2);
             ret_contr += sale;
             match option.pc {
-                Call => max_btc -= Decimal::from(sale) / Decimal::from(100),
+                Call => max_btc -= Decimal::new(sale as i64, 2),
                 Put => max_usd -= Decimal::from(sale) * usd_per_contract,
             }
         }
@@ -135,7 +135,15 @@ impl BookState {
             );
         }
         for ask in self.asks.values_mut() {
-            log_ask_if_interesting(ask, opt, now, btc_bid, btc_ask);
+            log_ask_if_interesting(
+                ask,
+                opt,
+                now,
+                btc_bid,
+                btc_ask,
+                available_usd,
+                available_btc,
+            );
         }
     }
 }
@@ -167,7 +175,6 @@ fn log_bid_if_interesting(
     // For bids, we need to be able to compute volatility (otherwise
     // this is a "free money" bid, which we don't want to be short.
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order_size) {
-        crate::newline();
         opt.log_option_data(
             format_color("Interesting bid: ", 110, 250, 250),
             now,
@@ -185,6 +192,8 @@ fn log_ask_if_interesting(
     now: OffsetDateTime,
     btc_bid: Decimal,
     btc_ask: Decimal,
+    available_usd: Decimal,
+    available_btc: Decimal,
 ) {
     if let Some(last_log) = order.last_log {
         // Refuse to log the same order more than once every 4 hours
@@ -199,10 +208,20 @@ fn log_ask_if_interesting(
     } else {
         btc_ask + Decimal::from(150)
     };
-    // Asks are only interesting if they're "free money", that is, if we
+    // Asks may be interesting if they're "free money", that is, if we
     // can open a delta-neutral position which is guaranteed to pay out
     if order.price < opt.intrinsic_value(btc_price) {
-        crate::newline();
+        let profit100 = opt.intrinsic_value(btc_price) - order.price;
+        let max_buy100 = cmp::min(
+            Decimal::new(order.size as i64, 2),
+            available_usd / order.price,
+        );
+        let max_profit = max_buy100 * profit100;
+        // Don't bother if there is less than $100 to be made
+        if max_profit < Decimal::from(100) {
+            return;
+        }
+
         opt.log_option_data(
             format_color("Apparent free money ask: ", 80, 255, 80),
             now,
@@ -211,22 +230,38 @@ fn log_ask_if_interesting(
         opt.log_order_data("    Price: ", now, btc_price, order.price, order.size);
         if opt.pc == crate::option::Call {
             info!(
-                "       (strike {} + price {} is {}, vs BTC price {}",
+                "       Strike {} + {} = {}, vs BTC price {}. By arbing {} units you can make {}.",
                 opt.strike,
                 order.price,
                 opt.strike + order.price,
                 btc_price,
+                max_buy100 * Decimal::ONE_HUNDRED,
+                max_profit,
             );
         } else {
             info!(
-                "       (strike {} - price {} is {}, vs BTC price {}",
+                "       Strike {} - {} is {}, vs BTC price {}. By arbing {} units you can make {}.",
                 opt.strike,
                 order.price,
                 opt.strike - order.price,
                 btc_price,
+                max_buy100 * Decimal::ONE_HUNDRED,
+                max_profit,
             );
         }
 
         order.last_log = Some(now);
+    } else {
+        // Otherwise they may be interesting to match
+        let (max_ask_size, _) = opt.max_sale(order.price, available_usd, available_btc);
+        if super::ASK_INTERESTING.is_interesting(opt, now, btc_price, order.price, max_ask_size) {
+            opt.log_option_data(
+                format_color("Interesting ask (to match): ", 180, 180, 250),
+                now,
+                btc_price,
+            );
+            opt.log_order_data("    Price: ", now, btc_price, order.price, max_ask_size);
+            order.last_log = Some(now);
+        }
     }
 }

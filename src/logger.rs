@@ -99,11 +99,26 @@ impl log::Log for Logger {
                 // If it's more important than info, log to stdout
                 if record.level() <= log::Level::Info {
                     let mut last_time_lock = self.last_stdout_time.lock().unwrap();
+                    if now - *last_time_lock > time::Duration::minutes(10) {
+                        println!("");
+                    }
+                    if now - *last_time_lock > time::Duration::seconds(30) {
+                        println!("");
+                    }
                     if now - *last_time_lock > time::Duration::seconds(1) {
+                        println!("");
                         println!(
-                            "Time: {}  BTC Price: {}",
-                            now.lazy_format("%F %T%z"),
-                            self.price.lock().unwrap(),
+                            "{}",
+                            crate::terminal::format_color(
+                                format_args!(
+                                    "Time: {}  BTC Price: {}",
+                                    now.lazy_format("%F %T%z"),
+                                    self.price.lock().unwrap(),
+                                ),
+                                255,
+                                255,
+                                180,
+                            ),
                         );
                         *last_time_lock = now;
                     }

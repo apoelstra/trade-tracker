@@ -29,7 +29,8 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
-use std::fmt;
+use std::convert::TryFrom;
+use std::{cmp, fmt};
 use time::OffsetDateTime;
 
 pub use book::BookState;
@@ -43,7 +44,7 @@ pub struct Interestingness {
     pub min_vol: f64,
     pub max_loss80: f64,
     pub min_size: u64,
-    pub min_yield: Decimal,
+    pub min_yield_per_week: Decimal,
 }
 
 /// Threshold for a bid to be interesting enough for us to snipe
@@ -52,7 +53,7 @@ pub static BID_INTERESTING: Interestingness = Interestingness {
     min_vol: 0.5,
     max_loss80: 0.20,
     min_size: 1,
-    min_yield: Decimal::from_parts(25, 0, 0, false, 0), // $25
+    min_yield_per_week: Decimal::from_parts(25, 0, 0, false, 0), // $25
 };
 /// Threshold for a ask to be interesting enough for us to match
 pub static ASK_INTERESTING: Interestingness = Interestingness {
@@ -60,7 +61,7 @@ pub static ASK_INTERESTING: Interestingness = Interestingness {
     min_vol: 0.75,
     max_loss80: 0.10,
     min_size: 1,
-    min_yield: Decimal::ZERO,
+    min_yield_per_week: Decimal::from_parts(25, 0, 0, false, 0), // $25
 };
 
 impl Interestingness {
@@ -76,7 +77,9 @@ impl Interestingness {
         if order_size < self.min_size {
             return false;
         }
-        if order_price * Decimal::from(order_size) / Decimal::from(100) < self.min_yield {
+        let min_yield =
+            self.min_yield_per_week * Decimal::try_from(opt.years_to_expiry(now) * 52.0).unwrap();
+        if order_price * Decimal::from(order_size) / Decimal::from(100) < min_yield {
             return false;
         }
         // Next, if the option is "free money" we consider it uninteresting for
@@ -238,49 +241,60 @@ impl LedgerX {
             }
             // Log the contract itself
             if let Some(opt) = c.as_option() {
-                if !opt.in_the_money(btc_price) && opt.expiry >= now {
-                    let (bid, bid_size) = book.best_bid();
+                let mut interesting = true;
 
-                    let option = c.as_option().unwrap();
-                    let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
-                    if ddelta80.abs() < 0.01 {
-                        option.log_option_data(
-                            format_color("Interesting contract: ", 250, 110, 250),
-                            now,
-                            btc_price,
-                        );
-                        let (contr, usd) =
-                            book.clear_bids(&option, self.available_usd, self.available_btc);
-                        if contr > 0 {
-                            let avg = usd / Decimal::from(contr) * Decimal::from(c.multiplier());
-                            option.log_order_data(
-                                "      Order to clear: ",
-                                now,
-                                btc_price,
-                                avg,
-                                Some(contr),
-                            );
-                        }
+                interesting &= !opt.in_the_money(btc_price); // Only OTM options
+                interesting &= opt.expiry >= now; // only active options
 
-                        opt.log_order_data(
-                            "            Best bid: ",
-                            now,
-                            btc_price,
-                            bid,
-                            Some(bid_size),
-                        );
-                        let (ask, _) = book.best_ask();
-                        let (max_ask_size, _) =
-                            option.max_sale(ask, self.available_usd, self.available_btc);
-                        opt.log_order_data(
-                            " Best ask  (matched): ",
-                            now,
-                            btc_price,
-                            ask,
-                            Some(max_ask_size),
-                        );
-                        c.last_log = Some(now);
-                    }
+                let ddelta80 = opt.bs_dual_delta(now, btc_price, 0.80);
+                interesting &= ddelta80.abs() < 0.05; // only options with <5% chance of ending ITM
+
+                // Compute yield from matching bids
+                let (clear_bid_size, clear_bid_yield) =
+                    book.clear_bids(&opt, self.available_usd, self.available_btc);
+                // Compute yield from matching best ask, with as much money as we can
+                let (ask_price, _) = book.best_ask();
+                let (ask_size, _) = opt.max_sale(ask_price, self.available_usd, self.available_btc);
+                let ask_yield = Decimal::new(ask_size as i64, 2) * ask_price;
+
+                // only options where we could maybe make $100/wk
+                let yield_limit = Decimal::ONE_HUNDRED
+                    * Decimal::try_from(opt.years_to_expiry(now) * 52.0).unwrap();
+                interesting &= clear_bid_yield > yield_limit || ask_yield > yield_limit;
+                if interesting {
+                    opt.log_option_data(
+                        format_color("Interesting contract: ", 250, 110, 250),
+                        now,
+                        btc_price,
+                    );
+                    let clear_price = clear_bid_yield / Decimal::from(clear_bid_size)
+                        * Decimal::from(c.multiplier());
+                    opt.log_order_data(
+                        "      Order to clear: ",
+                        now,
+                        btc_price,
+                        clear_price,
+                        Some(clear_bid_size),
+                    );
+
+                    let (bid_price, bid_size) = book.best_ask();
+                    let (max_bid_size, _) =
+                        opt.max_sale(bid_price, self.available_usd, self.available_btc);
+                    opt.log_order_data(
+                        "            Best bid: ",
+                        now,
+                        btc_price,
+                        bid_price,
+                        Some(cmp::min(bid_size, max_bid_size)),
+                    );
+                    opt.log_order_data(
+                        " Best ask  (matched): ",
+                        now,
+                        btc_price,
+                        ask_price,
+                        Some(ask_size),
+                    );
+                    c.last_log = Some(now);
                 }
             }
             // Log open orders

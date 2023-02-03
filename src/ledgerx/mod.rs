@@ -258,11 +258,17 @@ impl LedgerX {
                                 now,
                                 btc_price,
                                 avg,
-                                contr,
+                                Some(contr),
                             );
                         }
 
-                        opt.log_order_data("            Best bid: ", now, btc_price, bid, bid_size);
+                        opt.log_order_data(
+                            "            Best bid: ",
+                            now,
+                            btc_price,
+                            bid,
+                            Some(bid_size),
+                        );
                         let (ask, _) = book.best_ask();
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);
@@ -271,7 +277,7 @@ impl LedgerX {
                             now,
                             btc_price,
                             ask,
-                            max_ask_size,
+                            Some(max_ask_size),
                         );
                         c.last_log = Some(now);
                     }

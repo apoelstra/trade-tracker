@@ -123,7 +123,20 @@ impl BookState {
         available_usd: Decimal,
         available_btc: Decimal,
     ) {
-        for bid in self.bids.values_mut() {
+        let (best_bid, _) = self.best_bid();
+        let mut bid_depth = 0;
+        for bid in self.bids.values_mut().rev() {
+            // Don't bother logging bids that are less than 50% of the best
+            if bid.price < best_bid / Decimal::TWO {
+                break;
+            }
+            // Similarly, if you need to sell more than 100 contracts to get
+            // this bid, don't bother logging. If it were interesting, the
+            // better ones would be interesting too.
+            if bid_depth > 100 {
+                break;
+            }
+            bid_depth += bid.size;
             log_bid_if_interesting(
                 bid,
                 opt,
@@ -134,7 +147,21 @@ impl BookState {
                 available_btc,
             );
         }
+
+        let (best_ask, _) = self.best_ask();
+        let mut ask_depth = 0;
         for ask in self.asks.values_mut() {
+            // Don't bother logging asks that are more than 200% of the best
+            if ask.price < best_ask * Decimal::TWO {
+                break;
+            }
+            // Similarly, if you need to sell more than 100 contracts to get
+            // this ask, don't bother logging. If it were interesting, the
+            // better ones would be interesting too.
+            if ask_depth > 100 {
+                break;
+            }
+            ask_depth += ask.size;
             log_ask_if_interesting(
                 ask,
                 opt,
@@ -180,7 +207,7 @@ fn log_bid_if_interesting(
             now,
             btc_price,
         );
-        opt.log_order_data("    Price: ", now, btc_price, order.price, order_size);
+        opt.log_order_data("    Price: ", now, btc_price, order.price, Some(order_size));
 
         order.last_log = Some(now);
     }
@@ -227,7 +254,7 @@ fn log_ask_if_interesting(
             now,
             btc_price,
         );
-        opt.log_order_data("    Price: ", now, btc_price, order.price, order.size);
+        opt.log_order_data("    Price: ", now, btc_price, order.price, Some(order.size));
         if opt.pc == crate::option::Call {
             info!(
                 "       Strike {} + {} = {}, vs BTC price {}. By arbing {} units you can make {}.",
@@ -260,7 +287,13 @@ fn log_ask_if_interesting(
                 now,
                 btc_price,
             );
-            opt.log_order_data("    Price: ", now, btc_price, order.price, max_ask_size);
+            opt.log_order_data(
+                "    Price: ",
+                now,
+                btc_price,
+                order.price,
+                Some(max_ask_size),
+            );
             order.last_log = Some(now);
         }
     }

@@ -236,7 +236,7 @@ fn main() -> Result<(), anyhow::Error> {
                     now,
                     current_price.btc_price,
                     price,
-                    1,
+                    None,
                 );
                 price += center / Decimal::from(40);
             }

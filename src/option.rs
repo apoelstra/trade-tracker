@@ -378,7 +378,7 @@ impl Option {
         now: OffsetDateTime,
         btc_price: Decimal,
         self_price: Decimal,
-        size: u64,
+        size: std::option::Option<u64>,
     ) {
         let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(now, btc_price, self_price) {
             let theta = self.bs_theta(now, btc_price, vol);
@@ -394,7 +394,6 @@ impl Option {
         } else {
             ("XXX".into(), "XXX".into())
         };
-        let total = self_price * Decimal::new(size as i64, 2);
         let arr = self.arr(now, btc_price, self_price);
         // The "loss 80" is the likelihood that the option will end so far ITM that
         // even with preimum, it's a net loss, at an assumed 80% volatility
@@ -408,7 +407,8 @@ impl Option {
                 1.0,
                 3.0
             ),
-            if size > 1 {
+            if let Some(size) = size {
+                let total = self_price * Decimal::new(size as i64, 2);
                 format!(
                     " × {} = {}",
                     format_redgreen(format_args!("{:4}", size), (size as f64).log10(), 1.0, 4.0),
@@ -424,7 +424,11 @@ impl Option {
             },
             vol_str,
             format_redgreen(format_args!("{:5.3}%", loss80 * 100.0), loss80, 0.15, 0.0),
-            format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2),
+            if arr > 10.0 {
+                format_color(">1000%", 130, 220, 130)
+            } else {
+                format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2)
+            },
             theta_str,
         );
     }

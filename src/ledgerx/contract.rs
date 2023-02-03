@@ -134,11 +134,11 @@ impl TryFrom<json::Contract> for Contract {
                 exercise_date: js.date_exercise.ok_or("missing field 'date_exercise'")?,
                 opt: match js.ty {
                     Some(json::Type::Call) => option::Option::new_call(
-                        js.strike_price.ok_or("missing field 'strike_price'")? / Decimal::from(100),
+                        Decimal::new(js.strike_price.ok_or("missing field 'strike_price'")?, 2),
                         expiry,
                     ),
                     Some(json::Type::Put) => option::Option::new_put(
-                        js.strike_price.ok_or("missing field 'strike_price'")? / Decimal::from(100),
+                        Decimal::new(js.strike_price.ok_or("missing field 'strike_price'")?, 2),
                         expiry,
                     ),
                     None => return Err("missing field 'type'"),

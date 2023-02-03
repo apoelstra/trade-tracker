@@ -72,7 +72,7 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
             bid_ask: if data.0.is_ask { Ask } else { Bid },
             size: data.0.size,
             contract_id: ContractId::from(data.0.contract_id),
-            price: data.0.price / Decimal::from(100),
+            price: Decimal::new(data.0.price, 2),
             manifest_id: ManifestId(data.0.mid),
             timestamp: data.1,
             last_log: None,

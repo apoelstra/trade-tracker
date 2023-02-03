@@ -156,7 +156,7 @@ pub struct Contract {
     pub is_next_day: Option<bool>,
     pub is_ecp_only: Option<bool>,
     pub derivative_type: DerivativeType,
-    pub strike_price: Option<Decimal>,
+    pub strike_price: Option<i64>,
     pub min_increment: usize,
     #[serde(default)]
     pub open_interest: Option<usize>,
@@ -281,7 +281,7 @@ pub struct BookState {
     #[serde(deserialize_with = "hex::serde::deserialize")]
     pub mid: [u8; 16],
     pub is_ask: bool,
-    pub price: Decimal,
+    pub price: i64,
     pub size: u64,
 }
 

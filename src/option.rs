@@ -185,6 +185,13 @@ impl Option {
             ),
             // For a put it's a little more involved
             Put => {
+                if sale_price > self.strike {
+                    // This is a trollish situation where somebody is offering a put for more
+                    // than the strike price, so any buyers would be buying the right to get
+                    // some (but not all) of their money back in exchange for a coin. To avoid
+                    // it causing us grief we just return 0s rather than computing crazy numbers.
+                    return (0, Decimal::from(0));
+                }
                 let locked_per_100 = self.strike - sale_price + Decimal::from(25);
                 let locked_per_1 = locked_per_100 / Decimal::from(100);
                 (

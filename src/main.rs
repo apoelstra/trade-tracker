@@ -111,7 +111,7 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
 
         let msg_log = format!("{}/msg_{}.log", log_dir, now.lazy_format("%F_%H%M%S"));
         let dbg_log = format!("{}/debug_{}.log", log_dir, now.lazy_format("%F_%H%M%S"));
-        logger::Logger::init(&msg_log, &dbg_log).with_context(|| {
+        logger::Logger::init(&dbg_log, &msg_log).with_context(|| {
             format!(
                 "initializing logger (msg_log {}, debug log {})",
                 msg_log, dbg_log

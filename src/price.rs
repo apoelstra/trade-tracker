@@ -18,6 +18,7 @@
 //!
 
 use anyhow::Context;
+use log::info;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -120,7 +121,7 @@ impl Historic {
             }
 
             if lineno % 1_000_000 == 0 && lineno > 0 {
-                println!(
+                info!(
                     "Read {}M lines, recorded {} datapoints. Last trade {}",
                     lineno / 1_000_000,
                     self.len(),

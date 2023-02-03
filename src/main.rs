@@ -19,6 +19,7 @@
 
 pub mod ledgerx;
 pub mod local_bs;
+pub mod logger;
 pub mod option;
 pub mod price;
 pub mod terminal;
@@ -26,8 +27,10 @@ pub mod trade;
 
 use anyhow::Context;
 use clap::Clap;
+use log::{info, warn};
 use rust_decimal::Decimal;
 use std::{
+    collections::HashMap,
     convert::TryInto,
     fs,
     path::PathBuf,
@@ -69,33 +72,89 @@ enum Command {
         #[clap(long, short)]
         price: Option<Decimal>,
     },
+    /// LedgerX stuff
     Connect {
         #[clap(name = "token")]
         api_key: String,
     },
+    History {
+        #[clap(name = "token")]
+        api_key: String,
+        #[clap(name = "year")]
+        year: Option<i32>,
+    },
+}
+
+/// Outputs a newline to stdout.
+///
+/// This is in its own function so I can easily grep for println! calls (there
+/// should be none, except this one, because we should be using the log macros
+/// instead.)
+fn newline() {
+    println!("");
+}
+
+fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<(), anyhow::Error> {
+    if let Command::Connect { .. } = command {
+        let log_dir = format!("{}/log", env!("CARGO_MANIFEST_DIR"));
+        if let Ok(metadata) = std::fs::metadata(&log_dir) {
+            if !metadata.is_dir() {
+                return Err(anyhow::Error::msg(format!(
+                    "Log directory {} alrready exists but is not a directory.",
+                    log_dir
+                )));
+            }
+        } else {
+            std::fs::create_dir(&log_dir)
+                .with_context(|| format!("creating log directory {}", log_dir))?;
+        }
+
+        let msg_log = format!("{}/msg_{}.log", log_dir, now.lazy_format("%F_%H%M%S"));
+        let dbg_log = format!("{}/debug_{}.log", log_dir, now.lazy_format("%F_%H%M%S"));
+        logger::Logger::init(&msg_log, &dbg_log).with_context(|| {
+            format!(
+                "initializing logger (msg_log {}, debug log {})",
+                msg_log, dbg_log
+            )
+        })?;
+    } else {
+        logger::Logger::init_stdout_only().context("initializing stdout logger")?;
+    }
+
+    info!("Trade tracker version {}", env!("CARGO_PKG_VERSION"));
+    info!("Price data pulled from http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD -- call `update-price-data` to update");
+    newline();
+    Ok(())
 }
 
 fn main() -> Result<(), anyhow::Error> {
+    // Parse command-line args
+    let command = Command::parse();
+    // Get data path
     let mut data_path = dirs::data_dir().context("getting XDG config directory")?;
     data_path.push("trade-tracker");
     data_path.push("pricedata");
     let data_path = data_path; // drop mut
 
-    println!("Trade tracker version [whatever]");
-    println!("Price data pulled from http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD -- call `update-price-data` to update");
-    println!("");
-
-    let command = Command::parse();
+    // Read price data history
     let history = if let Command::InitializePriceData { .. } = command {
         // unused when initializing price data, just pick something
         Historic::default()
+    } else if let Command::History { year, .. } = command {
+        let history = Historic::read_json_from(&data_path, &year.unwrap_or(2020).to_string())
+            .context("reading price history")?;
+        history
     } else {
         let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
             .context("reading price history")?;
         history
     };
-    let now = time::OffsetDateTime::now_utc();
 
+    // Turn on logging
+    let now = time::OffsetDateTime::now_utc();
+    initialize_logging(now, &command).context("initializing logging")?;
+
+    // Go
     match Command::parse() {
         Command::InitializePriceData { csv } => {
             let mut history = Historic::default();
@@ -130,23 +189,23 @@ fn main() -> Result<(), anyhow::Error> {
                 .context("writing out price history")?;
         }
         Command::LatestPrice {} => {
-            println!("{}", history.price_at(now));
+            info!("{}", history.price_at(now));
         }
         Command::Price { option, volatility } => {
             let yte = option.years_to_expiry(now);
             let current_price = history.price_at(now);
-            println!("BTC price: {}", current_price);
-            println!("Risk-free rate: 4% (assumed)");
-            println!(
+            info!("BTC price: {}", current_price);
+            info!("Risk-free rate: 4% (assumed)");
+            info!(
                 "Option: {} (years to expiry: {:7.6} or 1/{:7.6})",
                 option,
                 yte,
                 1.0 / yte
             );
-            println!("");
+            newline();
             for vol in 0..51 {
                 let vol = volatility.unwrap_or(0.5) + 0.02 * (vol as f64);
-                println!(
+                info!(
                     "Vol: {:3.2}   Price ($): {:8.2}   Theta ($): {:5.2}  DDel: {:3.2}%  Del: {:3.2}%",
                     vol,
                     option.bs_price(now, current_price.btc_price, vol),
@@ -158,10 +217,10 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::Iv { option, price } => {
             let current_price = history.price_at(now);
-            println!("BTC price: {}", current_price);
-            println!("Risk-free rate: 4% (assumed)");
-            option.print_option_data(now, current_price.btc_price);
-            println!("");
+            info!("BTC price: {}", current_price);
+            info!("Risk-free rate: 4% (assumed)");
+            option.log_option_data("", now, current_price.btc_price);
+            newline();
 
             let center = match price {
                 Some(price) => price,
@@ -172,12 +231,13 @@ fn main() -> Result<(), anyhow::Error> {
             };
             let mut price = center / Decimal::from(2);
             while price - center <= center / Decimal::from(2) {
-                if price == center {
-                    print!("->");
-                } else {
-                    print!("  ");
-                }
-                option.print_order_data(now, current_price.btc_price, price, 1);
+                option.log_order_data(
+                    if price == center { "→" } else { " " },
+                    now,
+                    current_price.btc_price,
+                    price,
+                    1,
+                );
                 price += center / Decimal::from(40);
             }
         }
@@ -192,8 +252,8 @@ fn main() -> Result<(), anyhow::Error> {
                 .with_context(|| "parsing contract list from json")?;
 
             let current_price = history.price_at(now);
-            println!("BTC price: {}", current_price);
-            println!("Risk-free rate: 4% (assumed)");
+            info!("BTC price: {}", current_price);
+            info!("Risk-free rate: 4% (assumed)");
 
             let mut tracker = LedgerX::new(current_price);
             let (cid_tx, book_state_rx) = spawn_contract_lookup_thread(api_key.clone());
@@ -207,7 +267,7 @@ fn main() -> Result<(), anyhow::Error> {
                 }
                 tracker.add_contract(contr);
             }
-            println!("Loaded contracts. Watching feed.");
+            info!("Loaded contracts. Watching feed.");
 
             let mut last_update = now;
             loop {
@@ -217,7 +277,9 @@ fn main() -> Result<(), anyhow::Error> {
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
                     let current_time = time::OffsetDateTime::now_utc();
-                    println!("{}", msg);
+                    info!(target: "lx_datafeed", "{}", msg);
+                    info!(target: "lx_btcprice", "{}", tracker.current_price().0);
+
                     let obj: datafeed::Object = serde_json::from_str(&msg)
                         .with_context(|| "parsing json from trading/contracts endpoint")?;
                     match obj {
@@ -227,8 +289,8 @@ fn main() -> Result<(), anyhow::Error> {
                             if let ledgerx::UpdateResponse::UnknownContract(order) =
                                 tracker.insert_order(order)
                             {
-                                println!("WARN: unknown CID {}", order.contract_id);
-                                println!("WARN: full msg {}", msg);
+                                warn!("unknown CID {}", order.contract_id);
+                                warn!("full msg {}", msg);
                             }
                         }
                         datafeed::Object::AvailableBalances { usd, btc } => {
@@ -250,19 +312,96 @@ fn main() -> Result<(), anyhow::Error> {
                         tracker.initialize_orderbooks(reply, current_time);
                     }
 
-                    if current_time - last_update > time::Duration::seconds(30) {
-                        if current_time.hour() != last_update.hour() {
-                            println!(
-                                "Time changed to {}. LX BTC price {}.",
-                                current_time,
-                                tracker.current_price().0,
-                            );
-                        }
+                    if current_time - last_update > time::Duration::seconds(180) {
                         tracker.log_interesting_contracts();
                         last_update = current_time;
                     }
                 } // while let
             } // loop
+        }
+        Command::History { api_key, year } => {
+            let mut hist = ledgerx::history::History::new();
+            let mut contracts = HashMap::new();
+
+            let mut next_url =
+                Some("https://api.ledgerx.com/trading/positions?limit=200".to_string());
+            while let Some(url) = next_url {
+                info!(
+                    "Fetching positions .. have {} contracts cached.",
+                    contracts.len()
+                );
+                let positions = minreq::get(url)
+                    .with_header("Authorization", format!("JWT {}", api_key))
+                    .with_timeout(10)
+                    .send()
+                    .with_context(|| "getting data from trading/contracts endpoint")?
+                    .into_bytes();
+                let positions: ledgerx::history::Positions =
+                    serde_json::from_slice(&positions).with_context(|| "parsing positions json")?;
+                positions.store_contract_ids(&mut contracts);
+
+                hist.import_positions(&positions);
+                next_url = positions.next_url();
+            }
+
+            let mut next_url = Some("https://api.ledgerx.com/funds/deposits?limit=200".to_string());
+            while let Some(url) = next_url {
+                info!("Fetching deposits");
+                let deposits = minreq::get(url)
+                    .with_header("Authorization", format!("JWT {}", api_key))
+                    .with_timeout(10)
+                    .send()
+                    .with_context(|| "getting data from trading/contracts endpoint")?
+                    .into_bytes();
+                let deposits: ledgerx::history::Deposits =
+                    serde_json::from_slice(&deposits).with_context(|| "parsing deposits json")?;
+
+                hist.import_deposits(&deposits);
+                next_url = deposits.next_url();
+            }
+
+            let mut next_url =
+                Some("https://api.ledgerx.com/funds/withdrawals?limit=200".to_string());
+            while let Some(url) = next_url {
+                info!("Fetching withdrawals");
+                let withdrawals = minreq::get(url)
+                    .with_header("Authorization", format!("JWT {}", api_key))
+                    .with_timeout(10)
+                    .send()
+                    .with_context(|| "getting data from trading/contracts endpoint")?
+                    .into_bytes();
+                let withdrawals: ledgerx::history::Withdrawals =
+                    serde_json::from_slice(&withdrawals)
+                        .with_context(|| "parsing withdrawals json")?;
+
+                hist.import_withdrawals(&withdrawals);
+                next_url = withdrawals.next_url();
+            }
+
+            let mut next_url = Some("https://api.ledgerx.com/trading/trades?limit=200".to_string());
+            while let Some(url) = next_url {
+                info!(
+                    "Fetching trades .. have {} contracts cached.",
+                    contracts.len()
+                );
+                let trades = minreq::get(url)
+                    .with_header("Authorization", format!("JWT {}", api_key))
+                    .with_timeout(10)
+                    .send()
+                    .with_context(|| "getting data from trading/contracts endpoint")?
+                    .into_bytes();
+                let trades: ledgerx::history::Trades =
+                    serde_json::from_slice(&trades).with_context(|| "parsing trades json")?;
+                trades
+                    .fetch_contract_ids(&mut contracts)
+                    .with_context(|| "getting contract IDs")?;
+
+                hist.import_trades(&trades, &contracts)
+                    .with_context(|| "importing trades")?;
+                next_url = trades.next_url();
+            }
+
+            hist.print_csv(year, &history);
         }
     }
 

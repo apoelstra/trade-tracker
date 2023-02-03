@@ -18,6 +18,7 @@
 //!
 
 use crate::terminal::{format_color, format_redgreen};
+use log::info;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::{fmt, str};
@@ -338,7 +339,12 @@ impl Option {
     }
 
     /// Print option data
-    pub fn print_option_data(&self, now: OffsetDateTime, btc_price: Decimal) {
+    pub fn log_option_data<D: fmt::Display>(
+        &self,
+        prefix: D,
+        now: OffsetDateTime,
+        btc_price: Decimal,
+    ) {
         let dte = self.years_to_expiry(now) * 365.0;
         let dd80 = self.bs_dual_delta(now, btc_price, 0.80).abs();
         let intrinsic_str = if self.in_the_money(btc_price) {
@@ -347,8 +353,9 @@ impl Option {
             " OTM ".into()
         };
 
-        println!(
-            "{}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
+        info!(
+            "{}{}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
+            prefix,
             format_color(format_args!("{:17}", self), 64, 192, 255),
             format_redgreen(format_args!("{:6.2}", dte), dte, 90.0, 0.0),
             btc_price,
@@ -358,8 +365,9 @@ impl Option {
     }
 
     /// Print black-scholes data
-    pub fn print_order_data(
+    pub fn log_order_data<D: fmt::Display>(
         &self,
+        prefix: D,
         now: OffsetDateTime,
         btc_price: Decimal,
         self_price: Decimal,
@@ -384,21 +392,29 @@ impl Option {
         // The "loss 80" is the likelihood that the option will end so far ITM that
         // even with preimum, it's a net loss, at an assumed 80% volatility
         let loss80 = self.bs_loss80(now, btc_price, self_price).abs();
-        println!(
-            "${} x {} = {}  sigma: {}%  ARR: {}%, Theta: {}  loss80: {}",
+        info!(
+            "{}${}{}  sigma: {}%  ARR: {}%, Theta: {}  loss80: {}",
+            prefix,
             format_redgreen(
                 format_args!("{:8.2}", self_price),
                 self_price.to_f64().unwrap().log10(),
                 1.0,
                 3.0
             ),
-            format_redgreen(format_args!("{:4}", size), (size as f64).log10(), 1.0, 4.0),
-            format_redgreen(
-                format_args!("{:8.2}", total),
-                total.to_f64().unwrap().log10(),
-                1.5,
-                5.0
-            ),
+            if size > 1 {
+                format!(
+                    " × {} = {}",
+                    format_redgreen(format_args!("{:4}", size), (size as f64).log10(), 1.0, 4.0),
+                    format_redgreen(
+                        format_args!("{:8.2}", total),
+                        total.to_f64().unwrap().log10(),
+                        1.5,
+                        5.0
+                    )
+                )
+            } else {
+                "".into()
+            },
             vol_str,
             format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2),
             theta_str,

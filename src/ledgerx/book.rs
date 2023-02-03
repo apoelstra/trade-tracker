@@ -20,6 +20,7 @@
 use super::{Ask, Bid, ManifestId, Order};
 use crate::option::{Call, Put};
 use crate::terminal::format_color;
+use log::info;
 use rust_decimal::Decimal;
 use std::cmp;
 use std::collections::BTreeMap;
@@ -166,12 +167,13 @@ fn log_bid_if_interesting(
     // For bids, we need to be able to compute volatility (otherwise
     // this is a "free money" bid, which we don't want to be short.
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order_size) {
-        println!("");
-        println!("Date: {}", now);
-        print!("{}", format_color("Interesting bid: ", 110, 250, 250));
-        opt.print_option_data(now, btc_price);
-        print!("    Price: ");
-        opt.print_order_data(now, btc_price, order.price, order_size);
+        crate::newline();
+        opt.log_option_data(
+            format_color("Interesting bid: ", 110, 250, 250),
+            now,
+            btc_price,
+        );
+        opt.log_order_data("    Price: ", now, btc_price, order.price, order_size);
 
         order.last_log = Some(now);
     }
@@ -200,14 +202,15 @@ fn log_ask_if_interesting(
     // Asks are only interesting if they're "free money", that is, if we
     // can open a delta-neutral position which is guaranteed to pay out
     if order.price < opt.intrinsic_value(btc_price) {
-        println!("");
-        println!("Date: {}", now);
-        print!("{}", format_color("Apparent free money ask: ", 80, 255, 80));
-        opt.print_option_data(now, btc_price);
-        print!("    Price: ");
-        opt.print_order_data(now, btc_price, order.price, order.size);
+        crate::newline();
+        opt.log_option_data(
+            format_color("Apparent free money ask: ", 80, 255, 80),
+            now,
+            btc_price,
+        );
+        opt.log_order_data("    Price: ", now, btc_price, order.price, order.size);
         if opt.pc == crate::option::Call {
-            println!(
+            info!(
                 "       (strike {} + price {} is {}, vs BTC price {}",
                 opt.strike,
                 order.price,
@@ -215,7 +218,7 @@ fn log_ask_if_interesting(
                 btc_price,
             );
         } else {
-            println!(
+            info!(
                 "       (strike {} - price {} is {}, vs BTC price {}",
                 opt.strike,
                 order.price,

@@ -307,7 +307,6 @@ mod tests {
         let fh = io::BufReader::new(fh);
         for json in fh.lines() {
             let json = json.unwrap();
-            println!("{}", json);
             serde_json::from_str::<DataFeedObject>(&json).expect("successful parse");
         }
     }

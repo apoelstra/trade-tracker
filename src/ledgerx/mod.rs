@@ -20,13 +20,16 @@
 pub mod book;
 pub mod contract;
 pub mod datafeed;
+pub mod history;
 pub mod json;
 
 use crate::terminal::format_color;
+use log::{debug, info};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
+use std::fmt;
 use time::OffsetDateTime;
 
 pub use book::BookState;
@@ -116,6 +119,16 @@ pub enum Asset {
     Usd,
 }
 
+impl fmt::Display for Asset {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Asset::Btc => f.write_str("BTC"),
+            Asset::Eth => f.write_str("ETH"),
+            Asset::Usd => f.write_str("USD"),
+        }
+    }
+}
+
 /// LedgerX API error
 pub enum Error {
     /// Error parsing json
@@ -179,7 +192,7 @@ impl LedgerX {
     /// Sets the "available balances" counter
     pub fn set_balances(&mut self, usd: Decimal, btc: Decimal) {
         if self.available_usd != usd || self.available_btc != btc {
-            println!("Update balances: ${}, {} BTC", usd, btc);
+            info!("Update balances: ${}, {} BTC", usd, btc);
         }
         self.available_usd = usd;
         self.available_btc = btc;
@@ -232,37 +245,46 @@ impl LedgerX {
                     let option = c.as_option().unwrap();
                     let ddelta80 = option.bs_dual_delta(now, btc_price, 0.80);
                     if ddelta80.abs() < 0.01 {
-                        println!("");
-                        println!("Date: {}", now);
-                        print!("{}", format_color("Interesting contract: ", 250, 110, 250));
-                        option.print_option_data(now, btc_price);
+                        crate::newline();
+                        option.log_option_data(
+                            format_color("Interesting contract: ", 250, 110, 250),
+                            now,
+                            btc_price,
+                        );
                         let (contr, usd) =
                             book.clear_bids(&option, self.available_usd, self.available_btc);
                         if contr > 0 {
                             let avg = usd / Decimal::from(contr) * Decimal::from(c.multiplier());
-                            print!("      Order to clear: ");
-                            option.print_order_data(now, btc_price, avg, contr);
+                            option.log_order_data(
+                                "      Order to clear: ",
+                                now,
+                                btc_price,
+                                avg,
+                                contr,
+                            );
                         }
 
-                        print!("            Best bid: ");
-                        opt.print_order_data(now, btc_price, bid, bid_size);
-                        print!(" Best ask  (matched): ");
+                        opt.log_order_data("            Best bid: ", now, btc_price, bid, bid_size);
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);
-                        opt.print_order_data(now, btc_price, ask, max_ask_size);
+                        opt.log_order_data(
+                            " Best ask  (matched): ",
+                            now,
+                            btc_price,
+                            ask,
+                            max_ask_size,
+                        );
                         c.last_log = Some(now);
                     } else if ASK_INTERESTING.is_interesting(&opt, now, btc_price, ask, ask_size) {
-                        println!("");
-                        println!("Date: {}", now);
-                        print!(
-                            "{}",
-                            format_color("Interesting ask (to match): ", 180, 180, 250)
+                        crate::newline();
+                        opt.log_option_data(
+                            format_color("Interesting ask (to match): ", 180, 180, 250),
+                            now,
+                            btc_price,
                         );
-                        opt.print_option_data(now, btc_price);
                         let (max_ask_size, _) =
                             option.max_sale(ask, self.available_usd, self.available_btc);
-                        print!("    Price: ");
-                        opt.print_order_data(now, btc_price, ask, max_ask_size);
+                        opt.log_order_data("    Price: ", now, btc_price, ask, max_ask_size);
                         c.last_log = Some(now);
                     }
                 }
@@ -286,14 +308,16 @@ impl LedgerX {
     /// Some checks will be done as to whether this is an "interesting" option
     /// at the current price, and if so, we print a log message.
     pub fn add_contract(&mut self, c: Contract) {
-        println!("Add contract {}: {}", c.id(), c.label());
+        info!("Add contract {}: {}", c.id(), c.label());
         self.contracts.insert(c.id(), (c, BookState::new()));
     }
 
     /// Remove a contract from the tracker
     pub fn remove_contract(&mut self, c_id: ContractId) {
         if let Some((c, _)) = self.contracts.remove(&c_id) {
-            println!("Remove contract {}: {}", c.id(), c.label());
+            info!("Remove contract {}: {}", c.id(), c.label());
+        } else {
+            debug!("Removed unknown contract {}", c_id);
         }
     }
 
@@ -301,9 +325,19 @@ impl LedgerX {
     pub fn insert_order(&mut self, order: Order) -> UpdateResponse {
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
-            None => return UpdateResponse::UnknownContract(order),
+            None => {
+                debug!(
+                    "Received order mid {} for unknown contract {}",
+                    order.manifest_id, order.contract_id,
+                );
+                return UpdateResponse::UnknownContract(order);
+            }
         };
         if contract.underlying() != Asset::Btc {
+            debug!(
+                "Ignoring order mid {} for non-BTC contract {}",
+                order.manifest_id, order.contract_id,
+            );
             return UpdateResponse::NonBtcOrder;
         }
         let timestamp = order.timestamp;
@@ -313,7 +347,7 @@ impl LedgerX {
         // previous best order has its size reduced to 0 and is dropped from the book.
         let old_bb = book_state.best_bid();
         let old_ba = book_state.best_ask();
-        //        println!("insert order {:?} into contract {}", order, contract.label());
+        debug!("Inserting into contract {}: {:?}", contract.id(), order);
         book_state.insert_order(order);
         let new_bb = book_state.best_bid();
         let new_ba = book_state.best_ask();

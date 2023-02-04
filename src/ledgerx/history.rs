@@ -447,30 +447,20 @@ impl History {
                     price,
                     size,
                 } => match contract.ty() {
-                    super::contract::Type::Option { opt, .. } => {
-                        (
-                            Some((
-                                "Trade",
-                                date_fmt,
-                                opt.csv_tuple(),
-                                (Some(*price), Decimal::from(*size)),
-                                (
-                                    btc_price,
-                                    match opt.bs_iv(*date, btc_price, *price) {
-                                        Ok(iv) => Some(iv.to_string()),
-                                        Err(_) => Some("free money".into()),
-                                    },
-                                    match opt.arr(*date, btc_price, *price) {
-                                        // don't encode ARRs greater than 10000%, it's silly and fucks up
-                                        // the display
-                                        x if x < 100.0 => Some(x.to_string()),
-                                        __ => None,
-                                    },
-                                ),
-                            )),
-                            None,
-                        )
-                    }
+                    super::contract::Type::Option { opt, .. } => (
+                        Some((
+                            "Trade",
+                            date_fmt,
+                            opt.csv_tuple(),
+                            (Some(*price), Decimal::from(*size)),
+                            (
+                                btc_price,
+                                Some(csv::Iv(opt.bs_iv(*date, btc_price, *price))),
+                                Some(csv::Arr(opt.arr(*date, btc_price, *price))),
+                            ),
+                        )),
+                        None,
+                    ),
                     super::contract::Type::NextDay { .. } => (
                         Some((
                             "Trade",
@@ -500,7 +490,7 @@ impl History {
                         );
                         let mut expiry_csv = None;
                         if *expired_size != 0 {
-                            let mut csv_copy = csv.clone();
+                            let mut csv_copy = csv;
                             csv_copy.0 = "Expiry";
                             csv_copy.3 .1 = Decimal::from(*expired_size);
                             expiry_csv = Some(csv_copy);

@@ -57,6 +57,32 @@ impl PrintCsv for DateTime {
     }
 }
 
+/// Wrapper around an implied volatility result
+#[derive(Copy, Clone)]
+pub struct Iv(pub Result<f64, f64>);
+impl PrintCsv for Iv {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Ok(iv) = self.0 {
+            write!(f, "{}", iv)
+        } else {
+            f.write_str("\"free money\"")
+        }
+    }
+}
+
+/// Wrapper around an ARR result
+#[derive(Copy, Clone)]
+pub struct Arr(pub f64);
+impl PrintCsv for Arr {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // don't encode ARRs greater than 10000%, it's silly and fucks up the cell width
+        if self.0 < 100.0 {
+            write!(f, "{}", self.0)?;
+        }
+        Ok(())
+    }
+}
+
 macro_rules! impl_display {
     ($ty:ty) => {
         impl PrintCsv for $ty {
@@ -124,7 +150,7 @@ impl<P: PrintCsv> PrintCsv for Option<P> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Some(p) => p.print(f),
-            None => f.write_str(""),
+            None => Ok(()), // "write the empty string"
         }
     }
 }

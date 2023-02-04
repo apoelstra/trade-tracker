@@ -30,7 +30,6 @@ use clap::Clap;
 use log::{info, warn};
 use rust_decimal::Decimal;
 use std::{
-    collections::HashMap,
     convert::TryInto,
     fs,
     path::PathBuf,
@@ -46,10 +45,13 @@ const MIN_PRICE_DATE: &str = "2023";
 
 #[derive(Clap)]
 enum Command {
+    /// Read a CSV file downloaded from Bitcoincharts, storing all its price data (at
+    /// a ten-minute resolution rather than all of it)
     InitializePriceData {
         #[clap(name = "csv_file", parse(from_os_str))]
         csv: PathBuf,
     },
+    /// Ping bitcoincharts in real time to get recent price data
     UpdatePriceData {
         #[clap(
             name = "url",
@@ -57,7 +59,10 @@ enum Command {
         )]
         url: String,
     },
+    /// Return the latest stored price. Mainly useful as a test.
     LatestPrice {},
+    /// Print a list of potential orders for a given option near a given volatility, at various
+    /// prices
     Price {
         #[clap(name = "option")]
         option: option::Option,
@@ -65,6 +70,7 @@ enum Command {
         #[clap(long, short)]
         volatility: Option<f64>,
     },
+    /// Print a list of potential orders for a given option near a given price
     Iv {
         #[clap(name = "option")]
         option: option::Option,
@@ -72,16 +78,25 @@ enum Command {
         #[clap(long, short)]
         price: Option<Decimal>,
     },
-    /// LedgerX stuff
+    /// Connect to LedgerX API and monitor activity in real-time
     Connect {
         #[clap(name = "token")]
         api_key: String,
     },
+    /// Connect to LedgerX API and download complete transaction history, for a given year if
+    /// supplied. Outputs in CSV.
     History {
         #[clap(name = "token")]
         api_key: String,
         #[clap(name = "year")]
         year: Option<i32>,
+    },
+    /// Connect to LedgerX API and attempt to recreate its tax CSV file for a given year
+    TaxHistory {
+        #[clap(name = "token")]
+        api_key: String,
+        #[clap(name = "year")]
+        year: i32,
     },
 }
 
@@ -137,18 +152,16 @@ fn main() -> Result<(), anyhow::Error> {
     let data_path = data_path; // drop mut
 
     // Read price data history
-    let history = if let Command::InitializePriceData { .. } = command {
+    let history = match command {
         // unused when initializing price data, just pick something
-        Historic::default()
-    } else if let Command::History { year, .. } = command {
-        let history = Historic::read_json_from(&data_path, &year.unwrap_or(2020).to_string())
-            .context("reading price history")?;
-        history
-    } else {
-        let history = Historic::read_json_from(&data_path, MIN_PRICE_DATE)
-            .context("reading price history")?;
-        history
-    };
+        Command::InitializePriceData { .. } => Ok(Historic::default()),
+        Command::History { year, .. } => {
+            Historic::read_json_from(&data_path, &year.unwrap_or(2020).to_string())
+        }
+        Command::TaxHistory { year, .. } => Historic::read_json_from(&data_path, &year.to_string()),
+        _ => Historic::read_json_from(&data_path, MIN_PRICE_DATE),
+    }
+    .context("reading price history")?;
 
     // Turn on logging
     let now = time::OffsetDateTime::now_utc();
@@ -323,6 +336,11 @@ fn main() -> Result<(), anyhow::Error> {
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
             hist.print_csv(year, &history);
+        }
+        Command::TaxHistory { api_key, year } => {
+            let hist = ledgerx::history::History::from_api(&api_key)
+                .context("getting history from LX API")?;
+            hist.print_csv(Some(year), &history);
         }
     }
 

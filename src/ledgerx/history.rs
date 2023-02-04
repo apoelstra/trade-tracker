@@ -335,7 +335,7 @@ impl History {
             match event {
                 Event::Deposit { asset, amount } => {
                     println!(
-                        "Deposit,{},,{},,{},{}",
+                        "Deposit,{},,{},,,{},{}",
                         // It took a ton of experimenting to get a format that gnumeric
                         // will recognize and parse correctly..
                         date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
@@ -346,7 +346,7 @@ impl History {
                 }
                 Event::Withdrawal { asset, amount } => {
                     println!(
-                        "Withdraw,{},,{},,{},{}",
+                        "Withdraw,{},,{},,,{},{}",
                         date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
                         asset,
                         amount,
@@ -405,7 +405,7 @@ impl History {
                     super::contract::Type::Option { opt, .. } => {
                         if *expired_size != 0 {
                             println!(
-                                "Expiry,{},{},{},{},,{},",
+                                "Expiry,{},{},{},{},,{},{},",
                                 date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
                                 opt.expiry.format("%F"),
                                 match opt.pc {
@@ -414,11 +414,12 @@ impl History {
                                 },
                                 opt.strike,
                                 expired_size,
+                                btc_price,
                             );
                         }
                         if *assigned_size != 0 {
                             println!(
-                                "Assignment,{},{},{},{},,{},",
+                                "Assignment,{},{},{},{},,{},{},",
                                 date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
                                 opt.expiry.format("%F"),
                                 match opt.pc {
@@ -427,6 +428,7 @@ impl History {
                                 },
                                 opt.strike,
                                 assigned_size,
+                                btc_price,
                             );
                         }
                     }

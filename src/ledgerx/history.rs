@@ -18,6 +18,7 @@
 //!
 
 use anyhow::Context;
+use log::info;
 use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{BTreeMap, HashMap};
@@ -218,6 +219,88 @@ impl History {
     /// Construct a new empty history
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Construct a new history by calling the LX API
+    pub fn from_api(api_key: &str) -> anyhow::Result<Self> {
+        let mut ret = History::new();
+        let mut contracts = HashMap::new();
+
+        let mut next_url = Some("https://api.ledgerx.com/trading/positions?limit=200".to_string());
+        while let Some(url) = next_url {
+            info!(
+                "Fetching positions .. have {} contracts cached.",
+                contracts.len()
+            );
+            let positions = minreq::get(url)
+                .with_header("Authorization", format!("JWT {}", api_key))
+                .with_timeout(10)
+                .send()
+                .with_context(|| "getting data from trading/contracts endpoint")?
+                .into_bytes();
+            let positions: Positions =
+                serde_json::from_slice(&positions).with_context(|| "parsing positions json")?;
+            positions.store_contract_ids(&mut contracts);
+
+            ret.import_positions(&positions);
+            next_url = positions.next_url();
+        }
+
+        let mut next_url = Some("https://api.ledgerx.com/funds/deposits?limit=200".to_string());
+        while let Some(url) = next_url {
+            info!("Fetching deposits");
+            let deposits = minreq::get(url)
+                .with_header("Authorization", format!("JWT {}", api_key))
+                .with_timeout(10)
+                .send()
+                .with_context(|| "getting data from trading/contracts endpoint")?
+                .into_bytes();
+            let deposits: Deposits =
+                serde_json::from_slice(&deposits).with_context(|| "parsing deposits json")?;
+
+            ret.import_deposits(&deposits);
+            next_url = deposits.next_url();
+        }
+
+        let mut next_url = Some("https://api.ledgerx.com/funds/withdrawals?limit=200".to_string());
+        while let Some(url) = next_url {
+            info!("Fetching withdrawals");
+            let withdrawals = minreq::get(url)
+                .with_header("Authorization", format!("JWT {}", api_key))
+                .with_timeout(10)
+                .send()
+                .with_context(|| "getting data from trading/contracts endpoint")?
+                .into_bytes();
+            let withdrawals: Withdrawals =
+                serde_json::from_slice(&withdrawals).with_context(|| "parsing withdrawals json")?;
+
+            ret.import_withdrawals(&withdrawals);
+            next_url = withdrawals.next_url();
+        }
+
+        let mut next_url = Some("https://api.ledgerx.com/trading/trades?limit=200".to_string());
+        while let Some(url) = next_url {
+            info!(
+                "Fetching trades .. have {} contracts cached.",
+                contracts.len()
+            );
+            let trades = minreq::get(url)
+                .with_header("Authorization", format!("JWT {}", api_key))
+                .with_timeout(10)
+                .send()
+                .with_context(|| "getting data from trading/contracts endpoint")?
+                .into_bytes();
+            let trades: Trades =
+                serde_json::from_slice(&trades).with_context(|| "parsing trades json")?;
+            trades
+                .fetch_contract_ids(&mut contracts)
+                .with_context(|| "getting contract IDs")?;
+
+            ret.import_trades(&trades, &contracts)
+                .with_context(|| "importing trades")?;
+            next_url = trades.next_url();
+        }
+        Ok(ret)
     }
 
     /// Import a list of deposits into the history

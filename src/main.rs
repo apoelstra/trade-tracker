@@ -320,87 +320,8 @@ fn main() -> Result<(), anyhow::Error> {
             } // loop
         }
         Command::History { api_key, year } => {
-            let mut hist = ledgerx::history::History::new();
-            let mut contracts = HashMap::new();
-
-            let mut next_url =
-                Some("https://api.ledgerx.com/trading/positions?limit=200".to_string());
-            while let Some(url) = next_url {
-                info!(
-                    "Fetching positions .. have {} contracts cached.",
-                    contracts.len()
-                );
-                let positions = minreq::get(url)
-                    .with_header("Authorization", format!("JWT {}", api_key))
-                    .with_timeout(10)
-                    .send()
-                    .with_context(|| "getting data from trading/contracts endpoint")?
-                    .into_bytes();
-                let positions: ledgerx::history::Positions =
-                    serde_json::from_slice(&positions).with_context(|| "parsing positions json")?;
-                positions.store_contract_ids(&mut contracts);
-
-                hist.import_positions(&positions);
-                next_url = positions.next_url();
-            }
-
-            let mut next_url = Some("https://api.ledgerx.com/funds/deposits?limit=200".to_string());
-            while let Some(url) = next_url {
-                info!("Fetching deposits");
-                let deposits = minreq::get(url)
-                    .with_header("Authorization", format!("JWT {}", api_key))
-                    .with_timeout(10)
-                    .send()
-                    .with_context(|| "getting data from trading/contracts endpoint")?
-                    .into_bytes();
-                let deposits: ledgerx::history::Deposits =
-                    serde_json::from_slice(&deposits).with_context(|| "parsing deposits json")?;
-
-                hist.import_deposits(&deposits);
-                next_url = deposits.next_url();
-            }
-
-            let mut next_url =
-                Some("https://api.ledgerx.com/funds/withdrawals?limit=200".to_string());
-            while let Some(url) = next_url {
-                info!("Fetching withdrawals");
-                let withdrawals = minreq::get(url)
-                    .with_header("Authorization", format!("JWT {}", api_key))
-                    .with_timeout(10)
-                    .send()
-                    .with_context(|| "getting data from trading/contracts endpoint")?
-                    .into_bytes();
-                let withdrawals: ledgerx::history::Withdrawals =
-                    serde_json::from_slice(&withdrawals)
-                        .with_context(|| "parsing withdrawals json")?;
-
-                hist.import_withdrawals(&withdrawals);
-                next_url = withdrawals.next_url();
-            }
-
-            let mut next_url = Some("https://api.ledgerx.com/trading/trades?limit=200".to_string());
-            while let Some(url) = next_url {
-                info!(
-                    "Fetching trades .. have {} contracts cached.",
-                    contracts.len()
-                );
-                let trades = minreq::get(url)
-                    .with_header("Authorization", format!("JWT {}", api_key))
-                    .with_timeout(10)
-                    .send()
-                    .with_context(|| "getting data from trading/contracts endpoint")?
-                    .into_bytes();
-                let trades: ledgerx::history::Trades =
-                    serde_json::from_slice(&trades).with_context(|| "parsing trades json")?;
-                trades
-                    .fetch_contract_ids(&mut contracts)
-                    .with_context(|| "getting contract IDs")?;
-
-                hist.import_trades(&trades, &contracts)
-                    .with_context(|| "importing trades")?;
-                next_url = trades.next_url();
-            }
-
+            let hist = ledgerx::history::History::from_api(&api_key)
+                .context("getting history from LX API")?;
             hist.print_csv(year, &history);
         }
     }

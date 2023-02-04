@@ -17,6 +17,7 @@
 //! Personal-use barely-maintained tool for keeping track of trades
 //!
 
+pub mod csv;
 pub mod ledgerx;
 pub mod local_bs;
 pub mod logger;

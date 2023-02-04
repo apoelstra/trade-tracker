@@ -108,6 +108,24 @@ impl Option {
         }
     }
 
+    /// Outputs a tuple suitable for copy/pasting into Andrew's Excel sheet
+    pub fn csv_tuple(
+        &self,
+    ) -> (
+        std::option::Option<crate::csv::DateOnly>,
+        &'static str,
+        std::option::Option<Decimal>,
+    ) {
+        (
+            Some(crate::csv::DateOnly(self.expiry)),
+            match self.pc {
+                crate::option::Call => "C",
+                crate::option::Put => "P",
+            },
+            Some(self.strike),
+        )
+    }
+
     /// Compute the number of years to expiry, as a float, given current time
     pub fn years_to_expiry(&self, now: OffsetDateTime) -> f64 {
         (self.expiry - now) / time::Duration::days(365)

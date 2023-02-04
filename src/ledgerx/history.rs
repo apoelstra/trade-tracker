@@ -17,6 +17,7 @@
 //! Data structures related to trading history for copying into Excel
 //!
 
+use crate::csv::{self, CsvPrinter};
 use anyhow::Context;
 use log::info;
 use rust_decimal::Decimal;
@@ -415,67 +416,71 @@ impl History {
 
             let btc_price = price_history.price_at(*date);
             let btc_price = btc_price.btc_price; // just discard exact price timestamp
-            match event {
-                Event::Deposit { asset, amount } => {
-                    println!(
-                        "Deposit,{},,{},,,{},{}",
-                        // It took a ton of experimenting to get a format that gnumeric
-                        // will recognize and parse correctly..
-                        date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
-                        asset,
-                        amount,
-                        btc_price,
-                    );
-                }
-                Event::Withdrawal { asset, amount } => {
-                    println!(
-                        "Withdraw,{},,{},,,{},{}",
-                        date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
-                        asset,
-                        amount,
-                        btc_price,
-                    );
-                }
+            let date_fmt = csv::DateTime(date.to_offset(time::UtcOffset::UTC));
+
+            // First accumulate the CSV into tuples (between 0 and 2 of them). We do
+            // it this way to ensure that every branch outputs the same type of data,
+            // which is a basic sanity check.
+            let csv = match event {
+                Event::Deposit { asset, amount } => (
+                    Some((
+                        "Deposit",
+                        date_fmt,
+                        (None, asset.as_str(), None),
+                        (None, *amount),
+                        (btc_price, None, None),
+                    )),
+                    None,
+                ),
+                Event::Withdrawal { asset, amount } => (
+                    Some((
+                        "Withdraw",
+                        date_fmt,
+                        (None, asset.as_str(), None),
+                        (None, *amount),
+                        (btc_price, None, None),
+                    )),
+                    None,
+                ),
                 Event::Trade {
                     contract,
                     price,
                     size,
                 } => match contract.ty() {
                     super::contract::Type::Option { opt, .. } => {
-                        println!(
-                            "Trade,{},{},{},{},{},{},{},{},{}",
-                            date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
-                            opt.expiry.format("%F"),
-                            match opt.pc {
-                                crate::option::Call => "C",
-                                crate::option::Put => "P",
-                            },
-                            opt.strike,
-                            price,
-                            size,
-                            btc_price,
-                            match opt.bs_iv(*date, btc_price, *price) {
-                                Ok(iv) => iv.to_string(),
-                                Err(_) => "free money".into(),
-                            },
-                            match opt.arr(*date, btc_price, *price) {
-                                // don't encode ARRs greater than 10000%, it's silly and fucks up
-                                // the display
-                                x if x < 100.0 => x.to_string(),
-                                _ => String::new(),
-                            }
-                        );
+                        (
+                            Some((
+                                "Trade",
+                                date_fmt,
+                                opt.csv_tuple(),
+                                (Some(*price), Decimal::from(*size)),
+                                (
+                                    btc_price,
+                                    match opt.bs_iv(*date, btc_price, *price) {
+                                        Ok(iv) => Some(iv.to_string()),
+                                        Err(_) => Some("free money".into()),
+                                    },
+                                    match opt.arr(*date, btc_price, *price) {
+                                        // don't encode ARRs greater than 10000%, it's silly and fucks up
+                                        // the display
+                                        x if x < 100.0 => Some(x.to_string()),
+                                        __ => None,
+                                    },
+                                ),
+                            )),
+                            None,
+                        )
                     }
-                    super::contract::Type::NextDay { .. } => {
-                        println!(
-                            "Trade,{},,{},,{},{},{}",
-                            date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
-                            contract.underlying(),
-                            price,
-                            size,
-                            btc_price,
-                        );
-                    }
+                    super::contract::Type::NextDay { .. } => (
+                        Some((
+                            "Trade",
+                            date_fmt,
+                            (None, contract.underlying().as_str(), None),
+                            (Some(*price), Decimal::from(*size)),
+                            (btc_price, None, None),
+                        )),
+                        None,
+                    ),
                     super::contract::Type::Future { .. } => {
                         unimplemented!("futures trading")
                     }
@@ -486,43 +491,46 @@ impl History {
                     expired_size,
                 } => match contract.ty() {
                     super::contract::Type::Option { opt, .. } => {
+                        let csv = (
+                            "X",
+                            date_fmt,
+                            opt.csv_tuple(),
+                            (None, Decimal::ZERO),
+                            (btc_price, None, None),
+                        );
+                        let mut expiry_csv = None;
                         if *expired_size != 0 {
-                            println!(
-                                "Expiry,{},{},{},{},,{},{},",
-                                date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
-                                opt.expiry.format("%F"),
-                                match opt.pc {
-                                    crate::option::Call => "C",
-                                    crate::option::Put => "P",
-                                },
-                                opt.strike,
-                                expired_size,
-                                btc_price,
-                            );
+                            let mut csv_copy = csv.clone();
+                            csv_copy.0 = "Expiry";
+                            csv_copy.3 .1 = Decimal::from(*expired_size);
+                            expiry_csv = Some(csv_copy);
                         }
+                        let mut assign_csv = None;
                         if *assigned_size != 0 {
-                            println!(
-                                "Assignment,{},{},{},{},,{},{},",
-                                date.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ"),
-                                opt.expiry.format("%F"),
-                                match opt.pc {
-                                    crate::option::Call => "C",
-                                    crate::option::Put => "P",
-                                },
-                                opt.strike,
-                                assigned_size,
-                                btc_price,
-                            );
+                            let mut csv_copy = csv;
+                            csv_copy.0 = "Assignment";
+                            csv_copy.3 .1 = Decimal::from(*assigned_size);
+                            assign_csv = Some(csv_copy);
                         }
+                        (expiry_csv, assign_csv)
                     }
                     // NextDays don't expire, they are "assigned". We don't log this as a distinct
                     // event because we consider the originating trade to be the actual event.
                     super::contract::Type::NextDay { .. } => {
                         assert_eq!(*expired_size, 0);
+                        (None, None)
                     }
                     // TBH I don't know what happens with futures
                     super::contract::Type::Future { .. } => unreachable!(),
                 },
+            };
+
+            // ...then output it
+            if let Some(first) = csv.0 {
+                println!("{}", CsvPrinter(first));
+            }
+            if let Some(second) = csv.1 {
+                println!("{}", CsvPrinter(second));
             }
         }
     }

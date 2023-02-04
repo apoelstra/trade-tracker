@@ -122,6 +122,16 @@ pub enum Asset {
     Usd,
 }
 
+impl Asset {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Asset::Btc => "BTC",
+            Asset::Eth => "ETH",
+            Asset::Usd => "USD",
+        }
+    }
+}
+
 impl fmt::Display for Asset {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

@@ -537,7 +537,7 @@ impl History {
                     debug!("Ignore deposit");
                     debug!("FIXME inserting synthetic purchase");
                     let btc_label = tax::Label::btc();
-                    let open = tax::Open::from_trade(
+                    let open = tax::Lot::from_trade(
                         Decimal::new(30000, 0),
                         10000,
                         Decimal::ZERO, // fee
@@ -569,7 +569,7 @@ impl History {
                     } else {
                         *date
                     };
-                    let open = tax::Open::from_trade(*price, *size, *fee, tax_date);
+                    let open = tax::Lot::from_trade(*price, *size, *fee, tax_date);
                     let pos = positions.entry(label.clone()).or_default();
                     for close in pos.push_event(open, contract.as_option().is_some()) {
                         info!("{}", close.csv_printer(&label));
@@ -591,7 +591,7 @@ impl History {
                     // futures we don't support.
                     if let Some(opt) = contract.as_option() {
                         if *expired_size != 0 {
-                            let open = tax::Open::from_expiry(&opt, *expired_size);
+                            let open = tax::Lot::from_expiry(&opt, *expired_size);
                             let pos = positions.entry(label.clone()).or_default();
                             for close in pos.push_event(open, contract.as_option().is_some()) {
                                 info!("{}", close.csv_printer(&label));
@@ -607,7 +607,7 @@ impl History {
                             );
                             let btc_price = btc_price.btc_price;
 
-                            let open = tax::Open::from_assignment(&opt, *assigned_size, btc_price);
+                            let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
                             let pos = positions.entry(label.clone()).or_default();
                             for close in pos.push_event(open, contract.as_option().is_some()) {
                                 info!("{}", close.csv_printer(&label));
@@ -618,7 +618,7 @@ impl History {
                             // see "seriously WTF" comment
                             let expiry =
                                 opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
-                            let open = tax::Open::from_trade(
+                            let open = tax::Lot::from_trade(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.
                                 match opt.pc {

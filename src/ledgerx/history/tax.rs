@@ -144,8 +144,8 @@ impl Direction {
 
 /// Event that creates or enlarges a position
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Open {
-    /// If this is used to close another open
+pub struct Lot {
+    /// If this is used to close a position rather than create a new lot
     close_ty: CloseType,
     direction: Direction,
     quantity: u64,
@@ -153,11 +153,11 @@ pub struct Open {
     date: TaxDate,
 }
 
-impl fmt::Display for Open {
+impl fmt::Display for Lot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Open({}, {:?}, {:?}, {} @ {})",
+            "Lot({}, {:?}, {:?}, {} @ {})",
             self.date.0.lazy_format("%FT%T"),
             self.direction,
             self.close_ty,
@@ -167,16 +167,16 @@ impl fmt::Display for Open {
     }
 }
 
-impl Open {
-    /// Constructs an `Open` object from a trade event
-    pub fn from_trade(price: Decimal, size: i64, fee: Decimal, date: time::OffsetDateTime) -> Open {
+impl Lot {
+    /// Constructs an `Lot` object from a trade event
+    pub fn from_trade(price: Decimal, size: i64, fee: Decimal, date: time::OffsetDateTime) -> Lot {
         debug!(
-            "Open::from_trade price {} size {} fee {} date {}",
+            "Lot::from_trade price {} size {} fee {} date {}",
             price, size, fee, date
         );
         let unit_fee = fee / Decimal::new(size, 2);
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
-        Open {
+        Lot {
             close_ty: if size > 0 {
                 CloseType::BuyBack
             } else {
@@ -189,14 +189,14 @@ impl Open {
         }
     }
 
-    /// Constructs an `Open` object from an expiration event
-    pub fn from_expiry(opt: &crate::option::Option, n_expired: i64) -> Open {
-        debug!("Open::from_expiry opt {} n {}", opt, n_expired);
+    /// Constructs an `Lot` object from an expiration event
+    pub fn from_expiry(opt: &crate::option::Option, n_expired: i64) -> Lot {
+        debug!("Lot::from_expiry opt {} n {}", opt, n_expired);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
-        Open {
+        Lot {
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
@@ -209,13 +209,13 @@ impl Open {
         opt: &crate::option::Option,
         n_assigned: i64,
         btc_price: Decimal,
-    ) -> Open {
-        debug!("Open::from_assignment opt {} n {}", opt, n_assigned);
+    ) -> Lot {
+        debug!("Lot::from_assignment opt {} n {}", opt, n_assigned);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
-        Open {
+        Lot {
             close_ty: CloseType::Exercise,
             direction: Direction::from_size(n_assigned),
             quantity: n_assigned.unsigned_abs(),
@@ -296,7 +296,7 @@ impl Close {
 /// A position in a specific asset, represented by a FIFO queue of opening events
 #[derive(Default)]
 pub struct Position {
-    fifo: VecDeque<Open>,
+    fifo: VecDeque<Lot>,
 }
 
 impl Position {
@@ -319,7 +319,7 @@ impl Position {
     ///
     /// If this results in closing previously opened positions, return a list of
     /// `Close`s with their type set to the `close_type` argument.
-    pub fn push_event(&mut self, mut open: Open, is_1256: bool) -> Vec<Close> {
+    pub fn push_event(&mut self, mut open: Lot, is_1256: bool) -> Vec<Close> {
         // If the position is empty, then just push
         if self.fifo.is_empty() {
             debug!("Create new position with open {}", open);

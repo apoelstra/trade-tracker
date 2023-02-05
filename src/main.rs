@@ -26,6 +26,7 @@ pub mod option;
 pub mod price;
 pub mod terminal;
 pub mod trade;
+pub mod transaction;
 
 use anyhow::Context;
 use clap::Clap;
@@ -63,6 +64,16 @@ enum Command {
     },
     /// Return the latest stored price. Mainly useful as a test.
     LatestPrice {},
+    /// Record a hex transaction that may be interesting to the software
+    RecordTx {
+        #[clap(name = "rawtx", about = "The hex-encoded raw transaction to record")]
+        rawtx: String,
+        #[clap(
+            name = "timestamp",
+            about = "Please provide the timestamp from the block header in which the transaction was confirmed"
+        )]
+        timestamp: u64,
+    },
     /// Print a list of potential orders for a given option near a given volatility, at various
     /// prices
     Price {
@@ -145,6 +156,7 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
         Command::InitializePriceData { .. }
         | Command::UpdatePriceData { .. }
         | Command::LatestPrice {}
+        | Command::RecordTx { .. }
         | Command::Price { .. }
         | Command::Iv { .. } => {
             logger::Logger::init_stdout_only().context("initializing stdout logger")?;
@@ -164,7 +176,6 @@ fn main() -> Result<(), anyhow::Error> {
     let mut data_path = dirs::data_dir().context("getting XDG config directory")?;
     data_path.push("trade-tracker");
     data_path.push("pricedata");
-    let data_path = data_path; // drop mut
 
     // Read price data history
     let history = match command {
@@ -177,6 +188,8 @@ fn main() -> Result<(), anyhow::Error> {
         _ => Historic::read_json_from(&data_path, MIN_PRICE_DATE),
     }
     .context("reading price history")?;
+
+    data_path.pop(); // "pricedata"
 
     // Turn on logging
     let now = time::OffsetDateTime::now_utc();
@@ -214,6 +227,51 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::LatestPrice {} => {
             info!("{}", history.price_at(now));
+        }
+        Command::RecordTx { rawtx, timestamp } => {
+            let bytes: Vec<u8> = hex::decode(&rawtx).context("decoding rawtx as hex")?;
+            let tx: bitcoin::Transaction =
+                bitcoin::consensus::deserialize(&bytes).context("decoding rawtx as transaction")?;
+
+            // Basic sanity checks on the timestamp.
+            if timestamp < 1231006505 {
+                return Err(anyhow::Error::msg(
+                    "Timestamp appears to be invalid (predates the genesis block)",
+                ));
+            } else if timestamp > 4102444800 {
+                return Err(anyhow::Error::msg(
+                    "Timestamp appears to be invalid (or you are in the year 2100, \
+                     a time so far in the future that the earth men of 2023 could \
+                     not imagine it.",
+                ));
+            }
+
+            data_path.push("transactions.json");
+            let mut db = match transaction::Database::load(&data_path) {
+                Ok(db) => {
+                    info!("Loaded transaction database from disk.");
+                    db
+                }
+                Err(e) => {
+                    info!(
+                        "Failed to load transaction database: {}. Creating a new one.",
+                        e
+                    );
+                    transaction::Database::new()
+                }
+            };
+
+            info!("Saving transaction with txid {}", tx.txid());
+            if let Some(existing) = db.insert_tx(tx, timestamp) {
+                if timestamp == existing {
+                    info!("Already had transaction.");
+                } else {
+                    info!("Overwriting timestamp {} with {}.", existing, timestamp);
+                }
+            }
+            db.save(&data_path).context("saving transaction database")?;
+            data_path.pop(); // "transactions.json"
+            info!("Success.");
         }
         Command::Price { option, volatility } => {
             let yte = option.years_to_expiry(now);

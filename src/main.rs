@@ -18,6 +18,7 @@
 //!
 
 pub mod csv;
+pub mod http;
 pub mod ledgerx;
 pub mod local_bs;
 pub mod logger;
@@ -111,30 +112,43 @@ fn newline() {
 }
 
 fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<(), anyhow::Error> {
-    if let Command::Connect { .. } = command {
-        let log_dir = format!("{}/log", env!("CARGO_MANIFEST_DIR"));
-        if let Ok(metadata) = std::fs::metadata(&log_dir) {
-            if !metadata.is_dir() {
-                return Err(anyhow::Error::msg(format!(
-                    "Log directory {} alrready exists but is not a directory.",
-                    log_dir
-                )));
+    match command {
+        // Commands that interact with the LX API should have full logging, including
+        // debug logs and sending all json replies to log files.
+        Command::Connect { .. } | Command::History { .. } | Command::TaxHistory { .. } => {
+            let log_dir = format!("{}/log", env!("CARGO_MANIFEST_DIR"));
+            if let Ok(metadata) = std::fs::metadata(&log_dir) {
+                if !metadata.is_dir() {
+                    return Err(anyhow::Error::msg(format!(
+                        "Log directory {} alrready exists but is not a directory.",
+                        log_dir
+                    )));
+                }
+            } else {
+                std::fs::create_dir(&log_dir)
+                    .with_context(|| format!("creating log directory {}", log_dir))?;
             }
-        } else {
-            std::fs::create_dir(&log_dir)
-                .with_context(|| format!("creating log directory {}", log_dir))?;
-        }
 
-        let msg_log = format!("{}/msg_{}.log", log_dir, now.lazy_format("%F_%H%M%S"));
-        let dbg_log = format!("{}/debug_{}.log", log_dir, now.lazy_format("%F_%H%M%S"));
-        logger::Logger::init(&dbg_log, &msg_log).with_context(|| {
-            format!(
-                "initializing logger (msg_log {}, debug log {})",
-                msg_log, dbg_log
-            )
-        })?;
-    } else {
-        logger::Logger::init_stdout_only().context("initializing stdout logger")?;
+            let filenames = logger::LogFilenames {
+                debug_log: format!("{}/debug_{}.log", log_dir, now.lazy_format("%F_%H%M%S")),
+                datafeed_log: format!("{}/datafeed_{}.log", log_dir, now.lazy_format("%F_%H%M%S")),
+                http_get_log: format!("{}/http_get_{}.log", log_dir, now.lazy_format("%F_%H%M%S")),
+            };
+            logger::Logger::init(&filenames).with_context(|| {
+                format!(
+                    "initializing logger (datafeed_log {}, debug log {}, http_get_log {})",
+                    filenames.datafeed_log, filenames.debug_log, filenames.http_get_log,
+                )
+            })?;
+        }
+        // "One-off" commands just dump everything to stdout
+        Command::InitializePriceData { .. }
+        | Command::UpdatePriceData { .. }
+        | Command::LatestPrice {}
+        | Command::Price { .. }
+        | Command::Iv { .. } => {
+            logger::Logger::init_stdout_only().context("initializing stdout logger")?;
+        }
     }
 
     info!("Trade tracker version {}", env!("CARGO_PKG_VERSION"));
@@ -189,11 +203,7 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::UpdatePriceData { url } => {
             let mut history = history; // lol rust
-            let data = minreq::get(&url)
-                .with_timeout(10)
-                .send()
-                .with_context(|| format!("getting data from {}", url))?
-                .into_bytes();
+            let data = http::get_bytes(&url, None)?;
             history
                 .read_csv(&data[..])
                 .with_context(|| format!("decoding CSV data from {}", url))?;
@@ -256,14 +266,8 @@ fn main() -> Result<(), anyhow::Error> {
             }
         }
         Command::Connect { api_key } => {
-            let data = minreq::get("https://api.ledgerx.com/trading/contracts")
-                .with_timeout(10)
-                .send()
-                .with_context(|| "getting data from trading/contracts endpoint")?
-                .into_bytes();
-
-            let all_contracts: Vec<ledgerx::Contract> = ledgerx::from_json_dot_data(&data)
-                .with_context(|| "parsing contract list from json")?;
+            let all_contracts: Vec<ledgerx::Contract> =
+                http::get_json_from_data_field("https://api.ledgerx.com/trading/contracts", None)?;
 
             let current_price = history.price_at(now);
             info!("BTC price: {}", current_price);
@@ -341,7 +345,7 @@ fn main() -> Result<(), anyhow::Error> {
         Command::TaxHistory { api_key, year } => {
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
-            hist.print_csv(Some(year), &history);
+            hist.print_tax_csv(year, &history);
         }
     }
 
@@ -358,19 +362,12 @@ fn spawn_contract_lookup_thread(
     let (tx_resp, rx_resp) = channel();
     thread::spawn(move || {
         for contract_id in rx_cid.iter() {
-            let book_state = minreq::get(format!(
-                "https://trade.ledgerx.com/api/book-states/{}",
-                contract_id
-            ))
-            .with_header("Authorization", format!("JWT {}", api_key))
-            .with_timeout(10)
-            .send()
-            .with_context(|| "getting data from trading/contracts endpoint")
-            .expect("accessing book-states endpoint")
-            .into_bytes();
-            let reply: ledgerx::json::BookStateMessage = serde_json::from_slice(&book_state)
-                .with_context(|| "parsing book state from json")
-                .expect("parsing json from book-states endpoint");
+            let reply: ledgerx::json::BookStateMessage = http::get_json(
+                &format!("https://trade.ledgerx.com/api/book-states/{}", contract_id),
+                Some(&api_key),
+            )
+            .context("getting data from trading/contracts endpoint")
+            .expect("parsing json from book-states endpoint");
             tx_resp.send(reply).unwrap();
         }
     });

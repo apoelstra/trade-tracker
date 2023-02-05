@@ -19,11 +19,13 @@
 
 use crate::csv::{self, CsvPrinter};
 use anyhow::Context;
-use log::info;
+use log::{debug, info};
 use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{BTreeMap, HashMap};
 use time::OffsetDateTime;
+
+pub mod tax;
 
 // Note that this is *not* the same as the equivalent function in ledgerx/json.rs
 // For some reason LX returns timestamps in like a dozen different formats.
@@ -114,6 +116,7 @@ struct Trade {
     filled_price: i64,
     filled_size: i64,
     side: Side,
+    fee: i64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -129,21 +132,15 @@ impl Trades {
         &self,
         map: &mut HashMap<String, super::Contract>,
     ) -> Result<(), anyhow::Error> {
-        #[derive(Deserialize)]
-        struct Response {
-            data: super::Contract,
-        }
-
         for trade in &self.data {
             let id = trade.contract_id.clone();
             if map.get(&id).is_none() {
-                let resp =
-                    minreq::get(&format!("https://api.ledgerx.com/trading/contracts/{}", id))
-                        .with_timeout(10)
-                        .send()
-                        .with_context(|| format!("requesting contract data for {}", id))?;
-                let data: Response = serde_json::from_slice(&resp.into_bytes())?;
-                map.insert(id, data.data);
+                let contract = crate::http::get_json_from_data_field(
+                    &format!("https://api.ledgerx.com/trading/contracts/{}", id),
+                    None,
+                )
+                .context("lookup contract for trade history")?;
+                map.insert(id, contract);
             }
         }
         Ok(())
@@ -203,6 +200,7 @@ enum Event {
         contract: super::Contract,
         price: Decimal,
         size: i64,
+        fee: Decimal,
     },
     Expiry {
         contract: super::Contract,
@@ -233,14 +231,8 @@ impl History {
                 "Fetching positions .. have {} contracts cached.",
                 contracts.len()
             );
-            let positions = minreq::get(url)
-                .with_header("Authorization", format!("JWT {}", api_key))
-                .with_timeout(10)
-                .send()
-                .with_context(|| "getting data from trading/contracts endpoint")?
-                .into_bytes();
-            let positions: Positions =
-                serde_json::from_slice(&positions).with_context(|| "parsing positions json")?;
+            let positions: Positions = crate::http::get_json(&url, Some(api_key))
+                .context("getting positions from LX API")?;
             positions.store_contract_ids(&mut contracts);
 
             ret.import_positions(&positions);
@@ -250,14 +242,8 @@ impl History {
         let mut next_url = Some("https://api.ledgerx.com/funds/deposits?limit=200".to_string());
         while let Some(url) = next_url {
             info!("Fetching deposits");
-            let deposits = minreq::get(url)
-                .with_header("Authorization", format!("JWT {}", api_key))
-                .with_timeout(10)
-                .send()
-                .with_context(|| "getting data from trading/contracts endpoint")?
-                .into_bytes();
-            let deposits: Deposits =
-                serde_json::from_slice(&deposits).with_context(|| "parsing deposits json")?;
+            let deposits: Deposits = crate::http::get_json(&url, Some(api_key))
+                .context("getting deposits from LX API")?;
 
             ret.import_deposits(&deposits);
             next_url = deposits.next_url();
@@ -266,14 +252,8 @@ impl History {
         let mut next_url = Some("https://api.ledgerx.com/funds/withdrawals?limit=200".to_string());
         while let Some(url) = next_url {
             info!("Fetching withdrawals");
-            let withdrawals = minreq::get(url)
-                .with_header("Authorization", format!("JWT {}", api_key))
-                .with_timeout(10)
-                .send()
-                .with_context(|| "getting data from trading/contracts endpoint")?
-                .into_bytes();
-            let withdrawals: Withdrawals =
-                serde_json::from_slice(&withdrawals).with_context(|| "parsing withdrawals json")?;
+            let withdrawals: Withdrawals = crate::http::get_json(&url, Some(api_key))
+                .context("getting withdrawals from LX API")?;
 
             ret.import_withdrawals(&withdrawals);
             next_url = withdrawals.next_url();
@@ -285,14 +265,8 @@ impl History {
                 "Fetching trades .. have {} contracts cached.",
                 contracts.len()
             );
-            let trades = minreq::get(url)
-                .with_header("Authorization", format!("JWT {}", api_key))
-                .with_timeout(10)
-                .send()
-                .with_context(|| "getting data from trading/contracts endpoint")?
-                .into_bytes();
             let trades: Trades =
-                serde_json::from_slice(&trades).with_context(|| "parsing trades json")?;
+                crate::http::get_json(&url, Some(api_key)).context("getting trades from LX API")?;
             trades
                 .fetch_contract_ids(&mut contracts)
                 .with_context(|| "getting contract IDs")?;
@@ -362,6 +336,7 @@ impl History {
                         Side::Bid => trade.filled_size,
                         Side::Ask => -trade.filled_size,
                     },
+                    fee: Decimal::new(trade.fee, 2),
                 },
             );
         }
@@ -416,7 +391,7 @@ impl History {
 
             let btc_price = price_history.price_at(*date);
             let btc_price = btc_price.btc_price; // just discard exact price timestamp
-            let date_fmt = csv::DateTime(date.to_offset(time::UtcOffset::UTC));
+            let date_fmt = csv::DateTime(*date);
 
             // First accumulate the CSV into tuples (between 0 and 2 of them). We do
             // it this way to ensure that every branch outputs the same type of data,
@@ -446,6 +421,7 @@ impl History {
                     contract,
                     price,
                     size,
+                    ..
                 } => match contract.ty() {
                     super::contract::Type::Option { opt, .. } => (
                         Some((
@@ -522,6 +498,145 @@ impl History {
             if let Some(second) = csv.1 {
                 println!("{}", CsvPrinter(second));
             }
+        }
+    }
+
+    /// Dump the contents of the history in CSV format, attempting to match the end-of-year
+    /// 1099 support files that LX sends out
+    ///
+    /// These are in kinda a weird format. Note that "Date Acquired" and "Date Disposed of"
+    /// are swapped relative to the claimed headings.
+    ///
+    /// The "proceeds" column seems to have an absolute value function applied to it.
+    ///
+    /// For trades, "Proceeds" and "basis" seem to be switched. As a consequence the gain/loss
+    /// column is consistently negated.
+    ///
+    /// For short expires, "proceeds" means how much the options were worth and "basis" means 0.
+    ///
+    /// For expiries of long positions, "Date Acquired" and "Date sold or disposed of" are swapped
+    ///
+    /// There are also two empty columns I don't know the purpose of.
+    ///
+    /// The expiry timestamps are always UTC 22:00, which is 5PM in the winter but 6PM in the
+    /// summer in new york. The assignment timestamps are always UTC 21:00.
+    pub fn print_tax_csv(&self, year: i32, price_history: &crate::price::Historic) {
+        let mut positions: HashMap<tax::Label, tax::Position> = HashMap::new();
+        for (date, event) in &self.events {
+            // Unlike with the old reports, we need to go through _all_ data to determine
+            // cost bases, not just the current year.
+            if year != date.year() {
+                continue;
+            }
+
+            debug!("Processing event {:?}", event);
+            match event {
+                // Deposits and withdrawals are not taxable events
+                Event::Deposit { .. } => {
+                    // Insert a synthetic short-term $30k BTC purchase
+                    debug!("Ignore deposit");
+                    debug!("FIXME inserting synthetic purchase");
+                    let btc_label = tax::Label::btc();
+                    let open = tax::Open::from_trade(
+                        Decimal::new(30000, 0),
+                        10000,
+                        Decimal::ZERO, // fee
+                        *date,
+                    );
+                    let btc_pos = positions.entry(btc_label).or_default();
+                    assert!(btc_pos.push_event(open, false).is_empty());
+                }
+                Event::Withdrawal { .. } => {
+                    debug!("Ignore withdrawal");
+                }
+                // Trades may be
+                Event::Trade {
+                    contract,
+                    price,
+                    size,
+                    fee,
+                } => {
+                    let label = tax::Label::from_contract(contract);
+                    debug!("[trade] \"{}\" {} @ {}; fee {}", label, price, size, fee);
+                    let tax_date = if let super::contract::Type::NextDay { .. } = contract.ty() {
+                        // BTC longs don't happen until the following day...also ofc LX fucks
+                        // up the date and fixes the time to 21:00
+                        contract
+                            .expiry()
+                            .date()
+                            .with_time(time::time!(21:00))
+                            .assume_utc()
+                    } else {
+                        *date
+                    };
+                    let open = tax::Open::from_trade(*price, *size, *fee, tax_date);
+                    let pos = positions.entry(label.clone()).or_default();
+                    for close in pos.push_event(open, contract.as_option().is_some()) {
+                        info!("{}", close.csv_printer(&label));
+                    }
+                }
+                // Both expiries and assignments may be taxable
+                Event::Expiry {
+                    contract,
+                    assigned_size,
+                    expired_size,
+                } => {
+                    let label = tax::Label::from_contract(contract);
+                    debug!(
+                        "[expiry] {} assigned {} expired {}",
+                        label, assigned_size, expired_size
+                    );
+                    // Only do something if this is an option expiry -- dayaheads and futures
+                    // also expire, but dayaheads we treat as sales at the time of sale, and
+                    // futures we don't support.
+                    if let Some(opt) = contract.as_option() {
+                        if *expired_size != 0 {
+                            let open = tax::Open::from_expiry(&opt, *expired_size);
+                            let pos = positions.entry(label.clone()).or_default();
+                            for close in pos.push_event(open, contract.as_option().is_some()) {
+                                info!("{}", close.csv_printer(&label));
+                            }
+                        }
+
+                        // An assignment is also a trade
+                        if *assigned_size != 0 {
+                            let btc_price = price_history.price_at(*date);
+                            debug!(
+                                "Looked up BTC price at {}, got {} ({})",
+                                date, btc_price.btc_price, btc_price.timestamp,
+                            );
+                            let btc_price = btc_price.btc_price;
+
+                            let open = tax::Open::from_assignment(&opt, *assigned_size, btc_price);
+                            let pos = positions.entry(label.clone()).or_default();
+                            for close in pos.push_event(open, contract.as_option().is_some()) {
+                                info!("{}", close.csv_printer(&label));
+                            }
+
+                            debug!("Because of assignment inserting a synthetic BTC trade");
+                            assert_eq!(contract.underlying(), super::Asset::Btc);
+                            // see "seriously WTF" comment
+                            let expiry =
+                                opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
+                            let open = tax::Open::from_trade(
+                                btc_price, // notice the basis is NOT the strike price but the
+                                // actual market price.
+                                match opt.pc {
+                                    crate::option::Call => -*assigned_size,
+                                    crate::option::Put => *assigned_size,
+                                },
+                                Decimal::ZERO,
+                                expiry,
+                            );
+                            let btc_label = tax::Label::btc();
+                            let btc_pos = positions.entry(btc_label.clone()).or_default();
+                            for close in btc_pos.push_event(open, false) {
+                                info!("{}", close.csv_printer(&btc_label));
+                            }
+                        }
+                    }
+                }
+            };
         }
     }
 }

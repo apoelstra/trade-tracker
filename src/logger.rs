@@ -27,16 +27,28 @@
 use std::fs::File;
 use std::io::Write;
 use std::sync::Mutex;
+use time::OffsetDateTime;
+
+/// Convenience struct for all the filenames that we need
+pub struct LogFilenames {
+    pub debug_log: String,
+    pub datafeed_log: String,
+    pub http_get_log: String,
+}
 
 /// Internal marker structure used to indicate that we only log to stdout
 struct StdoutOnly;
 
 impl log::Log for StdoutOnly {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Debug
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
     }
 
     fn log(&self, record: &log::Record) {
+        // Unless we have debug logging on, discard datafeed/json messages
+        if log::max_level() > log::LevelFilter::Debug && record.target() == "lx_getjson" {
+            return;
+        }
         if self.enabled(record.metadata()) {
             println!("{}", record.args());
         }
@@ -48,25 +60,28 @@ impl log::Log for StdoutOnly {
 /// Actual logging structure
 pub struct Logger {
     /// Most recent time that we logged something to stdout
-    last_stdout_time: Mutex<time::OffsetDateTime>,
+    last_stdout_time: Mutex<OffsetDateTime>,
     /// Log for general output (excluding json-encoded data)
     ///
     /// Info and greater logs will also be put to stderr
     debug_log: Mutex<File>,
     /// Log to just dump websocket messages to
-    msg_log: Mutex<File>,
+    datafeed_log: Mutex<File>,
+    /// Log to just dump websocket messages to
+    http_get_log: Mutex<File>,
     /// Latest Bitcoin price
     price: Mutex<String>,
 }
 
 impl Logger {
     /// Initialize a global logger
-    pub fn init(debug_log: &str, msg_log: &str) -> Result<(), anyhow::Error> {
+    pub fn init(filenames: &LogFilenames) -> Result<(), anyhow::Error> {
         log::set_max_level(log::LevelFilter::Debug);
         log::set_boxed_logger(Box::new(Logger {
-            last_stdout_time: Mutex::new(time::OffsetDateTime::now_utc()),
-            debug_log: Mutex::new(File::create(debug_log)?),
-            msg_log: Mutex::new(File::create(msg_log)?),
+            last_stdout_time: Mutex::new(OffsetDateTime::now_utc()),
+            debug_log: Mutex::new(File::create(&filenames.debug_log)?),
+            datafeed_log: Mutex::new(File::create(&filenames.datafeed_log)?),
+            http_get_log: Mutex::new(File::create(&filenames.http_get_log)?),
             price: Mutex::new("".into()),
         }))
         .map_err(From::from)
@@ -74,7 +89,7 @@ impl Logger {
 
     /// Initialize a global logger (without extra files)
     pub fn init_stdout_only() -> Result<(), log::SetLoggerError> {
-        log::set_max_level(log::LevelFilter::Debug);
+        log::set_max_level(log::LevelFilter::Info);
         log::set_logger(&StdoutOnly)
     }
 }
@@ -86,15 +101,24 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            if record.target() == "lx_datafeed" {
+            if record.target() == "lx_http_get" {
+                // HTTP messages get their own log, but we do add timestamps etc to them
+                let _ = write!(
+                    self.http_get_log.lock().unwrap(),
+                    "[{}] [{}] {}\n",
+                    OffsetDateTime::now_utc().lazy_format(time::Format::Rfc3339),
+                    record.level(),
+                    record.args()
+                );
+            } else if record.target() == "lx_datafeed" {
                 // Messages targeted for the datafeed go to the datafeed log with no
                 // additional processing (no timestamps etc)
-                let _ = write!(self.msg_log.lock().unwrap(), "{}\n", record.args());
+                let _ = write!(self.datafeed_log.lock().unwrap(), "{}\n", record.args());
             } else if record.target() == "lx_btcprice" {
                 // TODO maybe we should log the price somewhere as a personal price reference?
                 *self.price.lock().unwrap() = format!("{}", record.args());
             } else {
-                let now = time::OffsetDateTime::now_utc();
+                let now = OffsetDateTime::now_utc();
 
                 // If it's more important than info, log to stdout
                 if record.level() <= log::Level::Info {
@@ -138,6 +162,7 @@ impl log::Log for Logger {
 
     fn flush(&self) {
         let _ = self.debug_log.lock().unwrap().flush();
-        let _ = self.msg_log.lock().unwrap().flush();
+        let _ = self.datafeed_log.lock().unwrap().flush();
+        let _ = self.http_get_log.lock().unwrap().flush();
     }
 }

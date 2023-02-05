@@ -18,6 +18,7 @@
 //!
 
 use crate::{ledgerx::json, option};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::{convert::TryFrom, fmt};
@@ -106,6 +107,15 @@ impl Contract {
         self.multiplier
     }
 
+    /// Expiry date
+    pub fn expiry(&self) -> OffsetDateTime {
+        match self.ty {
+            Type::Option { opt, .. } => opt.expiry,
+            Type::NextDay { expiry, .. } => expiry,
+            Type::Future { expiry, .. } => expiry,
+        }
+    }
+
     /// "Unique expiry date"
     ///
     /// The actual expiry date, plus the contract ID reinterpreted as a number of nanoseconds.
@@ -116,12 +126,16 @@ impl Contract {
     /// into Excel somewhere in case I need to cross-reference them and otherwise somehow
     /// lose them.
     pub fn unique_expiry_date(&self) -> OffsetDateTime {
-        let real_expiry = match self.ty {
-            Type::Option { opt, .. } => opt.expiry,
-            Type::NextDay { expiry, .. } => expiry,
-            Type::Future { expiry, .. } => expiry,
-        };
-        real_expiry + time::Duration::nanoseconds(self.id.0 as i64)
+        let offset = (self.expiry().unix_timestamp() / 500_000) * 10_000_000
+            + match self.ty {
+                Type::Option { opt, .. } => match opt.pc {
+                    option::Call => opt.strike.to_i64().unwrap(),
+                    option::Put => 1_000_000 + opt.strike.to_i64().unwrap(),
+                },
+                Type::NextDay { .. } => 2_000_000,
+                Type::Future { .. } => 3_000_000,
+            };
+        self.expiry() + time::Duration::nanoseconds(offset)
     }
 }
 

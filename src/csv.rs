@@ -40,7 +40,11 @@ impl PrintCsv for DateOnly {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // It took a ton of experimenting to get a date format that gnumeric
         // will recognize and parse correctly..
-        write!(f, "{}", self.0.to_offset(time::UtcOffset::UTC).format("%F"))
+        write!(
+            f,
+            "{}",
+            self.0.to_offset(time::UtcOffset::UTC).lazy_format("%F")
+        )
     }
 }
 
@@ -52,7 +56,9 @@ impl PrintCsv for DateTime {
         write!(
             f,
             "{}",
-            self.0.to_offset(time::UtcOffset::UTC).format("%FT%T.%NZ")
+            self.0
+                .to_offset(time::UtcOffset::UTC)
+                .lazy_format("%FT%T.%NZ")
         )
     }
 }
@@ -105,7 +111,11 @@ macro_rules! impl_string {
     ($ty:ty) => {
         impl PrintCsv for $ty {
             fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "\"{}\"", self)
+                if self.contains(',') {
+                    write!(f, "\"{}\"", self)
+                } else {
+                    write!(f, "{}", self)
+                }
             }
         }
     };
@@ -152,5 +162,11 @@ impl<P: PrintCsv> PrintCsv for Option<P> {
             Some(p) => p.print(f),
             None => Ok(()), // "write the empty string"
         }
+    }
+}
+
+impl<'a, P: PrintCsv> PrintCsv for &'a P {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (*self).print(f)
     }
 }

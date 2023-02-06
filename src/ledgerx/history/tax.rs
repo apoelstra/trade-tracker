@@ -19,10 +19,54 @@
 //!
 
 use crate::csv;
-use log::{debug, warn};
+use log::debug;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::{collections::VecDeque, convert::TryFrom, fmt, mem};
+use std::{
+    collections::VecDeque,
+    convert::TryFrom,
+    fmt, mem,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+/// Used to give every lot a unique ID
+static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+/// Newtype for unique lot IDs
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct LotId(String);
+impl csv::PrintCsv for LotId {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if *self == LotId::invalid() {
+            unreachable!("tried to print the invalid lot ID");
+        }
+        self.0.print(f)
+    }
+}
+
+impl LotId {
+    /// Constructor for the next LX-generated BTC lot ID
+    fn next_btc() -> LotId {
+        let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
+        LotId(format!("lx-btc-{:03}", idx))
+    }
+
+    /// Constructor for the next LX-generated BTC option ID
+    fn next_opt() -> LotId {
+        let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
+        LotId(format!("lx-opt-{:03}", idx))
+    }
+
+    /// Constructor for a lot ID that comes from a UTXO
+    fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
+        LotId(format!("{:6}-{:03}", outpoint.txid, outpoint.vout))
+    }
+
+    /// Constructor for an "invalid" lot ID that should never actually be a lot
+    fn invalid() -> LotId {
+        LotId("".into())
+    }
+}
 
 /// Wrapper around a date that will output time to the nearest second in 3339 format
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -145,8 +189,9 @@ impl Direction {
 }
 
 /// Event that creates or enlarges a position
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Lot {
+    id: LotId,
     /// If this is used to close a position rather than create a new lot
     close_ty: CloseType,
     direction: Direction,
@@ -171,22 +216,21 @@ impl fmt::Display for Lot {
 
 impl Lot {
     /// Constructs an `Lot` object from a deposit
-    pub fn from_deposit_utxo(price: Decimal, size_sat: u64, date: time::OffsetDateTime) -> Lot {
+    pub fn from_deposit_utxo(
+        outpoint: bitcoin::OutPoint,
+        price: Decimal,
+        size_sat: u64,
+        date: time::OffsetDateTime,
+    ) -> Lot {
         debug!(
             "Lot::from_deposit_utxo price {} size {}sat date {}",
             price, size_sat, date
         );
-        if size_sat % 1_000_000 != 0 {
-            warn!(
-                "Losing track of {} satoshis worth ${}. (FIXME)",
-                size_sat % 1_000_000,
-                Decimal::new((size_sat % 1_000_000) as i64, 8) * price,
-            );
-        }
         Lot {
+            id: LotId::from_outpoint(outpoint),
             close_ty: CloseType::TxFee, // lol a deposit better not close a position..
             direction: Direction::Long,
-            quantity: size_sat / 1_000_000,
+            quantity: size_sat,
             price: price,
             date: TaxDate(date),
         }
@@ -194,30 +238,40 @@ impl Lot {
 
     /// Constructs an `Lot` object from a transaction fee
     pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Lot {
-        if size_sat % 1_000_000 != 0 {
-            warn!(
-                "Losing track of {} satoshis in fees. (FIXME)",
-                size_sat % 1_000_000,
-            );
-        }
         Lot {
+            id: LotId::invalid(),
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
             direction: Direction::Short,
-            quantity: size_sat / 1_000_000,
+            quantity: size_sat,
             price: Decimal::ZERO,
             date: TaxDate(date),
         }
     }
 
     /// Constructs an `Lot` object from a trade event
-    pub fn from_trade(price: Decimal, size: i64, fee: Decimal, date: time::OffsetDateTime) -> Lot {
+    pub fn from_trade(
+        price: Decimal,
+        size: i64,
+        fee: Decimal,
+        date: time::OffsetDateTime,
+        is_btc: bool,
+    ) -> Lot {
         debug!(
             "Lot::from_trade price {} size {} fee {} date {}",
             price, size, fee, date
         );
-        let unit_fee = fee / Decimal::new(size, 2);
+        let unit_fee = if is_btc {
+            fee / Decimal::new(size, 8)
+        } else {
+            fee / Decimal::new(size, 2)
+        };
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
+            id: if is_btc {
+                LotId::next_btc()
+            } else {
+                LotId::next_opt()
+            },
             close_ty: if size > 0 {
                 CloseType::BuyBack
             } else {
@@ -238,6 +292,7 @@ impl Lot {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
+            id: LotId::invalid(),
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
@@ -257,6 +312,7 @@ impl Lot {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
+            id: LotId::invalid(),
             close_ty: CloseType::Exercise,
             direction: Direction::from_size(n_assigned),
             quantity: n_assigned.unsigned_abs(),

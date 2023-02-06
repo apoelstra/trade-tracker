@@ -73,11 +73,11 @@ impl Database {
         &self,
         address: &bitcoin::Address,
         amount_sat: u64,
-    ) -> Option<&bitcoin::Transaction> {
+    ) -> Option<(&bitcoin::Transaction, u32)> {
         for (tx, _) in self.map.values() {
-            for out in &tx.output {
+            for (n, out) in tx.output.iter().enumerate() {
                 if out.value == amount_sat && out.script_pubkey == address.script_pubkey() {
-                    return Some(tx);
+                    return Some((tx, n as u32));
                 }
             }
         }

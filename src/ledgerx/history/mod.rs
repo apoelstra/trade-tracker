@@ -575,7 +575,14 @@ impl History {
 
                     let mut amount_sat = (amount * Decimal::from(100_000_000)).to_u64().unwrap();
                     let mut just_make_something_up = false;
-                    if let Some(tx) = transaction_db.find_tx_for_deposit(address, amount_sat) {
+                    let mut deposit_outpoint = bitcoin::OutPoint::default();
+                    if let Some((tx, vout)) =
+                        transaction_db.find_tx_for_deposit(address, amount_sat)
+                    {
+                        deposit_outpoint = bitcoin::OutPoint {
+                            txid: tx.txid(),
+                            vout: vout,
+                        };
                         if tx.output.len() == 1 {
                             debug!(
                                 "Assuming that a single-output deposit is from Andrew's wallet \
@@ -596,6 +603,7 @@ impl History {
                                         price.timestamp,
                                     );
                                     let open = tax::Lot::from_deposit_utxo(
+                                        op,
                                         price.btc_price,
                                         txout.value,
                                         txout_date,
@@ -608,6 +616,8 @@ impl History {
                                             txout.value - amount_sat,
                                             txout_date,
                                         );
+                                        // check that tx fees cause a reduction in some lot, but don't
+                                        // output them as a tax event
                                         assert_eq!(btc_pos.push_event(open, false).len(), 1);
                                         amount_sat = 0;
                                     } else {
@@ -644,7 +654,12 @@ impl History {
                     // the deposit as a lot in the deposit amount on the deposit date, at the
                     // prevailing BTC price.
                     if just_make_something_up {
-                        let open = tax::Lot::from_deposit_utxo(btc_price, amount_sat, *date);
+                        let open = tax::Lot::from_deposit_utxo(
+                            deposit_outpoint,
+                            btc_price,
+                            amount_sat,
+                            *date,
+                        );
                         assert!(btc_pos.push_event(open, false).is_empty());
                     }
                 }
@@ -660,18 +675,23 @@ impl History {
                 } => {
                     let label = tax::Label::from_contract(contract);
                     debug!("[trade] \"{}\" {} @ {}; fee {}", label, price, size, fee);
-                    let tax_date = if let super::contract::Type::NextDay { .. } = contract.ty() {
-                        // BTC longs don't happen until the following day...also ofc LX fucks
-                        // up the date and fixes the time to 21:00
-                        contract
-                            .expiry()
-                            .date()
-                            .with_time(time::time!(21:00))
-                            .assume_utc()
-                    } else {
-                        *date
-                    };
-                    let open = tax::Lot::from_trade(*price, *size, *fee, tax_date);
+                    let (tax_date, is_btc) =
+                        if let super::contract::Type::NextDay { .. } = contract.ty() {
+                            // BTC longs don't happen until the following day...also ofc LX fucks
+                            // up the date and fixes the time to 21:00
+                            (
+                                contract
+                                    .expiry()
+                                    .date()
+                                    .with_time(time::time!(21:00))
+                                    .assume_utc(),
+                                true,
+                            )
+                        } else {
+                            (*date, false)
+                        };
+                    let adj_size = if is_btc { *size * 1_000_000 } else { *size };
+                    let open = tax::Lot::from_trade(*price, adj_size, *fee, tax_date, is_btc);
                     let pos = positions.entry(label.clone()).or_default();
                     for close in pos.push_event(open, contract.as_option().is_some()) {
                         info!("{}", close.csv_printer(&label));
@@ -724,11 +744,12 @@ impl History {
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.
                                 match opt.pc {
-                                    crate::option::Call => -*assigned_size,
-                                    crate::option::Put => *assigned_size,
+                                    crate::option::Call => *assigned_size * -1_000_000,
+                                    crate::option::Put => *assigned_size * 1_000_000,
                                 },
                                 Decimal::ZERO,
                                 expiry,
+                                true, // is_btc
                             );
                             let btc_label = tax::Label::btc();
                             let btc_pos = positions.entry(btc_label.clone()).or_default();

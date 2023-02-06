@@ -19,10 +19,12 @@
 
 use crate::csv::{self, CsvPrinter};
 use anyhow::Context;
-use log::{debug, info};
+use log::{debug, info, warn};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 use time::OffsetDateTime;
 
 pub mod tax;
@@ -51,9 +53,16 @@ struct Asset {
 }
 
 #[derive(Deserialize, Debug)]
+struct DepositAddress {
+    address: String,
+    asset: super::Asset,
+}
+
+#[derive(Deserialize, Debug)]
 struct Deposit {
     amount: i64,
     asset: Asset,
+    deposit_address: DepositAddress,
     #[serde(deserialize_with = "deserialize_datetime")]
     created_at: OffsetDateTime,
 }
@@ -190,6 +199,7 @@ impl Positions {
 enum Event {
     Deposit {
         amount: Decimal,
+        address: bitcoin::Address,
         asset: super::Asset,
     },
     Withdrawal {
@@ -281,6 +291,10 @@ impl History {
     /// Import a list of deposits into the history
     pub fn import_deposits(&mut self, deposits: &Deposits) {
         for dep in &deposits.data {
+            assert_eq!(
+                dep.asset.name, dep.deposit_address.asset,
+                "lol lx fucked up here pretty good",
+            );
             self.events.insert(
                 dep.created_at,
                 Event::Deposit {
@@ -289,6 +303,8 @@ impl History {
                         super::Asset::Usd => Decimal::new(dep.amount, 2),
                         super::Asset::Eth => unimplemented!("ethereum deposits"),
                     },
+                    address: bitcoin::Address::from_str(&dep.deposit_address.address)
+                        .expect("bitcoin address from LX was not a valid BTC address"),
                     asset: dep.asset.name,
                 },
             );
@@ -397,7 +413,7 @@ impl History {
             // it this way to ensure that every branch outputs the same type of data,
             // which is a basic sanity check.
             let csv = match event {
-                Event::Deposit { asset, amount } => (
+                Event::Deposit { asset, amount, .. } => (
                     Some((
                         "Deposit",
                         date_fmt,
@@ -520,7 +536,12 @@ impl History {
     ///
     /// The expiry timestamps are always UTC 22:00, which is 5PM in the winter but 6PM in the
     /// summer in new york. The assignment timestamps are always UTC 21:00.
-    pub fn print_tax_csv(&self, year: i32, price_history: &crate::price::Historic) {
+    pub fn print_tax_csv(
+        &self,
+        year: i32,
+        price_history: &crate::price::Historic,
+        transaction_db: &crate::transaction::Database,
+    ) {
         let mut positions: HashMap<tax::Label, tax::Position> = HashMap::new();
         for (date, event) in &self.events {
             // Unlike with the old reports, we need to go through _all_ data to determine
@@ -532,19 +553,100 @@ impl History {
             debug!("Processing event {:?}", event);
             match event {
                 // Deposits and withdrawals are not taxable events
-                Event::Deposit { .. } => {
-                    // Insert a synthetic short-term $30k BTC purchase
-                    debug!("Ignore deposit");
-                    debug!("FIXME inserting synthetic purchase");
-                    let btc_label = tax::Label::btc();
-                    let open = tax::Lot::from_trade(
-                        Decimal::new(30000, 0),
-                        10000,
-                        Decimal::ZERO, // fee
-                        *date,
+                Event::Deposit {
+                    amount,
+                    asset,
+                    address,
+                } => {
+                    let btc_price = price_history.price_at(*date);
+                    debug!(
+                        "Looked up BTC price for deposit at {}, got {} ({})",
+                        date, btc_price.btc_price, btc_price.timestamp,
                     );
+                    let btc_price = btc_price.btc_price;
+                    // sanity check asset
+                    match *asset {
+                        super::Asset::Btc => {}        // ok
+                        super::Asset::Usd => continue, // USD deposits are not tax-relevant
+                        super::Asset::Eth => unimplemented!("we do not support eth deposits"),
+                    }
+                    let btc_label = tax::Label::btc();
                     let btc_pos = positions.entry(btc_label).or_default();
-                    assert!(btc_pos.push_event(open, false).is_empty());
+
+                    let mut amount_sat = (amount * Decimal::from(100_000_000)).to_u64().unwrap();
+                    let mut just_make_something_up = false;
+                    if let Some(tx) = transaction_db.find_tx_for_deposit(address, amount_sat) {
+                        if tx.output.len() == 1 {
+                            debug!(
+                                "Assuming that a single-output deposit is from Andrew's wallet \
+                                    and that every input UXTO is a separate lot."
+                            );
+                            for input in &tx.input {
+                                let op = input.previous_output;
+                                if let Some((txout, txout_date)) =
+                                    transaction_db.find_txout(op.txid, op.vout)
+                                {
+                                    let price = price_history.price_at(*date);
+                                    debug!(
+                                        "Looked up BTC price for input {}:{} at {}, got {} ({})",
+                                        op.txid,
+                                        op.vout,
+                                        txout_date,
+                                        price.btc_price,
+                                        price.timestamp,
+                                    );
+                                    let open = tax::Lot::from_deposit_utxo(
+                                        price.btc_price,
+                                        txout.value,
+                                        txout_date,
+                                    );
+                                    assert!(btc_pos.push_event(open, false).is_empty());
+                                    // Take fees away from the last input(s). We consider this a
+                                    // partial loss of the lot corresponding to the input
+                                    if txout.value > amount_sat {
+                                        let open = tax::Lot::from_tx_fee(
+                                            txout.value - amount_sat,
+                                            txout_date,
+                                        );
+                                        assert_eq!(btc_pos.push_event(open, false).len(), 1);
+                                        amount_sat = 0;
+                                    } else {
+                                        amount_sat -= txout.value;
+                                    }
+                                } else {
+                                    warn!(
+                                        "Please import txdata for {}. For now assuming CB of {}",
+                                        op.txid, btc_price,
+                                    );
+                                    just_make_something_up = true;
+                                }
+                            }
+                        } else {
+                            debug!(
+                                "Assuming that a multi-output deposit came from some shared \
+                                    exchange or something; treating the deposit as a single lot \
+                                    and ignoring the inputs."
+                            );
+                            just_make_something_up = true;
+                        }
+                    } else {
+                        warn!(
+                            "No transaction found for deposit of size {} to {} on {}. Assuming CB of {}.",
+                            amount,
+                            address,
+                            date.lazy_format("%F %T.%N"),
+                            btc_price,
+                        );
+                        just_make_something_up = true;
+                    }
+
+                    // "Just make something up" is a little strong. What it means is that we treat
+                    // the deposit as a lot in the deposit amount on the deposit date, at the
+                    // prevailing BTC price.
+                    if just_make_something_up {
+                        let open = tax::Lot::from_deposit_utxo(btc_price, amount_sat, *date);
+                        assert!(btc_pos.push_event(open, false).is_empty());
+                    }
                 }
                 Event::Withdrawal { .. } => {
                     debug!("Ignore withdrawal");

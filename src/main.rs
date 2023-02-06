@@ -72,7 +72,7 @@ enum Command {
             name = "timestamp",
             about = "Please provide the timestamp from the block header in which the transaction was confirmed"
         )]
-        timestamp: u64,
+        timestamp: i64,
     },
     /// Print a list of potential orders for a given option near a given volatility, at various
     /// prices
@@ -401,9 +401,15 @@ fn main() -> Result<(), anyhow::Error> {
             hist.print_csv(year, &history);
         }
         Command::TaxHistory { api_key, year } => {
+            data_path.push("transactions.json");
+            let db = transaction::Database::load(&data_path).context(
+                "loading transaction database -- create one with the record-tx command. \
+                          You will need to record every deposit transaction and its inputs. If \
+                          you have made no BTC deposits, just record some random transaction.",
+            )?;
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
-            hist.print_tax_csv(year, &history);
+            hist.print_tax_csv(year, &history, &db);
         }
     }
 

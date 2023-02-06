@@ -26,7 +26,7 @@ use std::{collections::HashMap, fs, io, path};
 /// To add to this database, use the "record-tx" command with the CLI app.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize, Serialize)]
 pub struct Database {
-    map: HashMap<bitcoin::Txid, (bitcoin::Transaction, u64)>,
+    map: HashMap<bitcoin::Txid, (bitcoin::Transaction, i64)>,
 }
 
 impl Database {
@@ -58,9 +58,45 @@ impl Database {
     /// Adds a transaction to the map
     ///
     /// If the transaction was already recorded, returns the existing timestamp
-    pub fn insert_tx(&mut self, tx: bitcoin::Transaction, timestamp: u64) -> Option<u64> {
+    pub fn insert_tx(&mut self, tx: bitcoin::Transaction, timestamp: i64) -> Option<i64> {
         self.map
             .insert(tx.txid(), (tx, timestamp))
             .map(|(_, ts)| ts)
+    }
+
+    /// Look up a transaction matching a particular address/amount pair
+    ///
+    /// LX annoyingly does not provide any more information to identify transactions (well,
+    /// there is also a timestamp but it's approximate). Furthermore, they dark-pattern
+    /// their users into reusing bitcoin addresses.
+    pub fn find_tx_for_deposit(
+        &self,
+        address: &bitcoin::Address,
+        amount_sat: u64,
+    ) -> Option<&bitcoin::Transaction> {
+        for (tx, _) in self.map.values() {
+            for out in &tx.output {
+                if out.value == amount_sat && out.script_pubkey == address.script_pubkey() {
+                    return Some(tx);
+                }
+            }
+        }
+        None
+    }
+
+    /// Look up a specific txout
+    pub fn find_txout(
+        &self,
+        txid: bitcoin::Txid,
+        vout: u32,
+    ) -> Option<(&bitcoin::TxOut, time::OffsetDateTime)> {
+        self.map.get(&txid).and_then(|(tx, timestamp)| {
+            if tx.output.len() > vout as usize {
+                let datetime = time::OffsetDateTime::from_unix_timestamp(*timestamp);
+                Some((&tx.output[vout as usize], datetime))
+            } else {
+                None
+            }
+        })
     }
 }

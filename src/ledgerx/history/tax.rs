@@ -19,7 +19,7 @@
 //!
 
 use crate::csv;
-use log::debug;
+use log::{debug, warn};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::{collections::VecDeque, convert::TryFrom, fmt, mem};
@@ -113,6 +113,7 @@ enum CloseType {
     Sell,
     Expiry,
     Exercise,
+    TxFee,
 }
 impl csv::PrintCsv for CloseType {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -121,6 +122,7 @@ impl csv::PrintCsv for CloseType {
             CloseType::Sell => f.write_str("Sell"),
             CloseType::Expiry => f.write_str("Expired"),
             CloseType::Exercise => f.write_str("Exercised"),
+            CloseType::TxFee => f.write_str("Transaction Fee"),
         }
     }
 }
@@ -168,6 +170,45 @@ impl fmt::Display for Lot {
 }
 
 impl Lot {
+    /// Constructs an `Lot` object from a deposit
+    pub fn from_deposit_utxo(price: Decimal, size_sat: u64, date: time::OffsetDateTime) -> Lot {
+        debug!(
+            "Lot::from_deposit_utxo price {} size {}sat date {}",
+            price, size_sat, date
+        );
+        if size_sat % 1_000_000 != 0 {
+            warn!(
+                "Losing track of {} satoshis worth ${}. (FIXME)",
+                size_sat % 1_000_000,
+                Decimal::new((size_sat % 1_000_000) as i64, 8) * price,
+            );
+        }
+        Lot {
+            close_ty: CloseType::TxFee, // lol a deposit better not close a position..
+            direction: Direction::Long,
+            quantity: size_sat / 1_000_000,
+            price: price,
+            date: TaxDate(date),
+        }
+    }
+
+    /// Constructs an `Lot` object from a transaction fee
+    pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Lot {
+        if size_sat % 1_000_000 != 0 {
+            warn!(
+                "Losing track of {} satoshis in fees. (FIXME)",
+                size_sat % 1_000_000,
+            );
+        }
+        Lot {
+            close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
+            direction: Direction::Short,
+            quantity: size_sat / 1_000_000,
+            price: Decimal::ZERO,
+            date: TaxDate(date),
+        }
+    }
+
     /// Constructs an `Lot` object from a trade event
     pub fn from_trade(price: Decimal, size: i64, fee: Decimal, date: time::OffsetDateTime) -> Lot {
         debug!(

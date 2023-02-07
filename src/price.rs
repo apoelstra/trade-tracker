@@ -95,6 +95,13 @@ impl Historic {
 
     /// Returns the most recent price as of a given time
     pub fn price_at(&self, time: time::OffsetDateTime) -> BitcoinPrice {
+        log::debug!(
+            "look up price at {} ... full range {} to {}, short range ends at {}",
+            time,
+            self.data.keys().next().unwrap(),
+            self.data.keys().rev().next().unwrap(),
+            *self.data.range(..time).rev().next().unwrap().0,
+        );
         *self.data.range(..time).rev().next().unwrap().1
     }
 

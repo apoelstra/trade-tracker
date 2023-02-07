@@ -23,6 +23,8 @@ use log::debug;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::{
+    cmp,
+    collections::HashMap,
     collections::VecDeque,
     convert::TryFrom,
     fmt, mem,
@@ -34,13 +36,13 @@ static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 /// Newtype for unique lot IDs
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct LotId(String);
+struct LotId(Option<&'static str>, String);
 impl csv::PrintCsv for LotId {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if *self == LotId::invalid() {
-            unreachable!("tried to print the invalid lot ID");
+        if let Some(reason) = self.0 {
+            unreachable!("tried to print the invalid lot ID {}", reason);
         }
-        self.0.print(f)
+        self.1.print(f)
     }
 }
 
@@ -48,23 +50,23 @@ impl LotId {
     /// Constructor for the next LX-generated BTC lot ID
     fn next_btc() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-btc-{:03}", idx))
+        LotId(None, format!("lx-btc-{:03}", idx))
     }
 
     /// Constructor for the next LX-generated BTC option ID
     fn next_opt() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-opt-{:03}", idx))
+        LotId(None, format!("lx-opt-{:03}", idx))
     }
 
     /// Constructor for a lot ID that comes from a UTXO
     fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
-        LotId(format!("{:6}-{:03}", outpoint.txid, outpoint.vout))
+        LotId(None, format!("{:.6}-{:03}", outpoint.txid, outpoint.vout))
     }
 
     /// Constructor for an "invalid" lot ID that should never actually be a lot
-    fn invalid() -> LotId {
-        LotId("".into())
+    fn invalid(reason: &'static str) -> LotId {
+        LotId(Some(reason), "".into())
     }
 }
 
@@ -102,6 +104,11 @@ impl Label {
     /// Creates the tax label for Bitcoin
     pub fn btc() -> Label {
         Label("BTC".into())
+    }
+
+    /// Whether or not this label represents Bitcoin
+    pub fn is_btc(&self) -> bool {
+        self.0 == "BTC"
     }
 
     /// Creates a tax label for a contract
@@ -204,12 +211,12 @@ impl fmt::Display for Lot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Lot({}, {:?}, {:?}, {} @ {})",
-            self.date.0.lazy_format("%FT%T"),
+            "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
+            self.id.1,
             self.direction,
-            self.close_ty,
-            self.quantity,
+            self.date.0.lazy_format("%FT%T"),
             self.price,
+            self.quantity,
         )
     }
 }
@@ -239,7 +246,7 @@ impl Lot {
     /// Constructs an `Lot` object from a transaction fee
     pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Lot {
         Lot {
-            id: LotId::invalid(),
+            id: LotId::invalid("tx fee"),
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
             direction: Direction::Short,
             quantity: size_sat,
@@ -292,7 +299,7 @@ impl Lot {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: LotId::invalid(),
+            id: LotId::invalid("expiry"),
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
@@ -312,7 +319,7 @@ impl Lot {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: LotId::invalid(),
+            id: LotId::invalid("assignment"),
             close_ty: CloseType::Exercise,
             direction: Direction::from_size(n_assigned),
             quantity: n_assigned.unsigned_abs(),
@@ -322,10 +329,11 @@ impl Lot {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Close {
     ty: CloseType,
     gain_ty: GainType,
+    open_id: LotId,
     open_direction: Direction,
     open_price: Decimal,
     open_date: TaxDate,
@@ -334,17 +342,37 @@ pub struct Close {
     quantity: u64,
 }
 
+impl fmt::Display for Close {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
+            self.open_id.1,
+            self.ty,
+            self.close_date.0.lazy_format("%FT%FT"),
+            self.close_price,
+            self.quantity,
+        )
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CloseCsv<'label, 'close> {
     label: &'label Label,
     close: &'close Close,
+    print_lot_id: bool,
 }
 
 impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let i_qty = i64::try_from(self.close.quantity).unwrap();
-        let mut proceeds = Decimal::new(i_qty, 2) * self.close.close_price;
-        let mut basis = Decimal::new(i_qty, 2) * self.close.open_price;
+        let real_amount = if self.label.is_btc() {
+            Decimal::new(i_qty, 8)
+        } else {
+            Decimal::new(i_qty, 2)
+        };
+        let mut proceeds = real_amount * self.close.close_price;
+        let mut basis = real_amount * self.close.open_price;
         proceeds.rescale(2);
         basis.rescale(2);
 
@@ -358,9 +386,9 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
 
         let i_qty = i64::try_from(self.close.quantity).unwrap();
         let description = if self.label.0 == "BTC" {
-            format!("{}, {}", Decimal::new(i_qty, 2), self.label)
+            format!("{}, {}", real_amount, self.label)
         } else {
-            format!("{}, {}", Decimal::new(i_qty, 0), self.label)
+            format!("{}, {}", i_qty, self.label)
         };
 
         (
@@ -376,7 +404,13 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
             "",
             "",
         )
-            .print(f)
+            .print(f)?;
+
+        if self.print_lot_id {
+            f.write_str(",")?;
+            self.close.open_id.print(f)?;
+        }
+        Ok(())
     }
 }
 
@@ -385,13 +419,18 @@ impl Close {
     pub fn csv_printer<'label, 'close>(
         &'close self,
         label: &'label Label,
+        print_lot_id: bool,
     ) -> csv::CsvPrinter<CloseCsv<'label, 'close>> {
-        csv::CsvPrinter(CloseCsv { label, close: self })
+        csv::CsvPrinter(CloseCsv {
+            label,
+            close: self,
+            print_lot_id,
+        })
     }
 }
 
 /// A position in a specific asset, represented by a FIFO queue of opening events
-#[derive(Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Position {
     fifo: VecDeque<Lot>,
 }
@@ -415,13 +454,15 @@ impl Position {
     /// Modifies the position based on an event.
     ///
     /// If this results in closing previously opened positions, return a list of
-    /// `Close`s with their type set to the `close_type` argument.
-    pub fn push_event(&mut self, mut open: Lot, is_1256: bool) -> Vec<Close> {
+    /// `Close`s with their type set to the `close_type` argument. If it results
+    /// in opening a position (which may happen in a "pure" open or may happen
+    /// only after closing), then it also returns a created lot.
+    pub fn push_event(&mut self, mut open: Lot, is_1256: bool) -> (Vec<Close>, Option<Lot>) {
         // If the position is empty, then just push
         if self.fifo.is_empty() {
             debug!("Create new position with open {}", open);
-            self.fifo.push_back(open);
-            return vec![];
+            self.fifo.push_back(open.clone());
+            return (vec![], Some(open));
         }
         // If there is an open position, in the same direction as the new open,
         // add the new open to the FIFO.
@@ -432,28 +473,24 @@ impl Position {
                 self.total_size(),
                 open
             );
-            self.fifo.push_back(open);
-            return vec![];
+            self.fifo.push_back(open.clone());
+            return (vec![], Some(open));
         }
         // Otherwise, we must close the position
         let mut ret = vec![];
         while open.quantity > 0 {
-            debug!(
-                "Closing position ({:?}, qty {}) with open {}",
-                self.direction(),
-                self.total_size(),
-                open
-            );
             let mut front = match self.fifo.pop_front() {
                 Some(front) => front,
                 None => {
+                    debug!("fully closed out position, opening new one: {}", open);
                     // If we've closed out everything and still have an open, then
                     // we're opening a new position in the opposite direction.
-                    self.fifo.push_back(open);
-                    return ret;
+                    self.fifo.push_back(open.clone());
+                    return (ret, Some(open));
                 }
             };
             assert_ne!(open.direction, front.direction);
+            debug!("closing lot {} with potential-lot {}", front, open);
 
             // Construct a close object with everything known but the quantity
             let mut close = Close {
@@ -465,6 +502,7 @@ impl Position {
                 } else {
                     GainType::LongTerm
                 },
+                open_id: front.id.clone(),
                 open_direction: front.direction,
                 open_price: front.price,
                 open_date: front.date,
@@ -488,6 +526,92 @@ impl Position {
             ret.push(close);
         }
 
-        return ret;
+        // If we made it here we consumed the whole initial lot and only closed things.
+        return (ret, None);
+    }
+}
+
+/// "anonymous" enum covering an open or a close
+#[derive(Clone, Debug)]
+pub enum OpenClose {
+    Open(Lot),
+    Close(Close),
+}
+
+/// Loggable "tax event"
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub date: TaxDate,
+    pub label: Label,
+    pub open_close: OpenClose,
+}
+
+/// Tracks positions in multiple assets, recording tax events
+#[derive(Clone, Debug, Default)]
+pub struct PositionTracker {
+    positions: HashMap<Label, Position>,
+    events: Vec<Event>,
+}
+
+impl PositionTracker {
+    /// Constructs a new empty position tracker
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Attempts to add a new lot to the tracker
+    ///
+    /// The lot may add to a position, in which case it is an "open". Or it may shrink one
+    /// or more existing lots, in which case it is a "close".
+    ///
+    /// Returns the number of lots closed.
+    pub fn push_lot(&mut self, label: &Label, lot: Lot) -> usize {
+        // Take the action...
+        let pos = self.positions.entry(label.clone()).or_default();
+        let (closes, open) = pos.push_event(lot.clone(), !label.is_btc());
+        let n_ret = closes.len();
+        // ...then log it
+        let date = lot.date;
+        for close in closes {
+            self.events.push(Event {
+                date: date,
+                label: label.clone(),
+                open_close: OpenClose::Close(close),
+            });
+        }
+        if let Some(open) = open {
+            self.events.push(Event {
+                date: date,
+                label: label.clone(),
+                open_close: OpenClose::Open(open),
+            });
+        }
+        // Return the number of closes that happened
+        n_ret
+    }
+
+    /// Sort the tax events to match LX's sort order
+    ///
+    /// We sort entries by their occurence -- which matches LX, but when things expire,
+    /// many expiries may happen simultaneously. In this case we sort by the date of
+    /// the expired position being *opened*
+    pub fn lx_sort_events(&mut self) {
+        // This is a stable sort, so to avoid reordering things we just return "equal"
+        self.events.sort_by(|x, y| {
+            use OpenClose::Close as C;
+            if x.date != y.date {
+                return cmp::Ordering::Equal;
+            }
+            if let (&C(ref cx), &C(ref cy)) = (&x.open_close, &y.open_close) {
+                cx.open_date.0.cmp(&cy.open_date.0)
+            } else {
+                cmp::Ordering::Equal
+            }
+        });
+    }
+
+    /// Returns a list of all the tax events that have been recorded
+    pub fn events(&self) -> &[Event] {
+        &self.events
     }
 }

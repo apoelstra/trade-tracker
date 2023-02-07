@@ -36,6 +36,7 @@ use std::{
     convert::TryInto,
     fs,
     path::PathBuf,
+    str::FromStr,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
 };
@@ -45,6 +46,28 @@ use price::Historic;
 
 /// Don't bother loading historical price data from before this date
 const MIN_PRICE_DATE: &str = "2023";
+
+/// Mode indicating how much/what data to output from the tax-history command
+pub enum TaxHistoryMode {
+    JustLxData,
+    JustLotIds,
+    Both,
+}
+
+impl FromStr for TaxHistoryMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<TaxHistoryMode, String> {
+        match s {
+            "just-lx-data" => Ok(TaxHistoryMode::JustLxData),
+            "just-lot-ids" => Ok(TaxHistoryMode::JustLotIds),
+            "both" => Ok(TaxHistoryMode::Both),
+            x => Err(format!(
+                "Invalid tax history mode {}; allowed values: just-lx-data, just-lot-ids, both",
+                x
+            )),
+        }
+    }
+}
 
 #[derive(Clap)]
 enum Command {
@@ -110,6 +133,8 @@ enum Command {
         api_key: String,
         #[clap(name = "year")]
         year: i32,
+        #[clap(name = "mode", default_value = "both")]
+        mode: TaxHistoryMode,
     },
 }
 
@@ -184,7 +209,7 @@ fn main() -> Result<(), anyhow::Error> {
         Command::History { year, .. } => {
             Historic::read_json_from(&data_path, &year.unwrap_or(2020).to_string())
         }
-        Command::TaxHistory { year, .. } => Historic::read_json_from(&data_path, &year.to_string()),
+        Command::TaxHistory { .. } => Historic::read_json_from(&data_path, "2017"),
         _ => Historic::read_json_from(&data_path, MIN_PRICE_DATE),
     }
     .context("reading price history")?;
@@ -400,7 +425,11 @@ fn main() -> Result<(), anyhow::Error> {
                 .context("getting history from LX API")?;
             hist.print_csv(year, &history);
         }
-        Command::TaxHistory { api_key, year } => {
+        Command::TaxHistory {
+            api_key,
+            year,
+            mode,
+        } => {
             data_path.push("transactions.json");
             let db = transaction::Database::load(&data_path).context(
                 "loading transaction database -- create one with the record-tx command. \
@@ -409,7 +438,7 @@ fn main() -> Result<(), anyhow::Error> {
             )?;
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
-            hist.print_tax_csv(year, &history, &db);
+            hist.print_tax_csv(year, mode, &history, &db);
         }
     }
 

@@ -539,17 +539,13 @@ impl History {
     pub fn print_tax_csv(
         &self,
         year: i32,
+        mode: crate::TaxHistoryMode,
         price_history: &crate::price::Historic,
         transaction_db: &crate::transaction::Database,
     ) {
-        let mut positions: HashMap<tax::Label, tax::Position> = HashMap::new();
+        let btc_label = tax::Label::btc();
+        let mut tracker = tax::PositionTracker::new();
         for (date, event) in &self.events {
-            // Unlike with the old reports, we need to go through _all_ data to determine
-            // cost bases, not just the current year.
-            if year != date.year() {
-                continue;
-            }
-
             debug!("Processing event {:?}", event);
             match event {
                 // Deposits and withdrawals are not taxable events
@@ -570,8 +566,7 @@ impl History {
                         super::Asset::Usd => continue, // USD deposits are not tax-relevant
                         super::Asset::Eth => unimplemented!("we do not support eth deposits"),
                     }
-                    let btc_label = tax::Label::btc();
-                    let btc_pos = positions.entry(btc_label).or_default();
+                    debug!("[deposit] \"BTC\" {} @ {}", btc_price, amount);
 
                     let mut amount_sat = (amount * Decimal::from(100_000_000)).to_u64().unwrap();
                     let mut just_make_something_up = false;
@@ -593,7 +588,7 @@ impl History {
                                 if let Some((txout, txout_date)) =
                                     transaction_db.find_txout(op.txid, op.vout)
                                 {
-                                    let price = price_history.price_at(*date);
+                                    let price = price_history.price_at(txout_date);
                                     debug!(
                                         "Looked up BTC price for input {}:{} at {}, got {} ({})",
                                         op.txid,
@@ -608,17 +603,15 @@ impl History {
                                         txout.value,
                                         txout_date,
                                     );
-                                    assert!(btc_pos.push_event(open, false).is_empty());
+                                    assert_eq!(tracker.push_lot(&btc_label, open), 0);
                                     // Take fees away from the last input(s). We consider this a
                                     // partial loss of the lot corresponding to the input
                                     if txout.value > amount_sat {
                                         let open = tax::Lot::from_tx_fee(
                                             txout.value - amount_sat,
-                                            txout_date,
+                                            *date, // date is now, not txout_date
                                         );
-                                        // check that tx fees cause a reduction in some lot, but don't
-                                        // output them as a tax event
-                                        assert_eq!(btc_pos.push_event(open, false).len(), 1);
+                                        assert_eq!(tracker.push_lot(&btc_label, open), 1);
                                         amount_sat = 0;
                                     } else {
                                         amount_sat -= txout.value;
@@ -660,7 +653,7 @@ impl History {
                             amount_sat,
                             *date,
                         );
-                        assert!(btc_pos.push_event(open, false).is_empty());
+                        assert_eq!(tracker.push_lot(&btc_label, open), 0);
                     }
                 }
                 Event::Withdrawal { .. } => {
@@ -692,10 +685,7 @@ impl History {
                         };
                     let adj_size = if is_btc { *size * 1_000_000 } else { *size };
                     let open = tax::Lot::from_trade(*price, adj_size, *fee, tax_date, is_btc);
-                    let pos = positions.entry(label.clone()).or_default();
-                    for close in pos.push_event(open, contract.as_option().is_some()) {
-                        info!("{}", close.csv_printer(&label));
-                    }
+                    tracker.push_lot(&label, open);
                 }
                 // Both expiries and assignments may be taxable
                 Event::Expiry {
@@ -714,10 +704,7 @@ impl History {
                     if let Some(opt) = contract.as_option() {
                         if *expired_size != 0 {
                             let open = tax::Lot::from_expiry(&opt, *expired_size);
-                            let pos = positions.entry(label.clone()).or_default();
-                            for close in pos.push_event(open, contract.as_option().is_some()) {
-                                info!("{}", close.csv_printer(&label));
-                            }
+                            tracker.push_lot(&label, open);
                         }
 
                         // An assignment is also a trade
@@ -730,10 +717,7 @@ impl History {
                             let btc_price = btc_price.btc_price;
 
                             let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
-                            let pos = positions.entry(label.clone()).or_default();
-                            for close in pos.push_event(open, contract.as_option().is_some()) {
-                                info!("{}", close.csv_printer(&label));
-                            }
+                            tracker.push_lot(&label, open);
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), super::Asset::Btc);
@@ -751,15 +735,41 @@ impl History {
                                 expiry,
                                 true, // is_btc
                             );
-                            let btc_label = tax::Label::btc();
-                            let btc_pos = positions.entry(btc_label.clone()).or_default();
-                            for close in btc_pos.push_event(open, false) {
-                                info!("{}", close.csv_printer(&btc_label));
-                            }
+                            tracker.push_lot(&btc_label, open);
                         }
                     }
                 }
             };
+        }
+
+        tracker.lx_sort_events();
+
+        for event in tracker.events() {
+            // Unlike with the Excel reports, we actually need to generate data for every
+            // year, and we only dismiss non-current data now, when we're logging.
+            if year != event.date.0.year() {
+                continue;
+            }
+            let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
+
+            match event.open_close {
+                tax::OpenClose::Open(ref open) => {
+                    if let crate::TaxHistoryMode::JustLotIds = mode {
+                        println!("{:35}: {}:  open lot {}", event.label, date, open);
+                    }
+                }
+                tax::OpenClose::Close(ref close) => match mode {
+                    crate::TaxHistoryMode::JustLxData => {
+                        info!("{}", close.csv_printer(&event.label, false));
+                    }
+                    crate::TaxHistoryMode::JustLotIds => {
+                        println!("{:35}: {}: close lot {}", event.label, date, close);
+                    }
+                    crate::TaxHistoryMode::Both => {
+                        info!("{}", close.csv_printer(&event.label, true));
+                    }
+                },
+            }
         }
     }
 }

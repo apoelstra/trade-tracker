@@ -24,15 +24,18 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::{
     cmp,
+    collections::BTreeMap,
     collections::HashMap,
-    collections::VecDeque,
     convert::TryFrom,
     fmt, mem,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicI64, AtomicUsize, Ordering},
 };
 
 /// Used to give every lot a unique ID
 static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+/// Used to skew dates so that they all get inserted into BTreeSets separately
+static DATE_OFFSET: AtomicI64 = AtomicI64::new(0);
 
 /// Newtype for unique lot IDs
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -432,7 +435,7 @@ impl Close {
 /// A position in a specific asset, represented by a FIFO queue of opening events
 #[derive(Clone, Default, Debug)]
 pub struct Position {
-    fifo: VecDeque<Lot>,
+    fifo: BTreeMap<time::OffsetDateTime, Lot>,
 }
 
 impl Position {
@@ -444,11 +447,11 @@ impl Position {
     }
 
     fn total_size(&self) -> u64 {
-        self.fifo.iter().map(|open| open.quantity).sum()
+        self.fifo.values().map(|open| open.quantity).sum()
     }
 
     fn direction(&self) -> Option<Direction> {
-        self.fifo.front().map(|open| open.direction)
+        self.fifo.values().next().map(|open| open.direction)
     }
 
     /// Modifies the position based on an event.
@@ -457,35 +460,40 @@ impl Position {
     /// `Close`s with their type set to the `close_type` argument. If it results
     /// in opening a position (which may happen in a "pure" open or may happen
     /// only after closing), then it also returns a created lot.
-    pub fn push_event(&mut self, mut open: Lot, is_1256: bool) -> (Vec<Close>, Option<Lot>) {
+    fn push_event(
+        &mut self,
+        mut open: Lot,
+        sort_date: time::OffsetDateTime,
+        is_1256: bool,
+    ) -> (Vec<Close>, Option<Lot>) {
         // If the position is empty, then just push
         if self.fifo.is_empty() {
             debug!("Create new position with open {}", open);
-            self.fifo.push_back(open.clone());
+            self.fifo.insert(sort_date, open.clone());
             return (vec![], Some(open));
         }
         // If there is an open position, in the same direction as the new open,
         // add the new open to the FIFO.
-        if self.fifo.front().unwrap().direction == open.direction {
+        if self.fifo.values().next().unwrap().direction == open.direction {
             debug!(
                 "Increasing position ({:?}, qty {}) with open {}",
                 self.direction(),
                 self.total_size(),
                 open
             );
-            self.fifo.push_back(open.clone());
+            self.fifo.insert(sort_date, open.clone());
             return (vec![], Some(open));
         }
         // Otherwise, we must close the position
         let mut ret = vec![];
         while open.quantity > 0 {
-            let mut front = match self.fifo.pop_front() {
-                Some(front) => front,
+            let (front_date, mut front) = match self.fifo.pop_first() {
+                Some(kv) => kv,
                 None => {
                     debug!("fully closed out position, opening new one: {}", open);
                     // If we've closed out everything and still have an open, then
                     // we're opening a new position in the opposite direction.
-                    self.fifo.push_back(open.clone());
+                    self.fifo.insert(sort_date, open.clone());
                     return (ret, Some(open));
                 }
             };
@@ -517,7 +525,7 @@ impl Position {
                 front.quantity -= open.quantity;
                 close.quantity = open.quantity;
                 open.quantity = 0;
-                self.fifo.push_front(front); // put incompletely closed position back
+                self.fifo.insert(front_date, front); // put incompletely closed position back
             } else {
                 // Full close
                 close.quantity = front.quantity;
@@ -565,10 +573,12 @@ impl PositionTracker {
     /// or more existing lots, in which case it is a "close".
     ///
     /// Returns the number of lots closed.
-    pub fn push_lot(&mut self, label: &Label, lot: Lot) -> usize {
+    pub fn push_lot(&mut self, label: &Label, lot: Lot, sort_date: time::OffsetDateTime) -> usize {
+        let date_offset = DATE_OFFSET.fetch_add(1, Ordering::SeqCst);
+        let sort_date = sort_date + time::Duration::nanoseconds(date_offset);
         // Take the action...
         let pos = self.positions.entry(label.clone()).or_default();
-        let (closes, open) = pos.push_event(lot.clone(), !label.is_btc());
+        let (closes, open) = pos.push_event(lot.clone(), sort_date, !label.is_btc());
         let n_ret = closes.len();
         // ...then log it
         let date = lot.date;

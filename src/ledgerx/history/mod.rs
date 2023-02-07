@@ -603,7 +603,7 @@ impl History {
                                         txout.value,
                                         txout_date,
                                     );
-                                    assert_eq!(tracker.push_lot(&btc_label, open), 0);
+                                    assert_eq!(tracker.push_lot(&btc_label, open, *date), 0);
                                     // Take fees away from the last input(s). We consider this a
                                     // partial loss of the lot corresponding to the input
                                     if txout.value > amount_sat {
@@ -611,7 +611,7 @@ impl History {
                                             txout.value - amount_sat,
                                             *date, // date is now, not txout_date
                                         );
-                                        assert_eq!(tracker.push_lot(&btc_label, open), 1);
+                                        assert_eq!(tracker.push_lot(&btc_label, open, *date), 1);
                                         amount_sat = 0;
                                     } else {
                                         amount_sat -= txout.value;
@@ -653,7 +653,7 @@ impl History {
                             amount_sat,
                             *date,
                         );
-                        assert_eq!(tracker.push_lot(&btc_label, open), 0);
+                        assert_eq!(tracker.push_lot(&btc_label, open, *date), 0);
                     }
                 }
                 Event::Withdrawal { .. } => {
@@ -685,7 +685,7 @@ impl History {
                         };
                     let adj_size = if is_btc { *size * 1_000_000 } else { *size };
                     let open = tax::Lot::from_trade(*price, adj_size, *fee, tax_date, is_btc);
-                    tracker.push_lot(&label, open);
+                    tracker.push_lot(&label, open, *date);
                 }
                 // Both expiries and assignments may be taxable
                 Event::Expiry {
@@ -704,7 +704,7 @@ impl History {
                     if let Some(opt) = contract.as_option() {
                         if *expired_size != 0 {
                             let open = tax::Lot::from_expiry(&opt, *expired_size);
-                            tracker.push_lot(&label, open);
+                            tracker.push_lot(&label, open, *date);
                         }
 
                         // An assignment is also a trade
@@ -717,7 +717,7 @@ impl History {
                             let btc_price = btc_price.btc_price;
 
                             let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
-                            tracker.push_lot(&label, open);
+                            tracker.push_lot(&label, open, *date);
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), super::Asset::Btc);
@@ -735,7 +735,7 @@ impl History {
                                 expiry,
                                 true, // is_btc
                             );
-                            tracker.push_lot(&btc_label, open);
+                            tracker.push_lot(&btc_label, open, *date);
                         }
                     }
                 }

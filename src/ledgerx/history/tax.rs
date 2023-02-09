@@ -28,14 +28,11 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     fmt, mem, str,
-    sync::atomic::{AtomicI64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 /// Used to give every lot a unique ID
 static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
-
-/// Used to skew dates so that they all get inserted into BTreeSets separately
-static DATE_OFFSET: AtomicI64 = AtomicI64::new(0);
 
 /// Newtype for unique lot IDs
 #[derive(Clone, PartialEq, Eq, Debug, Hash, Deserialize, Serialize)]
@@ -608,8 +605,6 @@ impl PositionTracker {
     ///
     /// Returns the number of lots closed.
     pub fn push_lot(&mut self, label: &Label, lot: Lot, sort_date: time::OffsetDateTime) -> usize {
-        let date_offset = DATE_OFFSET.fetch_add(1, Ordering::SeqCst);
-        let sort_date = sort_date + time::Duration::nanoseconds(date_offset);
         // Take the action...
         let pos = self.positions.entry(label.clone()).or_default();
         let (closes, open) = pos.push_event(lot.clone(), sort_date, !label.is_btc());

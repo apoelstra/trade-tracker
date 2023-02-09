@@ -25,7 +25,6 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp,
-    collections::BTreeMap,
     collections::HashMap,
     convert::TryFrom,
     fmt, mem, str,
@@ -463,7 +462,7 @@ impl Close {
 /// A position in a specific asset, represented by a FIFO queue of opening events
 #[derive(Clone, Default, Debug)]
 pub struct Position {
-    fifo: BTreeMap<time::OffsetDateTime, Lot>,
+    fifo: crate::TimeMap<Lot>,
 }
 
 impl Position {

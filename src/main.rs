@@ -259,9 +259,11 @@ fn main() -> Result<(), anyhow::Error> {
                 .read_csv(&data[..])
                 .with_context(|| format!("decoding CSV data from {}", url))?;
 
+            data_path.push("pricedata");
             history
                 .write_out(&data_path)
                 .context("writing out price history")?;
+            data_path.pop();
         }
         Command::LatestPrice {} => {
             info!("{}", history.price_at(now));

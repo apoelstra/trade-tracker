@@ -697,9 +697,14 @@ impl History {
                         } else {
                             (date, false)
                         };
-                    let adj_size = if is_btc { *size * 1_000_000 } else { *size };
-                    let open = tax::Lot::from_trade(*price, adj_size, *fee, tax_date, is_btc);
-                    tracker.push_lot(&label, open, date);
+                    if is_btc {
+                        let adj_size = *size * 1_000_000;
+                        let open = tax::Lot::from_trade_btc(*price, adj_size, *fee, tax_date);
+                        tracker.push_lot(&label, open, date);
+                    } else {
+                        let open = tax::Lot::from_trade_opt(*price, *size, *fee, tax_date);
+                        tracker.push_lot(&label, open, date);
+                    }
                 }
                 // Both expiries and assignments may be taxable
                 Event::Expiry {
@@ -738,7 +743,7 @@ impl History {
                             // see "seriously WTF" comment
                             let expiry =
                                 opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
-                            let open = tax::Lot::from_trade(
+                            let open = tax::Lot::from_trade_btc(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.
                                 match opt.pc {
@@ -747,7 +752,6 @@ impl History {
                                 },
                                 Decimal::ZERO,
                                 expiry,
-                                true, // is_btc
                             );
                             tracker.push_lot(&btc_label, open, date);
                         }

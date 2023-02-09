@@ -32,14 +32,23 @@ use std::{
 };
 
 /// Used to give every lot a unique ID
-static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
+static LOT_INDEX: AtomicUsize = AtomicUsize::new(1);
 
 /// Marker for "no lot ID"
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct NoId;
-impl fmt::Display for NoId {
+pub struct UnknownOptId;
+impl fmt::Display for UnknownOptId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("<no id>")
+        f.write_str("<lx-option>")
+    }
+}
+
+/// Marker for "no lot ID"
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub struct UnknownBtcId;
+impl fmt::Display for UnknownBtcId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("<lx-btc>")
     }
 }
 
@@ -221,6 +230,18 @@ pub struct Lot<ID> {
     date: TaxDate,
 }
 
+impl From<UnknownOptId> for LotId {
+    fn from(_: UnknownOptId) -> Self {
+        LotId::next_opt()
+    }
+}
+
+impl From<UnknownBtcId> for LotId {
+    fn from(_: UnknownBtcId) -> Self {
+        LotId::next_btc()
+    }
+}
+
 impl<ID: fmt::Display> fmt::Display for Lot<ID> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -242,7 +263,7 @@ impl<ID> Lot<ID> {
     }
 }
 
-impl Lot<NoId> {
+impl Lot<LotId> {
     /// Constructs an `Lot` object from a deposit
     pub fn from_deposit_utxo(
         outpoint: bitcoin::OutPoint,
@@ -255,7 +276,7 @@ impl Lot<NoId> {
             price, size_sat, date
         );
         Lot {
-            id: NoId,
+            id: LotId::from_outpoint(outpoint),
             close_ty: CloseType::TxFee, // lol a deposit better not close a position..
             direction: Direction::Long,
             quantity: size_sat,
@@ -263,11 +284,13 @@ impl Lot<NoId> {
             date: TaxDate(date),
         }
     }
+}
 
+impl Lot<UnknownBtcId> {
     /// Constructs an `Lot` object from a transaction fee
     pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Self {
         Lot {
-            id: NoId,
+            id: UnknownBtcId,
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
             direction: Direction::Short,
             quantity: size_sat,
@@ -277,25 +300,20 @@ impl Lot<NoId> {
     }
 
     /// Constructs an `Lot` object from a trade event
-    pub fn from_trade(
+    pub fn from_trade_btc(
         price: Decimal,
         size: i64,
         fee: Decimal,
         date: time::OffsetDateTime,
-        is_btc: bool,
     ) -> Self {
         debug!(
-            "Lot::from_trade price {} size {} fee {} date {}",
+            "Lot::from_trade_btc price {} size {} fee {} date {}",
             price, size, fee, date
         );
-        let unit_fee = if is_btc {
-            fee / Decimal::new(size, 8)
-        } else {
-            fee / Decimal::new(size, 2)
-        };
+        let unit_fee = fee / Decimal::new(size, 8);
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
-            id: NoId,
+            id: UnknownBtcId,
             close_ty: if size > 0 {
                 CloseType::BuyBack
             } else {
@@ -307,7 +325,38 @@ impl Lot<NoId> {
             date: TaxDate(date),
         }
     }
+}
 
+impl Lot<UnknownOptId> {
+    /// Constructs an `Lot` object from a trade event
+    pub fn from_trade_opt(
+        price: Decimal,
+        size: i64,
+        fee: Decimal,
+        date: time::OffsetDateTime,
+    ) -> Self {
+        debug!(
+            "Lot::from_trade_opt price {} size {} fee {} date {}",
+            price, size, fee, date
+        );
+        let unit_fee = fee / Decimal::new(size, 2);
+        let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
+        Lot {
+            id: UnknownOptId,
+            close_ty: if size > 0 {
+                CloseType::BuyBack
+            } else {
+                CloseType::Sell
+            },
+            direction: Direction::from_size(size),
+            quantity: size.unsigned_abs(),
+            price: adj_price,
+            date: TaxDate(date),
+        }
+    }
+}
+
+impl Lot<UnknownOptId> {
     /// Constructs an `Lot` object from an expiration event
     pub fn from_expiry(opt: &crate::option::Option, n_expired: i64) -> Self {
         debug!("Lot::from_expiry opt {} n {}", opt, n_expired);
@@ -316,7 +365,7 @@ impl Lot<NoId> {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: NoId,
+            id: UnknownOptId,
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
@@ -336,7 +385,7 @@ impl Lot<NoId> {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: NoId,
+            id: UnknownOptId,
             close_ty: CloseType::Exercise,
             direction: Direction::from_size(n_assigned),
             quantity: n_assigned.unsigned_abs(),
@@ -478,18 +527,13 @@ impl Position {
     }
 
     /// Assigns an ID to a lot and adds it to the position tracker
-    fn insert_lot(
+    fn insert_lot<ID: Into<LotId>>(
         &mut self,
         sort_date: time::OffsetDateTime,
-        lot: Lot<NoId>,
-        is_btc: bool,
+        lot: Lot<ID>,
     ) -> Lot<LotId> {
         let new_lot = Lot {
-            id: if is_btc {
-                LotId::next_btc()
-            } else {
-                LotId::next_opt()
-            },
+            id: lot.id.into(),
             close_ty: lot.close_ty,
             direction: lot.direction,
             quantity: lot.quantity,
@@ -506,9 +550,9 @@ impl Position {
     /// `Close`s with their type set to the `close_type` argument. If it results
     /// in opening a position (which may happen in a "pure" open or may happen
     /// only after closing), then it also returns a created lot.
-    fn push_event(
+    fn push_event<ID: fmt::Display + Into<LotId>>(
         &mut self,
-        mut open: Lot<NoId>,
+        mut open: Lot<ID>,
         sort_date: time::OffsetDateTime,
         is_1256: bool,
     ) -> (Vec<Close>, Option<Lot<LotId>>) {
@@ -518,8 +562,7 @@ impl Position {
                 "Create new position with open {}; sort date {}",
                 open, sort_date
             );
-            // nb abusing !is_1256 as "is btc"
-            let lot = self.insert_lot(sort_date, open, !is_1256);
+            let lot = self.insert_lot(sort_date, open);
             return (vec![], Some(lot));
         }
         // If there is an open position, in the same direction as the new open,
@@ -532,7 +575,7 @@ impl Position {
                 open,
                 sort_date,
             );
-            let lot = self.insert_lot(sort_date, open, !is_1256);
+            let lot = self.insert_lot(sort_date, open);
             return (vec![], Some(lot));
         }
         // Otherwise, we must close the position
@@ -547,7 +590,7 @@ impl Position {
                     );
                     // If we've closed out everything and still have an open, then
                     // we're opening a new position in the opposite direction.
-                    let lot = self.insert_lot(sort_date, open, !is_1256);
+                    let lot = self.insert_lot(sort_date, open);
                     return (vec![], Some(lot));
                 }
             };
@@ -627,18 +670,18 @@ impl PositionTracker {
     /// or more existing lots, in which case it is a "close".
     ///
     /// Returns the number of lots closed.
-    pub fn push_lot(
+    pub fn push_lot<ID: fmt::Display + Into<LotId>>(
         &mut self,
         label: &Label,
-        lot: Lot<NoId>,
+        lot: Lot<ID>,
         sort_date: time::OffsetDateTime,
     ) -> usize {
+        let date = lot.date;
         // Take the action...
         let pos = self.positions.entry(label.clone()).or_default();
-        let (closes, open) = pos.push_event(lot.clone(), sort_date, !label.is_btc());
+        let (closes, open) = pos.push_event(lot, sort_date, !label.is_btc());
         let n_ret = closes.len();
         // ...then log it
-        let date = lot.date;
         for close in closes {
             self.events.push(Event {
                 date: date,

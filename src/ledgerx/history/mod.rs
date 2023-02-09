@@ -542,6 +542,7 @@ impl History {
         mode: crate::TaxHistoryMode,
         price_history: &crate::price::Historic,
         transaction_db: &crate::transaction::Database,
+        lot_db: Option<&crate::lot::Database>,
     ) {
         let btc_label = tax::Label::btc();
         let mut tracker = tax::PositionTracker::new();
@@ -603,7 +604,20 @@ impl History {
                                         txout.value,
                                         txout_date,
                                     );
-                                    assert_eq!(tracker.push_lot(&btc_label, open, *date), 0);
+                                    let lot_date = if let Some(lot_date) =
+                                        lot_db.and_then(|db| db.find_lot(&open.id()))
+                                    {
+                                        debug!(
+                                            "Using date {} from database for lot {}",
+                                            lot_date,
+                                            open.id()
+                                        );
+                                        lot_date
+                                    } else {
+                                        debug!("Using date {} from deposit date (no entry in db) for lot {}", *date, open.id());
+                                        *date
+                                    };
+                                    assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 0);
                                     // Take fees away from the last input(s). We consider this a
                                     // partial loss of the lot corresponding to the input
                                     if txout.value > amount_sat {
@@ -611,7 +625,7 @@ impl History {
                                             txout.value - amount_sat,
                                             *date, // date is now, not txout_date
                                         );
-                                        assert_eq!(tracker.push_lot(&btc_label, open, *date), 1);
+                                        assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 1);
                                         amount_sat = 0;
                                     } else {
                                         amount_sat -= txout.value;

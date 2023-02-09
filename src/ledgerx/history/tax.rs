@@ -22,12 +22,13 @@ use crate::csv;
 use log::debug;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp,
     collections::BTreeMap,
     collections::HashMap,
     convert::TryFrom,
-    fmt, mem,
+    fmt, mem, str,
     sync::atomic::{AtomicI64, AtomicUsize, Ordering},
 };
 
@@ -38,14 +39,27 @@ static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
 static DATE_OFFSET: AtomicI64 = AtomicI64::new(0);
 
 /// Newtype for unique lot IDs
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct LotId(Option<&'static str>, String);
+#[derive(Clone, PartialEq, Eq, Debug, Hash, Deserialize, Serialize)]
+pub struct LotId(String);
 impl csv::PrintCsv for LotId {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(reason) = self.0 {
-            unreachable!("tried to print the invalid lot ID {}", reason);
+        if self.0 == "" {
+            unreachable!("tried to print invalid lot ID");
         }
-        self.1.print(f)
+        self.0.print(f)
+    }
+}
+
+impl str::FromStr for LotId {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(LotId(s.into()))
+    }
+}
+
+impl fmt::Display for LotId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -53,23 +67,23 @@ impl LotId {
     /// Constructor for the next LX-generated BTC lot ID
     fn next_btc() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(None, format!("lx-btc-{:03}", idx))
+        LotId(format!("lx-btc-{:03}", idx))
     }
 
     /// Constructor for the next LX-generated BTC option ID
     fn next_opt() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(None, format!("lx-opt-{:03}", idx))
+        LotId(format!("lx-opt-{:03}", idx))
     }
 
     /// Constructor for a lot ID that comes from a UTXO
     fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
-        LotId(None, format!("{:.6}-{:03}", outpoint.txid, outpoint.vout))
+        LotId(format!("{:.6}-{:03}", outpoint.txid, outpoint.vout))
     }
 
     /// Constructor for an "invalid" lot ID that should never actually be a lot
-    fn invalid(reason: &'static str) -> LotId {
-        LotId(Some(reason), "".into())
+    fn invalid() -> LotId {
+        LotId("".into())
     }
 }
 
@@ -215,7 +229,7 @@ impl fmt::Display for Lot {
         write!(
             f,
             "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
-            self.id.1,
+            self.id.0,
             self.direction,
             self.date.0.lazy_format("%FT%T"),
             self.price,
@@ -225,6 +239,11 @@ impl fmt::Display for Lot {
 }
 
 impl Lot {
+    /// Accessor for the ID
+    pub fn id(&self) -> &LotId {
+        &self.id
+    }
+
     /// Constructs an `Lot` object from a deposit
     pub fn from_deposit_utxo(
         outpoint: bitcoin::OutPoint,
@@ -249,7 +268,7 @@ impl Lot {
     /// Constructs an `Lot` object from a transaction fee
     pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Lot {
         Lot {
-            id: LotId::invalid("tx fee"),
+            id: LotId::invalid(),
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
             direction: Direction::Short,
             quantity: size_sat,
@@ -302,7 +321,7 @@ impl Lot {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: LotId::invalid("expiry"),
+            id: LotId::invalid(),
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
@@ -322,7 +341,7 @@ impl Lot {
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: LotId::invalid("assignment"),
+            id: LotId::invalid(),
             close_ty: CloseType::Exercise,
             direction: Direction::from_size(n_assigned),
             quantity: n_assigned.unsigned_abs(),
@@ -350,7 +369,7 @@ impl fmt::Display for Close {
         write!(
             f,
             "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
-            self.open_id.1,
+            self.open_id.0,
             self.ty,
             self.close_date.0.lazy_format("%FT%FT"),
             self.close_price,
@@ -389,7 +408,16 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
 
         let i_qty = i64::try_from(self.close.quantity).unwrap();
         let description = if self.label.0 == "BTC" {
-            format!("{}, {}", real_amount, self.label)
+            // If we can, reduce to 2 decimal points. This will be the common case since LX
+            // will only let us trade in 1/100th of a bitcoin, and will let us better match
+            // their output.
+            if real_amount == real_amount.round_dp(2) {
+                let mut trunc = real_amount;
+                trunc.rescale(2);
+                format!("{}, {}", trunc, self.label)
+            } else {
+                format!("{}, {}", real_amount, self.label)
+            }
         } else {
             format!("{}, {}", i_qty, self.label)
         };
@@ -468,7 +496,10 @@ impl Position {
     ) -> (Vec<Close>, Option<Lot>) {
         // If the position is empty, then just push
         if self.fifo.is_empty() {
-            debug!("Create new position with open {}", open);
+            debug!(
+                "Create new position with open {}; sort date {}",
+                open, sort_date
+            );
             self.fifo.insert(sort_date, open.clone());
             return (vec![], Some(open));
         }
@@ -476,10 +507,11 @@ impl Position {
         // add the new open to the FIFO.
         if self.fifo.values().next().unwrap().direction == open.direction {
             debug!(
-                "Increasing position ({:?}, qty {}) with open {}",
+                "Increasing position ({:?}, qty {}) with open {}; sort date {}",
                 self.direction(),
                 self.total_size(),
-                open
+                open,
+                sort_date,
             );
             self.fifo.insert(sort_date, open.clone());
             return (vec![], Some(open));
@@ -490,7 +522,10 @@ impl Position {
             let (front_date, mut front) = match self.fifo.pop_first() {
                 Some(kv) => kv,
                 None => {
-                    debug!("fully closed out position, opening new one: {}", open);
+                    debug!(
+                        "fully closed out position, opening new one: {}; sort date {}",
+                        open, sort_date
+                    );
                     // If we've closed out everything and still have an open, then
                     // we're opening a new position in the opposite direction.
                     self.fifo.insert(sort_date, open.clone());

@@ -22,12 +22,14 @@ pub mod http;
 pub mod ledgerx;
 pub mod local_bs;
 pub mod logger;
+pub mod lot;
 pub mod option;
 pub mod price;
 pub mod terminal;
 pub mod trade;
 pub mod transaction;
 
+use crate::ledgerx::LotId;
 use anyhow::Context;
 use clap::Clap;
 use log::{info, warn};
@@ -94,6 +96,16 @@ enum Command {
         #[clap(
             name = "timestamp",
             about = "Please provide the timestamp from the block header in which the transaction was confirmed"
+        )]
+        timestamp: i64,
+    },
+    /// Record a hex transaction that may be interesting to the software
+    RecordLot {
+        #[clap(name = "lot-id", about = "The lot ID to specify the timestamp for")]
+        lot_id: LotId,
+        #[clap(
+            name = "timestamp",
+            about = "Please provide the timestamp that you would like this lot to be sorted into the FIFO queue on"
         )]
         timestamp: i64,
     },
@@ -181,6 +193,7 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
         Command::InitializePriceData { .. }
         | Command::UpdatePriceData { .. }
         | Command::LatestPrice {}
+        | Command::RecordLot { .. }
         | Command::RecordTx { .. }
         | Command::Price { .. }
         | Command::Iv { .. } => {
@@ -252,6 +265,43 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::LatestPrice {} => {
             info!("{}", history.price_at(now));
+        }
+        Command::RecordLot { lot_id, timestamp } => {
+            // Basic sanity checks on the timestamp.
+            if timestamp < 1231006505 {
+                return Err(anyhow::Error::msg(
+                    "Timestamp appears to be invalid (predates the genesis block)",
+                ));
+            } else if timestamp > 4102444800 {
+                return Err(anyhow::Error::msg(
+                    "Timestamp appears to be invalid (or you are in the year 2100, \
+                     a time so far in the future that the earth men of 2023 could \
+                     not imagine it.",
+                ));
+            }
+
+            data_path.push("lots.json");
+            let mut db = match lot::Database::load(&data_path) {
+                Ok(db) => {
+                    info!("Loaded lot database from disk.");
+                    db
+                }
+                Err(e) => {
+                    info!("Failed to load lot database: {}. Creating a new one.", e);
+                    lot::Database::new()
+                }
+            };
+
+            if let Some(existing) = db.insert_lot(lot_id, timestamp) {
+                if time::OffsetDateTime::from_unix_timestamp(timestamp) == existing {
+                    info!("Already had lot.");
+                } else {
+                    info!("Overwriting timestamp {} with {}.", existing, timestamp);
+                }
+            }
+            db.save(&data_path).context("saving lot database")?;
+            data_path.pop(); // "lots.json"
+            info!("Success.");
         }
         Command::RecordTx { rawtx, timestamp } => {
             let bytes: Vec<u8> = hex::decode(&rawtx).context("decoding rawtx as hex")?;
@@ -436,9 +486,12 @@ fn main() -> Result<(), anyhow::Error> {
                           You will need to record every deposit transaction and its inputs. If \
                           you have made no BTC deposits, just record some random transaction.",
             )?;
+            data_path.pop();
+            data_path.push("lots.json");
+            let lot_db = lot::Database::load(&data_path).ok();
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
-            hist.print_tax_csv(year, mode, &history, &db);
+            hist.print_tax_csv(year, mode, &history, &db, lot_db.as_ref());
         }
     }
 

@@ -115,28 +115,6 @@ impl Contract {
             Type::Future { expiry, .. } => expiry,
         }
     }
-
-    /// "Unique expiry date"
-    ///
-    /// The actual expiry date, plus the contract ID reinterpreted as a number of nanoseconds.
-    /// By encoding the contract ID, it is guaranteed that the resulting date will be unique,
-    /// so that when it is put into a time-indexed BTreeMap, it won't get overwritten.
-    ///
-    /// This is a hack, but it works, and has the side benefit of sticking the contract IDs
-    /// into Excel somewhere in case I need to cross-reference them and otherwise somehow
-    /// lose them.
-    pub fn unique_expiry_date(&self) -> OffsetDateTime {
-        let offset = (self.expiry().unix_timestamp() / 500_000) * 10_000_000
-            + match self.ty {
-                Type::Option { opt, .. } => match opt.pc {
-                    option::Call => opt.strike.to_i64().unwrap(),
-                    option::Put => 1_000_000 + opt.strike.to_i64().unwrap(),
-                },
-                Type::NextDay { .. } => 2_000_000,
-                Type::Future { .. } => 3_000_000,
-            };
-        self.expiry() + time::Duration::nanoseconds(offset)
-    }
 }
 
 impl TryFrom<json::Contract> for Contract {

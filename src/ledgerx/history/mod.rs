@@ -23,7 +23,7 @@ use log::{debug, info, warn};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
@@ -221,7 +221,7 @@ enum Event {
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct History {
-    events: BTreeMap<OffsetDateTime, Event>,
+    events: crate::TimeMap<Event>,
 }
 
 impl History {
@@ -387,7 +387,7 @@ impl History {
             assert_eq!(assigned + expired, -pos.size, "{:?}", pos);
 
             self.events.insert(
-                pos.contract.unique_expiry_date(),
+                pos.contract.expiry(),
                 Event::Expiry {
                     contract: pos.contract.clone(),
                     assigned_size: assigned,
@@ -405,9 +405,9 @@ impl History {
                 continue;
             }
 
-            let btc_price = price_history.price_at(*date);
+            let btc_price = price_history.price_at(date);
             let btc_price = btc_price.btc_price; // just discard exact price timestamp
-            let date_fmt = csv::DateTime(*date);
+            let date_fmt = csv::DateTime(date);
 
             // First accumulate the CSV into tuples (between 0 and 2 of them). We do
             // it this way to ensure that every branch outputs the same type of data,
@@ -447,8 +447,8 @@ impl History {
                             (Some(*price), Decimal::from(*size)),
                             (
                                 btc_price,
-                                Some(csv::Iv(opt.bs_iv(*date, btc_price, *price))),
-                                Some(csv::Arr(opt.arr(*date, btc_price, *price))),
+                                Some(csv::Iv(opt.bs_iv(date, btc_price, *price))),
+                                Some(csv::Arr(opt.arr(date, btc_price, *price))),
                             ),
                         )),
                         None,
@@ -555,7 +555,7 @@ impl History {
                     asset,
                     address,
                 } => {
-                    let btc_price = price_history.price_at(*date);
+                    let btc_price = price_history.price_at(date);
                     debug!(
                         "Looked up BTC price for deposit at {}, got {} ({})",
                         date, btc_price.btc_price, btc_price.timestamp,
@@ -614,8 +614,8 @@ impl History {
                                         );
                                         lot_date
                                     } else {
-                                        debug!("Using date {} from deposit date (no entry in db) for lot {}", *date, open.id());
-                                        *date
+                                        debug!("Using date {} from deposit date (no entry in db) for lot {}", date, open.id());
+                                        date
                                     };
                                     assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 0);
                                     // Take fees away from the last input(s). We consider this a
@@ -623,7 +623,7 @@ impl History {
                                     if txout.value > amount_sat {
                                         let open = tax::Lot::from_tx_fee(
                                             txout.value - amount_sat,
-                                            *date, // date is now, not txout_date
+                                            date, // date is now, not txout_date
                                         );
                                         assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 1);
                                         amount_sat = 0;
@@ -665,9 +665,9 @@ impl History {
                             deposit_outpoint,
                             btc_price,
                             amount_sat,
-                            *date,
+                            date,
                         );
-                        assert_eq!(tracker.push_lot(&btc_label, open, *date), 0);
+                        assert_eq!(tracker.push_lot(&btc_label, open, date), 0);
                     }
                 }
                 Event::Withdrawal { .. } => {
@@ -695,11 +695,11 @@ impl History {
                                 true,
                             )
                         } else {
-                            (*date, false)
+                            (date, false)
                         };
                     let adj_size = if is_btc { *size * 1_000_000 } else { *size };
                     let open = tax::Lot::from_trade(*price, adj_size, *fee, tax_date, is_btc);
-                    tracker.push_lot(&label, open, *date);
+                    tracker.push_lot(&label, open, date);
                 }
                 // Both expiries and assignments may be taxable
                 Event::Expiry {
@@ -718,12 +718,12 @@ impl History {
                     if let Some(opt) = contract.as_option() {
                         if *expired_size != 0 {
                             let open = tax::Lot::from_expiry(&opt, *expired_size);
-                            tracker.push_lot(&label, open, *date);
+                            tracker.push_lot(&label, open, date);
                         }
 
                         // An assignment is also a trade
                         if *assigned_size != 0 {
-                            let btc_price = price_history.price_at(*date);
+                            let btc_price = price_history.price_at(date);
                             debug!(
                                 "Looked up BTC price at {}, got {} ({})",
                                 date, btc_price.btc_price, btc_price.timestamp,
@@ -731,7 +731,7 @@ impl History {
                             let btc_price = btc_price.btc_price;
 
                             let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
-                            tracker.push_lot(&label, open, *date);
+                            tracker.push_lot(&label, open, date);
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), super::Asset::Btc);
@@ -749,7 +749,7 @@ impl History {
                                 expiry,
                                 true, // is_btc
                             );
-                            tracker.push_lot(&btc_label, open, *date);
+                            tracker.push_lot(&btc_label, open, date);
                         }
                     }
                 }

@@ -26,10 +26,12 @@ pub mod lot;
 pub mod option;
 pub mod price;
 pub mod terminal;
+pub mod timemap;
 pub mod trade;
 pub mod transaction;
 
 use crate::ledgerx::LotId;
+pub use crate::timemap::TimeMap;
 use anyhow::Context;
 use clap::Clap;
 use log::{info, warn};

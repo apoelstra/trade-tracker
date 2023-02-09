@@ -34,14 +34,20 @@ use std::{
 /// Used to give every lot a unique ID
 static LOT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
+/// Marker for "no lot ID"
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub struct NoId;
+impl fmt::Display for NoId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("<no id>")
+    }
+}
+
 /// Newtype for unique lot IDs
 #[derive(Clone, PartialEq, Eq, Debug, Hash, Deserialize, Serialize)]
 pub struct LotId(String);
 impl csv::PrintCsv for LotId {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.0 == "" {
-            unreachable!("tried to print invalid lot ID");
-        }
         self.0.print(f)
     }
 }
@@ -75,11 +81,6 @@ impl LotId {
     /// Constructor for a lot ID that comes from a UTXO
     fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
         LotId(format!("{:.6}-{:03}", outpoint.txid, outpoint.vout))
-    }
-
-    /// Constructor for an "invalid" lot ID that should never actually be a lot
-    fn invalid() -> LotId {
-        LotId("".into())
     }
 }
 
@@ -210,8 +211,8 @@ impl Direction {
 
 /// Event that creates or enlarges a position
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Lot {
-    id: LotId,
+pub struct Lot<ID> {
+    id: ID,
     /// If this is used to close a position rather than create a new lot
     close_ty: CloseType,
     direction: Direction,
@@ -220,12 +221,12 @@ pub struct Lot {
     date: TaxDate,
 }
 
-impl fmt::Display for Lot {
+impl<ID: fmt::Display> fmt::Display for Lot<ID> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
-            self.id.0,
+            self.id,
             self.direction,
             self.date.0.lazy_format("%FT%T"),
             self.price,
@@ -234,25 +235,27 @@ impl fmt::Display for Lot {
     }
 }
 
-impl Lot {
+impl<ID> Lot<ID> {
     /// Accessor for the ID
-    pub fn id(&self) -> &LotId {
+    pub fn id(&self) -> &ID {
         &self.id
     }
+}
 
+impl Lot<NoId> {
     /// Constructs an `Lot` object from a deposit
     pub fn from_deposit_utxo(
         outpoint: bitcoin::OutPoint,
         price: Decimal,
         size_sat: u64,
         date: time::OffsetDateTime,
-    ) -> Lot {
+    ) -> Self {
         debug!(
             "Lot::from_deposit_utxo price {} size {}sat date {}",
             price, size_sat, date
         );
         Lot {
-            id: LotId::from_outpoint(outpoint),
+            id: NoId,
             close_ty: CloseType::TxFee, // lol a deposit better not close a position..
             direction: Direction::Long,
             quantity: size_sat,
@@ -262,9 +265,9 @@ impl Lot {
     }
 
     /// Constructs an `Lot` object from a transaction fee
-    pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Lot {
+    pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Self {
         Lot {
-            id: LotId::invalid(),
+            id: NoId,
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
             direction: Direction::Short,
             quantity: size_sat,
@@ -280,7 +283,7 @@ impl Lot {
         fee: Decimal,
         date: time::OffsetDateTime,
         is_btc: bool,
-    ) -> Lot {
+    ) -> Self {
         debug!(
             "Lot::from_trade price {} size {} fee {} date {}",
             price, size, fee, date
@@ -292,11 +295,7 @@ impl Lot {
         };
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
-            id: if is_btc {
-                LotId::next_btc()
-            } else {
-                LotId::next_opt()
-            },
+            id: NoId,
             close_ty: if size > 0 {
                 CloseType::BuyBack
             } else {
@@ -310,14 +309,14 @@ impl Lot {
     }
 
     /// Constructs an `Lot` object from an expiration event
-    pub fn from_expiry(opt: &crate::option::Option, n_expired: i64) -> Lot {
+    pub fn from_expiry(opt: &crate::option::Option, n_expired: i64) -> Self {
         debug!("Lot::from_expiry opt {} n {}", opt, n_expired);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: LotId::invalid(),
+            id: NoId,
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
@@ -330,14 +329,14 @@ impl Lot {
         opt: &crate::option::Option,
         n_assigned: i64,
         btc_price: Decimal,
-    ) -> Lot {
+    ) -> Self {
         debug!("Lot::from_assignment opt {} n {}", opt, n_assigned);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
         // these options actually expire.
         let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
         Lot {
-            id: LotId::invalid(),
+            id: NoId,
             close_ty: CloseType::Exercise,
             direction: Direction::from_size(n_assigned),
             quantity: n_assigned.unsigned_abs(),
@@ -459,7 +458,7 @@ impl Close {
 /// A position in a specific asset, represented by a FIFO queue of opening events
 #[derive(Clone, Default, Debug)]
 pub struct Position {
-    fifo: crate::TimeMap<Lot>,
+    fifo: crate::TimeMap<Lot<LotId>>,
 }
 
 impl Position {
@@ -478,6 +477,29 @@ impl Position {
         self.fifo.values().next().map(|open| open.direction)
     }
 
+    /// Assigns an ID to a lot and adds it to the position tracker
+    fn insert_lot(
+        &mut self,
+        sort_date: time::OffsetDateTime,
+        lot: Lot<NoId>,
+        is_btc: bool,
+    ) -> Lot<LotId> {
+        let new_lot = Lot {
+            id: if is_btc {
+                LotId::next_btc()
+            } else {
+                LotId::next_opt()
+            },
+            close_ty: lot.close_ty,
+            direction: lot.direction,
+            quantity: lot.quantity,
+            price: lot.price,
+            date: lot.date,
+        };
+        self.fifo.insert(sort_date, new_lot.clone());
+        new_lot
+    }
+
     /// Modifies the position based on an event.
     ///
     /// If this results in closing previously opened positions, return a list of
@@ -486,18 +508,19 @@ impl Position {
     /// only after closing), then it also returns a created lot.
     fn push_event(
         &mut self,
-        mut open: Lot,
+        mut open: Lot<NoId>,
         sort_date: time::OffsetDateTime,
         is_1256: bool,
-    ) -> (Vec<Close>, Option<Lot>) {
+    ) -> (Vec<Close>, Option<Lot<LotId>>) {
         // If the position is empty, then just push
         if self.fifo.is_empty() {
             debug!(
                 "Create new position with open {}; sort date {}",
                 open, sort_date
             );
-            self.fifo.insert(sort_date, open.clone());
-            return (vec![], Some(open));
+            // nb abusing !is_1256 as "is btc"
+            let lot = self.insert_lot(sort_date, open, !is_1256);
+            return (vec![], Some(lot));
         }
         // If there is an open position, in the same direction as the new open,
         // add the new open to the FIFO.
@@ -509,8 +532,8 @@ impl Position {
                 open,
                 sort_date,
             );
-            self.fifo.insert(sort_date, open.clone());
-            return (vec![], Some(open));
+            let lot = self.insert_lot(sort_date, open, !is_1256);
+            return (vec![], Some(lot));
         }
         // Otherwise, we must close the position
         let mut ret = vec![];
@@ -524,8 +547,8 @@ impl Position {
                     );
                     // If we've closed out everything and still have an open, then
                     // we're opening a new position in the opposite direction.
-                    self.fifo.insert(sort_date, open.clone());
-                    return (ret, Some(open));
+                    let lot = self.insert_lot(sort_date, open, !is_1256);
+                    return (vec![], Some(lot));
                 }
             };
             assert_ne!(open.direction, front.direction);
@@ -573,7 +596,7 @@ impl Position {
 /// "anonymous" enum covering an open or a close
 #[derive(Clone, Debug)]
 pub enum OpenClose {
-    Open(Lot),
+    Open(Lot<LotId>),
     Close(Close),
 }
 
@@ -604,7 +627,12 @@ impl PositionTracker {
     /// or more existing lots, in which case it is a "close".
     ///
     /// Returns the number of lots closed.
-    pub fn push_lot(&mut self, label: &Label, lot: Lot, sort_date: time::OffsetDateTime) -> usize {
+    pub fn push_lot(
+        &mut self,
+        label: &Label,
+        lot: Lot<NoId>,
+        sort_date: time::OffsetDateTime,
+    ) -> usize {
         // Take the action...
         let pos = self.positions.entry(label.clone()).or_default();
         let (closes, open) = pos.push_event(lot.clone(), sort_date, !label.is_btc());

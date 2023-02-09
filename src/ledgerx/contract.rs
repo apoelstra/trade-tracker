@@ -18,7 +18,6 @@
 //!
 
 use crate::{ledgerx::json, option};
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::{convert::TryFrom, fmt};

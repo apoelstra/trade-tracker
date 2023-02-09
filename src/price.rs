@@ -22,7 +22,6 @@ use log::info;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     fmt, fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
@@ -84,7 +83,7 @@ impl fmt::Display for BitcoinPrice {
 /// Historic price data
 #[derive(Default)]
 pub struct Historic {
-    data: BTreeMap<time::OffsetDateTime, BitcoinPrice>,
+    data: crate::TimeMap<BitcoinPrice>,
 }
 
 impl Historic {
@@ -95,14 +94,12 @@ impl Historic {
 
     /// Returns the most recent price as of a given time
     pub fn price_at(&self, time: time::OffsetDateTime) -> BitcoinPrice {
-        log::debug!(
-            "look up price at {} ... full range {} to {}, short range ends at {}",
-            time,
-            self.data.keys().next().unwrap(),
-            self.data.keys().rev().next().unwrap(),
-            *self.data.range(..time).rev().next().unwrap().0,
-        );
-        *self.data.range(..time).rev().next().unwrap().1
+        let result = self
+            .data
+            .most_recent(time)
+            .expect("price map has some entry prior to lookup time");
+        log::debug!("lookup price at {}; got {}", time, result.1);
+        *result.1
     }
 
     /// Number of price entries recorded

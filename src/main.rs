@@ -29,6 +29,7 @@ pub mod terminal;
 pub mod timemap;
 pub mod trade;
 pub mod transaction;
+pub mod units;
 
 use crate::ledgerx::LotId;
 pub use crate::timemap::TimeMap;

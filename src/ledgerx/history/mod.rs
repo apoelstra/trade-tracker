@@ -145,7 +145,7 @@ impl Trades {
             let id = trade.contract_id.clone();
             if map.get(&id).is_none() {
                 let contract = crate::http::get_json_from_data_field(
-                    &format!("https://api.ledgerx.com/trading/contracts/{}", id),
+                    &format!("https://api.ledgerx.com/trading/contracts/{id}"),
                     None,
                 )
                 .context("lookup contract for trade history")?;
@@ -384,7 +384,7 @@ impl History {
                 (pos.assigned_size, -pos.size - pos.assigned_size)
             };
             // This assertion maybe makes it clearer what we're doing.
-            assert_eq!(assigned + expired, -pos.size, "{:?}", pos);
+            assert_eq!(assigned + expired, -pos.size, "{pos:?}");
 
             self.events.insert(
                 pos.contract.expiry(),

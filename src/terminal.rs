@@ -50,7 +50,7 @@ fn hsv_to_rgb(hue: usize, sat: f64, light: f64) -> (usize, usize, usize) {
 }
 
 pub fn format_color<D: fmt::Display>(disp: D, red: usize, green: usize, blue: usize) -> String {
-    format!("\x1b[38;2;{};{};{}m{}\x1b[0m", red, green, blue, disp)
+    format!("\x1b[38;2;{red};{green};{blue}m{disp}\x1b[0m")
 }
 
 pub fn format_redgreen<D: fmt::Display>(disp: D, val: f64, red: f64, green: f64) -> String {

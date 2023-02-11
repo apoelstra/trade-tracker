@@ -67,7 +67,7 @@ impl str::FromStr for Option {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // e.g. 2023-01-27C10000
         if !s.is_ascii() {
-            return Err(format!("option {} is not ASCII", s));
+            return Err(format!("option {s} is not ASCII"));
         }
         if s.len() < 12 {
             return Err(format!("option {} is too short (len {})", s, s.len()));
@@ -76,14 +76,14 @@ impl str::FromStr for Option {
         let expiry = time::Date::parse(&s[0..10], "%F")
             .map(|d| d.with_time(time::time!(21:00)))
             .map(|dt| dt.assume_utc().to_offset(time::UtcOffset::UTC))
-            .map_err(|e| format!("Parsing time in option {}: {}", s, e))?;
+            .map_err(|e| format!("Parsing time in option {s}: {e}"))?;
         let pc = match s.as_bytes()[10] {
             b'C' | b'c' => Call,
             b'P' | b'p' => Put,
-            x => return Err(format!("Unknown put/call symbol {} in {}", x, s)),
+            x => return Err(format!("Unknown put/call symbol {x} in {s}")),
         };
         let strike = Decimal::from_str(&s[11..])
-            .map_err(|e| format!("Parsing strike in option {}: {}", s, e))?;
+            .map_err(|e| format!("Parsing strike in option {s}: {e}"))?;
         // return
         Ok(Option { pc, strike, expiry })
     }
@@ -381,8 +381,8 @@ impl Option {
         info!(
             "{}{}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
             prefix,
-            format_color(format_args!("{:17}", self), 64, 192, 255),
-            format_redgreen(format_args!("{:6.3}", dte), dte, 90.0, 0.0),
+            format_color(format_args!("{self:17}"), 64, 192, 255),
+            format_redgreen(format_args!("{dte:6.3}"), dte, 90.0, 0.0),
             btc_price,
             intrinsic_str,
             format_redgreen(format_args!("{:5.3}%", dd80 * 100.0), dd80, 0.15, 0.0),
@@ -403,7 +403,7 @@ impl Option {
             (
                 format_redgreen(format_args!("{:3.2}", vol * 100.0), vol, 0.5, 1.2),
                 format_redgreen(
-                    format_args!("{:6.2}", theta),
+                    format_args!("{theta:6.2}"),
                     theta,
                     0.0,
                     -self_price.to_f64().unwrap(),
@@ -420,7 +420,7 @@ impl Option {
             "{}${}{}  sigma: {}%  loss80: {}  ARR: {}%, Theta: {}",
             prefix,
             format_redgreen(
-                format_args!("{:8.2}", self_price),
+                format_args!("{self_price:8.2}"),
                 self_price.to_f64().unwrap().log10(),
                 1.0,
                 3.0
@@ -429,9 +429,9 @@ impl Option {
                 let total = self_price * Decimal::new(size as i64, 2);
                 format!(
                     " × {} = {}",
-                    format_redgreen(format_args!("{:4}", size), (size as f64).log10(), 1.0, 4.0),
+                    format_redgreen(format_args!("{size:4}"), (size as f64).log10(), 1.0, 4.0),
                     format_redgreen(
-                        format_args!("{:8.2}", total),
+                        format_args!("{total:8.2}"),
                         total.to_f64().unwrap().log10(),
                         1.5,
                         5.0

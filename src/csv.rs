@@ -69,7 +69,7 @@ pub struct Iv(pub Result<f64, f64>);
 impl PrintCsv for Iv {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Ok(iv) = self.0 {
-            write!(f, "{}", iv)
+            write!(f, "{iv}")
         } else {
             f.write_str("\"free money\"")
         }

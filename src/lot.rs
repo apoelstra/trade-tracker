@@ -41,20 +41,20 @@ impl Database {
     pub fn load<P: AsRef<path::Path>>(filepath: P) -> Result<Self, anyhow::Error> {
         let filename = filepath.as_ref().to_string_lossy();
         let fh = fs::File::open(filepath.as_ref())
-            .with_context(|| format!("opening lot database {}", filename))?;
+            .with_context(|| format!("opening lot database {filename}"))?;
         let bf = io::BufReader::new(fh);
         Ok(serde_json::from_reader(bf)
-            .with_context(|| format!("parsing lot database {}", filename))?)
+            .with_context(|| format!("parsing lot database {filename}"))?)
     }
 
     /// Saves out the database to a file
     pub fn save<P: AsRef<path::Path>>(&self, filepath: P) -> Result<(), anyhow::Error> {
         let filename = filepath.as_ref().to_string_lossy();
         let fh = fs::File::create(filepath.as_ref())
-            .with_context(|| format!("creating lot database {}", filename))?;
+            .with_context(|| format!("creating lot database {filename}"))?;
         let bf = io::BufWriter::new(fh);
         Ok(serde_json::to_writer(bf, self)
-            .with_context(|| format!("parsing lot database {}", filename))?)
+            .with_context(|| format!("parsing lot database {filename}"))?)
     }
 
     /// Adds a transaction to the map

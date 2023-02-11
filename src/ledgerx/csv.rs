@@ -103,33 +103,33 @@ impl FromStr for CsvLine {
             CsvType::BtcTrade
         } else {
             let btc = parse_until_next(&mut contract_str, ' ', 1)
-                .ok_or(format!("contract string {} first word", contract_str))?;
+                .ok_or(format!("contract string {contract_str} first word"))?;
             let mini = parse_until_next(&mut contract_str, ' ', 1)
-                .ok_or(format!("contract string {} second word", contract_str))?;
+                .ok_or(format!("contract string {contract_str} second word"))?;
             let _expiry = parse_until_next(&mut contract_str, ' ', 1)
-                .ok_or(format!("contract string {} third word", contract_str))?;
+                .ok_or(format!("contract string {contract_str} third word"))?;
             let put_call = parse_until_next(&mut contract_str, '$', 1)
-                .ok_or(format!("contract string {} fourth word", contract_str))?;
+                .ok_or(format!("contract string {contract_str} fourth word"))?;
             let strike_str = parse_until_next(&mut contract_str, ',', 1)
-                .ok_or(format!("contract string {} strike thousands", contract_str))?;
+                .ok_or(format!("contract string {contract_str} strike thousands"))?;
 
             if btc != "BTC" {
-                return Err(format!("expected BTC, got {}", btc));
+                return Err(format!("expected BTC, got {btc}"));
             }
             if mini != "Mini" {
-                return Err(format!("expected Mini, got {}", mini));
+                return Err(format!("expected Mini, got {mini}"));
             }
             if contract_str != "000.00" {
-                return Err(format!("expected 000.00, got {}", contract_str));
+                return Err(format!("expected 000.00, got {contract_str}"));
             }
 
             let strike = Decimal::ONE_THOUSAND
                 * Decimal::from_str(strike_str)
-                    .map_err(|e| format!("Parsing strike {}: {}", contract_str, e))?;
+                    .map_err(|e| format!("Parsing strike {contract_str}: {e}"))?;
             match put_call {
                 "Call " => CsvType::CallExercise { strike },
                 "Put " => CsvType::PutExercise { strike },
-                x => return Err(format!("unknown put/call string {}", x)),
+                x => return Err(format!("unknown put/call string {x}")),
             }
         };
         Ok(CsvLine {
@@ -140,15 +140,15 @@ impl FromStr for CsvLine {
                 _ => CsvType::Other,
             },
             quantity: Decimal::from_str(quantity_str)
-                .map_err(|e| format!("parsing quantity {}: {}", quantity_str, e))?,
+                .map_err(|e| format!("parsing quantity {quantity_str}: {e}"))?,
             date_1: OffsetDateTime::parse(date_1_str, time::Format::Rfc3339)
-                .map_err(|e| format!("parsing date 1 {}: {}", date_1_str, e))?,
+                .map_err(|e| format!("parsing date 1 {date_1_str}: {e}"))?,
             date_2: OffsetDateTime::parse(date_2_str, time::Format::Rfc3339)
-                .map_err(|e| format!("parsing date 2 {}: {}", date_2_str, e))?,
+                .map_err(|e| format!("parsing date 2 {date_2_str}: {e}"))?,
             basis_1: Decimal::from_str(basis_1_str)
-                .map_err(|e| format!("parsing basis 1 {}: {}", basis_1_str, e))?,
+                .map_err(|e| format!("parsing basis 1 {basis_1_str}: {e}"))?,
             basis_2: Decimal::from_str(basis_2_str)
-                .map_err(|e| format!("parsing basis 1 {}: {}", basis_1_str, e))?,
+                .map_err(|e| format!("parsing basis 2 {basis_2_str}: {e}"))?,
         })
     }
 }

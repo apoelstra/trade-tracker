@@ -78,13 +78,13 @@ impl LotId {
     /// Constructor for the next LX-generated BTC lot ID
     fn next_btc() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-btc-{:04}", idx))
+        LotId(format!("lx-btc-{idx:04}"))
     }
 
     /// Constructor for the next LX-generated BTC option ID
     fn next_opt() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-opt-{:04}", idx))
+        LotId(format!("lx-opt-{idx:04}"))
     }
 
     /// Constructor for a lot ID that comes from a UTXO

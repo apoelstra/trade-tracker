@@ -113,9 +113,9 @@ impl Historic {
         let mut last_half_hour = 0;
         let mut last_price = None;
         for (lineno, entry) in io::BufReader::new(data).lines().enumerate() {
-            let entry = entry.with_context(|| format!("reading line {}", lineno))?;
+            let entry = entry.with_context(|| format!("reading line {lineno}"))?;
             let price = BitcoinPrice::from_csv(&entry)
-                .with_context(|| format!("decoding price \"{}\" at {}", entry, lineno))?;
+                .with_context(|| format!("decoding price \"{entry}\" at {lineno}"))?;
 
             let half_hour =
                 12 * price.timestamp.time().hour() + price.timestamp.time().minute() / 5;
@@ -184,7 +184,7 @@ impl Historic {
                 100 * entry.timestamp.date().year() + entry.timestamp.date().month() as i32;
             if last_year_mo != year_mo {
                 if last_year_mo > 0 {
-                    datadir.push(format!("{:06}.json", last_year_mo));
+                    datadir.push(format!("{last_year_mo:06}.json"));
                     serde_json::to_writer(
                         io::BufWriter::new(
                             fs::File::create(&datadir).context("creating json file")?,
@@ -202,7 +202,7 @@ impl Historic {
 
         // Record most recent month
         if last_year_mo > 0 {
-            datadir.push(format!("{:06}.json", last_year_mo));
+            datadir.push(format!("{last_year_mo:06}.json"));
             serde_json::to_writer(
                 io::BufWriter::new(fs::File::create(&datadir).context("creating json file")?),
                 &mo_entries,

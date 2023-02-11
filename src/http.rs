@@ -25,11 +25,11 @@ use log::{info, warn};
 pub fn get_bytes(url: &str, api_key: Option<&str>) -> Result<Vec<u8>, anyhow::Error> {
     let mut req = minreq::get(url).with_timeout(10);
     if let Some(key) = api_key {
-        req = req.with_header("Authorization", format!("JWT {}", key));
+        req = req.with_header("Authorization", format!("JWT {key}"));
     }
     let resp = req
         .send()
-        .with_context(|| format!("Request data from {}", url))?;
+        .with_context(|| format!("Request data from {url}"))?;
 
     info!(
         target: "lx_http_get",
@@ -52,7 +52,7 @@ pub fn get_json<D: serde::de::DeserializeOwned>(
     api_key: Option<&str>,
 ) -> Result<D, anyhow::Error> {
     let bytes = get_bytes(url, api_key)?;
-    Ok(serde_json::from_slice(&bytes).with_context(|| format!("parsing json from {}", url))?)
+    Ok(serde_json::from_slice(&bytes).with_context(|| format!("parsing json from {url}"))?)
 }
 
 /// Make a HTTP GET request and JSON-parse the result

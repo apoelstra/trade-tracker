@@ -26,9 +26,9 @@ use time::OffsetDateTime;
 pub fn parse_num(obj: &Map<String, Value>, field: &str) -> Result<u64, String> {
     Ok(obj
         .get(field)
-        .ok_or(format!("missing field {} in contract", field))?
+        .ok_or(format!("missing field {field} in contract"))?
         .as_u64()
-        .ok_or(format!("field {} in contract is not number", field))?)
+        .ok_or(format!("field {field} in contract is not number"))?)
 }
 
 pub fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>
@@ -114,7 +114,7 @@ impl TryFrom<usize> for StatusType {
             613 => Ok(StatusType::PriceThresholdExceeded),
             614 => Ok(StatusType::ContractNotActive),
             616 => Ok(StatusType::InvalidBlockSize),
-            _ => Err(format!("unknown status type {}", x)),
+            _ => Err(format!("unknown status type {x}")),
         }
     }
 }
@@ -134,7 +134,7 @@ impl TryFrom<usize> for StatusReason {
             0 => Ok(StatusReason::NoReason),
             52 => Ok(StatusReason::FullFill),
             53 => Ok(StatusReason::CancelledByExchange),
-            _ => Err(format!("unknown status reason {}", x)),
+            _ => Err(format!("unknown status reason {x}")),
         }
     }
 }

@@ -68,8 +68,7 @@ impl FromStr for TaxHistoryMode {
             "just-lot-ids" => Ok(TaxHistoryMode::JustLotIds),
             "both" => Ok(TaxHistoryMode::Both),
             x => Err(format!(
-                "Invalid tax history mode {}; allowed values: just-lx-data, just-lot-ids, both",
-                x
+                "Invalid tax history mode {x}; allowed values: just-lx-data, just-lot-ids, both",
             )),
         }
     }
@@ -174,13 +173,12 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
             if let Ok(metadata) = std::fs::metadata(&log_dir) {
                 if !metadata.is_dir() {
                     return Err(anyhow::Error::msg(format!(
-                        "Log directory {} alrready exists but is not a directory.",
-                        log_dir
+                        "Log directory {log_dir} alrready exists but is not a directory.",
                     )));
                 }
             } else {
                 std::fs::create_dir(&log_dir)
-                    .with_context(|| format!("creating log directory {}", log_dir))?;
+                    .with_context(|| format!("creating log directory {log_dir}"))?;
             }
 
             let filenames = logger::LogFilenames {
@@ -246,10 +244,10 @@ fn main() -> Result<(), anyhow::Error> {
             let csv_name = csv.to_string_lossy();
 
             let input =
-                fs::File::open(&csv).with_context(|| format!("opening price data {}", csv_name))?;
+                fs::File::open(&csv).with_context(|| format!("opening price data {csv_name}"))?;
             history
                 .read_csv(input)
-                .with_context(|| format!("decoding CSV data from {}", csv_name))?;
+                .with_context(|| format!("decoding CSV data from {csv_name}"))?;
 
             history.write_out(&data_path).with_context(|| {
                 format!(
@@ -263,7 +261,7 @@ fn main() -> Result<(), anyhow::Error> {
             let data = http::get_bytes(&url, None)?;
             history
                 .read_csv(&data[..])
-                .with_context(|| format!("decoding CSV data from {}", url))?;
+                .with_context(|| format!("decoding CSV data from {url}"))?;
 
             data_path.push("pricedata");
             history
@@ -431,8 +429,7 @@ fn main() -> Result<(), anyhow::Error> {
             let mut last_update = now;
             loop {
                 let mut sock = tungstenite::client::connect(format!(
-                    "wss://api.ledgerx.com/ws?token={}",
-                    api_key
+                    "wss://api.ledgerx.com/ws?token={api_key}",
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
                     let current_time = time::OffsetDateTime::now_utc();
@@ -492,12 +489,11 @@ fn main() -> Result<(), anyhow::Error> {
             let mut lx_price_ref = HashMap::new();
             if let Some(csv) = lx_csv {
                 let csv_name = csv.to_string_lossy();
-                let input = fs::File::open(&csv)
-                    .with_context(|| format!("opening tax data {}", csv_name))?;
+                let input =
+                    fs::File::open(&csv).with_context(|| format!("opening tax data {csv_name}"))?;
                 let bufread = io::BufReader::new(input);
                 for line in bufread.lines().skip(1) {
-                    let line =
-                        line.with_context(|| format!("parsing line from csv {}", csv_name))?;
+                    let line = line.with_context(|| format!("parsing line from csv {csv_name}"))?;
                     let data = ledgerx::csv::CsvLine::from_str(&line)
                         .map_err(|s| anyhow::Error::msg(s))?;
                     for (time, price) in data.price_references() {
@@ -541,7 +537,7 @@ fn spawn_contract_lookup_thread(
     thread::spawn(move || {
         for contract_id in rx_cid.iter() {
             let reply: ledgerx::json::BookStateMessage = http::get_json(
-                &format!("https://trade.ledgerx.com/api/book-states/{}", contract_id),
+                &format!("https://trade.ledgerx.com/api/book-states/{contract_id}"),
                 Some(&api_key),
             )
             .context("getting data from trading/contracts endpoint")

@@ -136,25 +136,10 @@ impl Label {
 
     /// Creates a tax label for a contract
     pub fn from_contract(contract: &crate::ledgerx::Contract) -> Label {
-        use crate::ledgerx::contract::Type;
-
-        let s = match contract.ty() {
-            Type::Option { opt, .. } => {
-                format!(
-                    "{} Mini {} {} {:#}",
-                    contract.underlying(),
-                    opt.expiry.lazy_format("%F"),
-                    match opt.pc {
-                        crate::option::Call => "Call",
-                        crate::option::Put => "Put",
-                    },
-                    opt.strike,
-                )
-            }
-            Type::NextDay { .. } => "BTC".into(),
-            Type::Future { .. } => unimplemented!("future tax label"),
-        };
-        Label(s)
+        let tax_asset = contract
+            .tax_asset()
+            .expect("asset is not something we know how to label for tax purposes");
+        Label(tax_asset.to_string())
     }
 }
 

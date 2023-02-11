@@ -17,6 +17,7 @@
 //! Data Structures etc for the LedgerX API
 //!
 
+use crate::units::{BudgetAsset, TaxAsset, Underlying};
 use crate::{ledgerx::json, option};
 use serde::Deserialize;
 use std::{convert::TryFrom, fmt};
@@ -70,7 +71,7 @@ pub struct Contract {
     /// Whether the contract is a put or a call
     ty: Type,
     /// Underlying physical asset
-    underlying: super::Asset,
+    underlying: Underlying,
     /// Human-readable label
     label: String,
     /// Multiplier (100 for BTC options, 10 for ETH options)
@@ -92,8 +93,39 @@ impl Contract {
     pub fn ty(&self) -> Type {
         self.ty
     }
+
+    /// If this contract represents an asset we track for tax purposes, return it
+    pub fn tax_asset(&self) -> Option<TaxAsset> {
+        match self.ty {
+            Type::Option { opt, .. } => Some(TaxAsset::Option {
+                underlying: self.underlying,
+                option: opt,
+            }),
+            Type::NextDay { .. } => match self.underlying {
+                Underlying::Btc => Some(TaxAsset::Btc),
+                Underlying::Eth => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// If this contract represents an asset we track for budgeting purposes, return it
+    pub fn budget_asset(&self) -> Option<BudgetAsset> {
+        match self.ty {
+            Type::Option { opt, .. } => Some(BudgetAsset::Option {
+                underlying: self.underlying,
+                option: opt,
+            }),
+            Type::NextDay { .. } => match self.underlying {
+                Underlying::Btc => Some(BudgetAsset::Btc),
+                Underlying::Eth => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Underlying asset type
-    pub fn underlying(&self) -> super::Asset {
+    pub fn underlying(&self) -> Underlying {
         self.underlying
     }
     /// Contract label
@@ -182,7 +214,7 @@ mod tests {
                             .unwrap(),
                     },
                 },
-                underlying: crate::ledgerx::Asset::Eth,
+                underlying: Underlying::Eth,
                 multiplier: 10,
                 label: "ETH-29DEC2023-4000-Put".into(),
                 last_log: None,
@@ -209,7 +241,7 @@ mod tests {
                             .unwrap(),
                     },
                 },
-                underlying: crate::ledgerx::Asset::Btc,
+                underlying: Underlying::Btc,
                 multiplier: 100,
                 label: "BTC-Mini-29DEC2023-25000-Call".into(),
                 last_log: None,
@@ -230,7 +262,7 @@ mod tests {
                 ty: Type::NextDay {
                     expiry: OffsetDateTime::parse("2023-02-14 21:00:00+0000", "%F %T%z").unwrap(),
                 },
-                underlying: crate::ledgerx::Asset::Btc,
+                underlying: Underlying::Btc,
                 multiplier: 100,
                 label: "BTC-Mini-14FEB2023-NextDay".into(),
                 last_log: None,
@@ -251,7 +283,7 @@ mod tests {
                 ty: Type::Future {
                     expiry: OffsetDateTime::parse("2023-03-31 21:00:00+0000", "%F %T%z").unwrap(),
                 },
-                underlying: crate::ledgerx::Asset::Btc,
+                underlying: Underlying::Btc,
                 multiplier: 100,
                 label: "BTC-Mini-31MAR2023-Future".into(),
                 last_log: None,

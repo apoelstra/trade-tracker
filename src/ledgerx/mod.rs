@@ -25,12 +25,12 @@ pub mod history;
 pub mod json;
 
 use crate::terminal::format_color;
-use crate::units::Price;
+use crate::units::{Price, Underlying};
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json;
+use std::cmp;
 use std::collections::HashMap;
-use std::{cmp, fmt};
 use time::OffsetDateTime;
 
 pub use book::BookState;
@@ -107,40 +107,6 @@ impl Interestingness {
             return false;
         }
         true
-    }
-}
-
-/// The underlying physical asset
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
-pub enum Asset {
-    /// Bitcoin
-    #[serde(rename = "CBTC")]
-    Btc,
-    /// Ethereum
-    #[serde(rename = "ETH")]
-    Eth,
-    /// US Dollars
-    #[serde(rename = "USD")]
-    Usd,
-}
-
-impl Asset {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Asset::Btc => "BTC",
-            Asset::Eth => "ETH",
-            Asset::Usd => "USD",
-        }
-    }
-}
-
-impl fmt::Display for Asset {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Asset::Btc => f.write_str("BTC"),
-            Asset::Eth => f.write_str("ETH"),
-            Asset::Usd => f.write_str("USD"),
-        }
     }
 }
 
@@ -241,7 +207,7 @@ impl LedgerX {
         let (btc_price, now) = self.current_price();
         if let Some(&mut (ref mut c, ref mut book)) = self.contracts.get_mut(&cid) {
             // Only log BTC contracts
-            if c.underlying() != Asset::Btc {
+            if c.underlying() != Underlying::Btc {
                 return;
             }
             if let Some(last_log) = c.last_log {
@@ -352,7 +318,7 @@ impl LedgerX {
                 return UpdateResponse::UnknownContract(order);
             }
         };
-        if contract.underlying() != Asset::Btc {
+        if contract.underlying() != Underlying::Btc {
             debug!(
                 "Ignoring order mid {} for non-BTC contract {}",
                 order.manifest_id, order.contract_id,
@@ -375,7 +341,7 @@ impl LedgerX {
         let is_ba = old_ba != new_ba;
         // For day-ahead swaps update the current BTC price reference
         if let contract::Type::NextDay { .. } = contract.ty() {
-            if contract.underlying() == Asset::Btc && (is_bb || is_ba) {
+            if contract.underlying() == Underlying::Btc && (is_bb || is_ba) {
                 if is_bb && new_bb.0 > Price::ZERO {
                     self.last_btc_bid = new_bb.0;
                 }

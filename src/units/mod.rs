@@ -19,8 +19,12 @@
 //! smell and should be replaced by one of these.
 //!
 
+mod asset;
 mod price;
 
+pub use asset::{
+    deserialize_name_deposit_asset, Asset, BudgetAsset, DepositAsset, TaxAsset, Underlying,
+};
 pub use price::{
     deserialize_cents, deserialize_cents_opt, deserialize_dollars, serialize_dollars, Price,
 };

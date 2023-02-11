@@ -32,7 +32,7 @@ pub mod units;
 
 use crate::ledgerx::LotId;
 pub use crate::timemap::TimeMap;
-use crate::units::Price;
+use crate::units::{Price, Underlying};
 use anyhow::Context;
 use clap::Clap;
 use log::{info, warn};
@@ -413,7 +413,7 @@ fn main() -> Result<(), anyhow::Error> {
             for contr in all_contracts {
                 // For expired or non-BTC options, fetch the full book. Otherwise
                 // just record the contract's existence.
-                if contr.active() && contr.underlying() == ledgerx::Asset::Btc {
+                if contr.active() && contr.underlying() == Underlying::Btc {
                     cid_tx
                         .send(contr.id())
                         .expect("book-states endpoint thread has not panicked");

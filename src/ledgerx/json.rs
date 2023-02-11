@@ -17,7 +17,7 @@
 //! Some utility methods for parsing json from the LX API
 //!
 
-use crate::units::Price;
+use crate::units::{Price, Underlying};
 use serde::{de, Deserialize, Deserializer};
 use std::convert::TryFrom;
 use time::OffsetDateTime;
@@ -135,8 +135,7 @@ impl TryFrom<usize> for StatusReason {
 pub struct Contract {
     pub id: usize,
     pub active: bool,
-    pub collateral_asset: super::Asset,
-    pub underlying_asset: super::Asset,
+    pub underlying_asset: Underlying,
     #[serde(default, deserialize_with = "deserialize_datetime")]
     pub date_exercise: Option<OffsetDateTime>,
     #[serde(default, deserialize_with = "deserialize_datetime")]

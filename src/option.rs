@@ -35,6 +35,14 @@ pub enum PutCall {
 pub use PutCall::{Call, Put};
 
 impl PutCall {
+    /// Gives a string representation as "Put" or "Call"
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Call => "Call",
+            Put => "Put",
+        }
+    }
+
     fn to_char(self) -> char {
         match self {
             Call => 'C',

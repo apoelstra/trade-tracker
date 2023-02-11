@@ -18,7 +18,7 @@
 //!
 
 use crate::csv::{self, CsvPrinter};
-use crate::units::Price;
+use crate::units::{BudgetAsset, DepositAsset, Price, Underlying};
 use anyhow::Context;
 use log::{debug, info, warn};
 use rust_decimal::Decimal;
@@ -48,21 +48,17 @@ struct Meta {
 }
 
 #[derive(Deserialize, Debug)]
-struct Asset {
-    name: super::Asset,
-}
-
-#[derive(Deserialize, Debug)]
 struct DepositAddress {
     address: String,
-    asset: super::Asset,
+    asset: DepositAsset,
 }
 
 #[derive(Deserialize, Debug)]
 struct Deposit {
     #[serde(with = "bitcoin::util::amount::serde::as_sat")]
     amount: bitcoin::Amount,
-    asset: Asset,
+    #[serde(deserialize_with = "crate::units::deserialize_name_deposit_asset")]
+    asset: DepositAsset,
     deposit_address: DepositAddress,
     #[serde(deserialize_with = "deserialize_datetime")]
     created_at: OffsetDateTime,
@@ -87,7 +83,7 @@ impl Deposits {
 struct Withdrawal {
     amount: i64,
     // Note: withdrawals don't have the extra "name" indirection for some reason
-    asset: super::Asset,
+    asset: DepositAsset,
     #[serde(deserialize_with = "deserialize_datetime")]
     created_at: OffsetDateTime,
 }
@@ -195,11 +191,11 @@ enum Event {
     Deposit {
         amount: bitcoin::Amount,
         address: bitcoin::Address,
-        asset: super::Asset,
+        asset: DepositAsset,
     },
     Withdrawal {
         amount: Decimal,
-        asset: super::Asset,
+        asset: DepositAsset,
     },
     Trade {
         contract: super::Contract,
@@ -287,20 +283,20 @@ impl History {
     pub fn import_deposits(&mut self, deposits: &Deposits) {
         for dep in &deposits.data {
             assert_eq!(
-                dep.asset.name, dep.deposit_address.asset,
+                dep.asset, dep.deposit_address.asset,
                 "lol lx fucked up here pretty good",
             );
             self.events.insert(
                 dep.created_at,
                 Event::Deposit {
-                    amount: match dep.asset.name {
-                        super::Asset::Btc => dep.amount,
-                        super::Asset::Usd => unimplemented!("USD deposits"),
-                        super::Asset::Eth => unimplemented!("ethereum deposits"),
+                    amount: match dep.asset {
+                        DepositAsset::Btc => dep.amount,
+                        DepositAsset::Usd => unimplemented!("USD deposits"),
+                        DepositAsset::Eth => unimplemented!("ethereum deposits"),
                     },
                     address: bitcoin::Address::from_str(&dep.deposit_address.address)
                         .expect("bitcoin address from LX was not a valid BTC address"),
-                    asset: dep.asset.name,
+                    asset: dep.asset,
                 },
             );
         }
@@ -313,9 +309,9 @@ impl History {
                 withd.created_at,
                 Event::Withdrawal {
                     amount: match withd.asset {
-                        super::Asset::Btc => Decimal::new(withd.amount, 8),
-                        super::Asset::Usd => Decimal::new(withd.amount, 2),
-                        super::Asset::Eth => unimplemented!("ethereum withdrawals"),
+                        DepositAsset::Btc => Decimal::new(withd.amount, 8),
+                        DepositAsset::Usd => Decimal::new(withd.amount, 2),
+                        DepositAsset::Eth => unimplemented!("ethereum withdrawals"),
                     },
                     asset: withd.asset,
                 },
@@ -412,7 +408,7 @@ impl History {
                     Some((
                         "Deposit",
                         date_fmt,
-                        (None, asset.as_str(), None),
+                        BudgetAsset::from(*asset),
                         (None, Decimal::new(amount.to_sat() as i64, 8)),
                         (btc_price, None, None),
                     )),
@@ -422,7 +418,7 @@ impl History {
                     Some((
                         "Withdraw",
                         date_fmt,
-                        (None, asset.as_str(), None),
+                        BudgetAsset::from(*asset),
                         (None, *amount),
                         (btc_price, None, None),
                     )),
@@ -438,7 +434,7 @@ impl History {
                         Some((
                             "Trade",
                             date_fmt,
-                            opt.csv_tuple(),
+                            contract.budget_asset().unwrap(),
                             (Some(*price), Decimal::from(*size)),
                             (
                                 btc_price,
@@ -452,7 +448,7 @@ impl History {
                         Some((
                             "Trade",
                             date_fmt,
-                            (None, contract.underlying().as_str(), None),
+                            contract.budget_asset().unwrap(),
                             (Some(*price), Decimal::from(*size)),
                             (btc_price, None, None),
                         )),
@@ -467,11 +463,11 @@ impl History {
                     assigned_size,
                     expired_size,
                 } => match contract.ty() {
-                    super::contract::Type::Option { opt, .. } => {
+                    super::contract::Type::Option { .. } => {
                         let csv = (
                             "X",
                             date_fmt,
-                            opt.csv_tuple(),
+                            contract.budget_asset().unwrap(),
                             (None, Decimal::ZERO),
                             (btc_price, None, None),
                         );
@@ -559,9 +555,9 @@ impl History {
                     let btc_price = btc_price.btc_price;
                     // sanity check asset
                     match *asset {
-                        super::Asset::Btc => {}        // ok
-                        super::Asset::Usd => continue, // USD deposits are not tax-relevant
-                        super::Asset::Eth => unimplemented!("we do not support eth deposits"),
+                        DepositAsset::Btc => {}        // ok
+                        DepositAsset::Usd => continue, // USD deposits are not tax-relevant
+                        DepositAsset::Eth => unimplemented!("we do not support eth deposits"),
                     }
                     debug!("[deposit] \"BTC\" {} @ {}", btc_price, amount);
 
@@ -755,7 +751,7 @@ impl History {
                             tracker.push_lot(&label, open, date);
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
-                            assert_eq!(contract.underlying(), super::Asset::Btc);
+                            assert_eq!(contract.underlying(), Underlying::Btc);
                             let open = tax::Lot::from_trade_btc(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.

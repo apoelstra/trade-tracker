@@ -89,6 +89,20 @@ impl PrintCsv for Arr {
     }
 }
 
+impl PrintCsv for crate::units::BudgetAsset {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            crate::units::BudgetAsset::Btc => f.write_str(",BTC,"),
+            crate::units::BudgetAsset::Eth => f.write_str(",ETH,"),
+            crate::units::BudgetAsset::Usd => f.write_str(",USD,"),
+            crate::units::BudgetAsset::Option { underlying, option } => {
+                DateTime(option.expiry).print(f)?;
+                write!(f, ",{},{}", underlying, option.strike)
+            }
+        }
+    }
+}
+
 macro_rules! impl_display {
     ($ty:ty) => {
         impl PrintCsv for $ty {
@@ -104,7 +118,6 @@ impl_display!(i32);
 impl_display!(i64);
 impl_display!(u32);
 impl_display!(u64);
-impl_display!(crate::ledgerx::Asset);
 impl_display!(crate::units::Price);
 impl_display!(rust_decimal::Decimal);
 

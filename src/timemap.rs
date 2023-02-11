@@ -67,6 +67,28 @@ impl<V> TimeMap<V> {
         first_key.map(|key| (key.0, value.unwrap()))
     }
 
+    /// Pops the maximal element from the stack, according to some maximization function
+    ///
+    /// Unlike `pop_first` this function is O(n), and if you are using it heavily,
+    /// it may make sense to change data structures.
+    pub fn pop_max<F, T>(&mut self, mut maxfn: F) -> Option<(OffsetDateTime, V)>
+    where
+        F: FnMut(&V) -> T,
+        T: Ord,
+    {
+        let mut max_key_val = None;
+        for (k, v) in &self.map {
+            if let Some((ref mut key, ref mut max)) = max_key_val {
+                let new_max = maxfn(v);
+                if new_max > *max {
+                    *key = *k;
+                    *max = new_max;
+                }
+            }
+        }
+        max_key_val.and_then(|(key, _)| self.map.remove(&key).map(|v| (key.0, v)))
+    }
+
     /// Inserts a new element. Allows duplicates.
     ///
     /// There is no way to replace or delete an element once it is added to the

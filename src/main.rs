@@ -27,7 +27,6 @@ pub mod option;
 pub mod price;
 pub mod terminal;
 pub mod timemap;
-pub mod trade;
 pub mod transaction;
 pub mod units;
 

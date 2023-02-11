@@ -161,7 +161,7 @@ enum Command {
 /// should be none, except this one, because we should be using the log macros
 /// instead.)
 fn newline() {
-    println!("");
+    println!();
 }
 
 fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<(), anyhow::Error> {
@@ -494,8 +494,8 @@ fn main() -> Result<(), anyhow::Error> {
                 let bufread = io::BufReader::new(input);
                 for line in bufread.lines().skip(1) {
                     let line = line.with_context(|| format!("parsing line from csv {csv_name}"))?;
-                    let data = ledgerx::csv::CsvLine::from_str(&line)
-                        .map_err(|s| anyhow::Error::msg(s))?;
+                    let data =
+                        ledgerx::csv::CsvLine::from_str(&line).map_err(anyhow::Error::msg)?;
                     for (time, price) in data.price_references() {
                         info!(
                             "At {} inferred price {} (reference price {})",

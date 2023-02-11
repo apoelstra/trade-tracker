@@ -103,9 +103,9 @@ impl log::Log for Logger {
         if self.enabled(record.metadata()) {
             if record.target() == "lx_http_get" {
                 // HTTP messages get their own log, but we do add timestamps etc to them
-                let _ = write!(
+                let _ = writeln!(
                     self.http_get_log.lock().unwrap(),
-                    "[{}] [{}] {}\n",
+                    "[{}] [{}] {}",
                     OffsetDateTime::now_utc().lazy_format(time::Format::Rfc3339),
                     record.level(),
                     record.args()
@@ -113,7 +113,7 @@ impl log::Log for Logger {
             } else if record.target() == "lx_datafeed" {
                 // Messages targeted for the datafeed go to the datafeed log with no
                 // additional processing (no timestamps etc)
-                let _ = write!(self.datafeed_log.lock().unwrap(), "{}\n", record.args());
+                let _ = writeln!(self.datafeed_log.lock().unwrap(), "{}", record.args());
             } else if record.target() == "lx_btcprice" {
                 // TODO maybe we should log the price somewhere as a personal price reference?
                 *self.price.lock().unwrap() = format!("{}", record.args());
@@ -124,13 +124,13 @@ impl log::Log for Logger {
                 if record.level() <= log::Level::Info {
                     let mut last_time_lock = self.last_stdout_time.lock().unwrap();
                     if now - *last_time_lock > time::Duration::minutes(10) {
-                        println!("");
+                        println!();
                     }
                     if now - *last_time_lock > time::Duration::seconds(30) {
-                        println!("");
+                        println!();
                     }
                     if now - *last_time_lock > time::Duration::seconds(1) {
-                        println!("");
+                        println!();
                         println!(
                             "{}",
                             crate::terminal::format_color(
@@ -149,9 +149,9 @@ impl log::Log for Logger {
                     println!("{}", record.args());
                 }
                 // Regardless, log to debug log with more precise timestamp and log level
-                let _ = write!(
+                let _ = writeln!(
                     self.debug_log.lock().unwrap(),
-                    "{} [{}] {}\n",
+                    "{} [{}] {}",
                     now.lazy_format("%F %T%N%z"),
                     record.level(),
                     record.args(),

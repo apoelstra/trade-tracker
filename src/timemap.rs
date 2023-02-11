@@ -62,7 +62,7 @@ impl<V> TimeMap<V> {
 
     /// Pops the first element from the map, if one exists
     pub fn pop_first(&mut self) -> Option<(OffsetDateTime, V)> {
-        let first_key = self.map.keys().next().map(|x| *x);
+        let first_key = self.map.keys().next().copied();
         let value = first_key.and_then(|key| self.map.remove(&key));
         first_key.map(|key| (key.0, value.unwrap()))
     }
@@ -116,13 +116,6 @@ impl<V> TimeMap<V> {
     pub fn iter(&self) -> Iter<V> {
         Iter {
             iter: self.map.iter(),
-        }
-    }
-
-    /// Constructs an owned iterator over the (time, value) pairs
-    pub fn into_iter(self) -> IntoIter<V> {
-        IntoIter {
-            iter: self.map.into_iter(),
         }
     }
 
@@ -183,6 +176,8 @@ impl<V> iter::IntoIterator for TimeMap<V> {
     type Item = (OffsetDateTime, V);
     type IntoIter = IntoIter<V>;
     fn into_iter(self) -> Self::IntoIter {
-        self.into_iter()
+        IntoIter {
+            iter: self.map.into_iter(),
+        }
     }
 }

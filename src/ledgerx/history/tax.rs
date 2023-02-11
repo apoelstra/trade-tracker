@@ -649,7 +649,7 @@ impl Position {
         }
 
         // If we made it here we consumed the whole initial lot and only closed things.
-        return (ret, None);
+        (ret, None)
     }
 }
 

@@ -107,6 +107,11 @@ impl Historic {
         self.data.len()
     }
 
+    /// Whether the price tracker is completely empty
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
     /// Reads a bunch of price records from CSV data, keeping only the most
     /// recent entry as of each half-hour
     pub fn read_csv<R: io::Read>(&mut self, data: R) -> Result<(), anyhow::Error> {

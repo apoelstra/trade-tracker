@@ -65,6 +65,6 @@ pub fn format_redgreen<D: fmt::Display>(disp: D, val: f64, red: f64, green: f64)
     if percent_red > 1.0 {
         percent_red = 1.0;
     }
-    let rgb = hsv_to_rgb(0 + (percent_red * 120.0) as usize, 1.0, 0.6);
+    let rgb = hsv_to_rgb((percent_red * 120.0) as usize, 1.0, 0.6);
     format_color(disp, rgb.0, rgb.1, rgb.2)
 }

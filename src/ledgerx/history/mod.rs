@@ -78,9 +78,7 @@ pub struct Deposits {
 impl Deposits {
     /// Returns the next URL, if any, to fetch
     pub fn next_url(&self) -> Option<String> {
-        self.meta
-            .as_ref()
-            .and_then(|meta| meta.next.as_ref().map(|s| s.clone()))
+        self.meta.as_ref().and_then(|meta| meta.next.clone())
     }
 }
 
@@ -104,9 +102,7 @@ pub struct Withdrawals {
 impl Withdrawals {
     /// Returns the next URL, if any, to fetch
     pub fn next_url(&self) -> Option<String> {
-        self.meta
-            .as_ref()
-            .and_then(|meta| meta.next.as_ref().map(|s| s.clone()))
+        self.meta.as_ref().and_then(|meta| meta.next.clone())
     }
 }
 
@@ -157,9 +153,7 @@ impl Trades {
 
     /// Returns the next URL, if any, to fetch
     pub fn next_url(&self) -> Option<String> {
-        self.meta
-            .as_ref()
-            .and_then(|meta| meta.next.as_ref().map(|s| s.clone()))
+        self.meta.as_ref().and_then(|meta| meta.next.clone())
     }
 }
 
@@ -189,9 +183,7 @@ impl Positions {
 
     /// Returns the next URL, if any, to fetch
     pub fn next_url(&self) -> Option<String> {
-        self.meta
-            .as_ref()
-            .and_then(|meta| meta.next.as_ref().map(|s| s.clone()))
+        self.meta.as_ref().and_then(|meta| meta.next.clone())
     }
 }
 

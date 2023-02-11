@@ -239,8 +239,7 @@ impl LedgerX {
     /// Log a single interesting contract
     fn log_interesting_contract(&mut self, cid: ContractId) {
         let (btc_price, now) = self.current_price();
-        if let Some(&mut (ref mut c, ref mut book)) = self.contracts.get_mut(&ContractId::from(cid))
-        {
+        if let Some(&mut (ref mut c, ref mut book)) = self.contracts.get_mut(&cid) {
             // Only log BTC contracts
             if c.underlying() != Asset::Btc {
                 return;

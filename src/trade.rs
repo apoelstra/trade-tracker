@@ -44,9 +44,9 @@ enum Asset {
         expiry: time::OffsetDateTime,
     },
     /// Canadian Dollars
-    CAD,
+    Cad,
     /// US Dollars
-    USD,
+    Usd,
     /// Combination of multiple assets
     Synthetic { underlying: Vec<Asset> },
 }

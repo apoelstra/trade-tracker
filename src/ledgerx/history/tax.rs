@@ -78,18 +78,18 @@ impl LotId {
     /// Constructor for the next LX-generated BTC lot ID
     fn next_btc() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-btc-{:03}", idx))
+        LotId(format!("lx-btc-{:04}", idx))
     }
 
     /// Constructor for the next LX-generated BTC option ID
     fn next_opt() -> LotId {
         let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-opt-{:03}", idx))
+        LotId(format!("lx-opt-{:04}", idx))
     }
 
     /// Constructor for a lot ID that comes from a UTXO
     fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
-        LotId(format!("{:.6}-{:03}", outpoint.txid, outpoint.vout))
+        LotId(format!("{:.8}-{:02}", outpoint.txid, outpoint.vout))
     }
 }
 
@@ -283,6 +283,11 @@ impl Lot<LotId> {
             price: price,
             date: TaxDate(date),
         }
+    }
+
+    /// Reduces a lot by a transaction fee amount
+    pub fn dock_fee(&mut self, n_sat: u64) {
+        self.quantity -= n_sat;
     }
 }
 
@@ -581,6 +586,14 @@ impl Position {
         // Otherwise, we must close the position
         let mut ret = vec![];
         while open.quantity > 0 {
+            /*
+            let to_match = if is_1256 {
+                self.fifo.pop_first()
+            } else {
+                self.fifo.pop_first()
+                //self.fifo.pop_max(|lot| lot.price)
+            };
+            */
             let (front_date, mut front) = match self.fifo.pop_first() {
                 Some(kv) => kv,
                 None => {
@@ -591,11 +604,17 @@ impl Position {
                     // If we've closed out everything and still have an open, then
                     // we're opening a new position in the opposite direction.
                     let lot = self.insert_lot(sort_date, open);
-                    return (vec![], Some(lot));
+                    return (ret, Some(lot));
                 }
             };
             assert_ne!(open.direction, front.direction);
-            debug!("closing lot {} with potential-lot {}", front, open);
+            debug!(
+                "closing lot {} (position {:?}, qty {}) with potential-lot {}",
+                front,
+                self.direction(),
+                self.total_size(),
+                open
+            );
 
             // Construct a close object with everything known but the quantity
             let mut close = Close {
@@ -628,6 +647,7 @@ impl Position {
                 close.quantity = front.quantity;
                 open.quantity -= front.quantity;
             }
+            debug!("push_event: pushing close {} onto ret", close);
             ret.push(close);
         }
 
@@ -683,6 +703,7 @@ impl PositionTracker {
         let n_ret = closes.len();
         // ...then log it
         for close in closes {
+            debug!("push_lot: logging close {} at date {}", close, date.0);
             self.events.push(Event {
                 date: date,
                 label: label.clone(),
@@ -690,6 +711,7 @@ impl PositionTracker {
             });
         }
         if let Some(open) = open {
+            debug!("push_lot: logging open {} at date {}", open, date.0);
             self.events.push(Event {
                 date: date,
                 label: label.clone(),

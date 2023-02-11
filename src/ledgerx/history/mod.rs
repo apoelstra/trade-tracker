@@ -598,7 +598,7 @@ impl History {
                                         price.btc_price,
                                         price.timestamp,
                                     );
-                                    let open = tax::Lot::from_deposit_utxo(
+                                    let mut open = tax::Lot::from_deposit_utxo(
                                         op,
                                         price.btc_price,
                                         txout.value,
@@ -617,19 +617,22 @@ impl History {
                                         debug!("Using date {} from deposit date (no entry in db) for lot {}", date, open.id());
                                         date
                                     };
-                                    assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 0);
                                     // Take fees away from the last input(s). We consider this a
                                     // partial loss of the lot corresponding to the input
                                     if txout.value > amount_sat {
+                                        open.dock_fee(txout.value - amount_sat);
+                                        /*
                                         let open = tax::Lot::from_tx_fee(
                                             txout.value - amount_sat,
                                             date, // date is now, not txout_date
                                         );
                                         assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 1);
+                                        */
                                         amount_sat = 0;
                                     } else {
                                         amount_sat -= txout.value;
                                     }
+                                    assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 0);
                                 } else {
                                     warn!(
                                         "Please import txdata for {}. For now assuming CB of {}",

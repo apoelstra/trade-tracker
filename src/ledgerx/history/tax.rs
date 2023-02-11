@@ -20,7 +20,7 @@
 
 use crate::csv;
 use log::debug;
-use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::prelude::{RoundingStrategy, ToPrimitive};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -444,8 +444,8 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
         };
         let mut proceeds = real_amount * self.close.close_price;
         let mut basis = real_amount * self.close.open_price;
-        proceeds.rescale(2);
-        basis.rescale(2);
+        proceeds = proceeds.round_dp_with_strategy(2, RoundingStrategy::AwayFromZero);
+        basis = basis.round_dp_with_strategy(2, RoundingStrategy::AwayFromZero);
 
         let mut close_date = self.close.close_date;
         let mut open_date = self.close.open_date;
@@ -586,15 +586,12 @@ impl Position {
         // Otherwise, we must close the position
         let mut ret = vec![];
         while open.quantity > 0 {
-            /*
             let to_match = if is_1256 {
                 self.fifo.pop_first()
             } else {
-                self.fifo.pop_first()
-                //self.fifo.pop_max(|lot| lot.price)
+                self.fifo.pop_max(|lot| lot.price)
             };
-            */
-            let (front_date, mut front) = match self.fifo.pop_first() {
+            let (front_date, mut front) = match to_match {
                 Some(kv) => kv,
                 None => {
                     debug!(

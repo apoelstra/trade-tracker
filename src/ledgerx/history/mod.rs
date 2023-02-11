@@ -543,6 +543,7 @@ impl History {
         price_history: &crate::price::Historic,
         transaction_db: &crate::transaction::Database,
         lot_db: Option<&crate::lot::Database>,
+        lx_price_ref: &HashMap<OffsetDateTime, Decimal>,
     ) {
         let btc_label = tax::Label::btc();
         let mut tracker = tax::PositionTracker::new();
@@ -621,6 +622,7 @@ impl History {
                                     // partial loss of the lot corresponding to the input
                                     if txout.value > amount_sat {
                                         open.dock_fee(txout.value - amount_sat);
+                                        // FiXME record these explicitly
                                         /*
                                         let open = tax::Lot::from_tx_fee(
                                             txout.value - amount_sat,
@@ -731,21 +733,34 @@ impl History {
 
                         // An assignment is also a trade
                         if *assigned_size != 0 {
-                            let btc_price = price_history.price_at(date);
+                            // see "seriously WTF" doccomment
+                            let expiry =
+                                opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
+
+                            let btc_price = price_history.price_at(expiry);
                             debug!(
                                 "Looked up BTC price at {}, got {} ({})",
-                                date, btc_price.btc_price, btc_price.timestamp,
+                                expiry, btc_price.btc_price, btc_price.timestamp,
                             );
-                            let btc_price = btc_price.btc_price;
+                            let btc_price = if let Some(price) = lx_price_ref.get(&expiry) {
+                                debug!(
+                                    "Have LX price reference; overriding price {} with {}",
+                                    btc_price.btc_price, price
+                                );
+                                *price
+                            } else {
+                                warn!(
+                                    "Do not have LX price reference for {}; using  price {}",
+                                    expiry, btc_price.btc_price
+                                );
+                                btc_price.btc_price
+                            };
 
                             let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
                             tracker.push_lot(&label, open, date);
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), super::Asset::Btc);
-                            // see "seriously WTF" comment
-                            let expiry =
-                                opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
                             let open = tax::Lot::from_trade_btc(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.

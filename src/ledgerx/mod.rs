@@ -19,6 +19,7 @@
 
 pub mod book;
 pub mod contract;
+pub mod csv;
 pub mod datafeed;
 pub mod history;
 pub mod json;

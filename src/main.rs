@@ -37,8 +37,10 @@ use clap::Clap;
 use log::{info, warn};
 use rust_decimal::Decimal;
 use std::{
+    collections::HashMap,
     convert::TryInto,
     fs,
+    io::{self, BufRead},
     path::PathBuf,
     str::FromStr,
     sync::mpsc::{channel, Receiver, Sender},
@@ -149,6 +151,8 @@ enum Command {
         year: i32,
         #[clap(name = "mode", default_value = "both")]
         mode: TaxHistoryMode,
+        #[clap(name = "lx_csv_file", parse(from_os_str))]
+        lx_csv: Option<PathBuf>,
     },
 }
 
@@ -483,7 +487,31 @@ fn main() -> Result<(), anyhow::Error> {
             api_key,
             year,
             mode,
+            lx_csv,
         } => {
+            let mut lx_price_ref = HashMap::new();
+            if let Some(csv) = lx_csv {
+                let csv_name = csv.to_string_lossy();
+                let input = fs::File::open(&csv)
+                    .with_context(|| format!("opening tax data {}", csv_name))?;
+                let bufread = io::BufReader::new(input);
+                for line in bufread.lines().skip(1) {
+                    let line =
+                        line.with_context(|| format!("parsing line from csv {}", csv_name))?;
+                    let data = ledgerx::csv::CsvLine::from_str(&line)
+                        .map_err(|s| anyhow::Error::msg(s))?;
+                    for (time, price) in data.price_references() {
+                        info!(
+                            "At {} inferred price {} (reference price {})",
+                            time,
+                            price,
+                            history.price_at(time)
+                        );
+                        lx_price_ref.insert(time, price);
+                    }
+                }
+            }
+
             data_path.push("transactions.json");
             let db = transaction::Database::load(&data_path).context(
                 "loading transaction database -- create one with the record-tx command. \
@@ -495,7 +523,7 @@ fn main() -> Result<(), anyhow::Error> {
             let lot_db = lot::Database::load(&data_path).ok();
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
-            hist.print_tax_csv(year, mode, &history, &db, lot_db.as_ref());
+            hist.print_tax_csv(year, mode, &history, &db, lot_db.as_ref(), &lx_price_ref);
         }
     }
 

@@ -280,7 +280,7 @@ impl Lot<LotId> {
             close_ty: CloseType::TxFee, // lol a deposit better not close a position..
             direction: Direction::Long,
             quantity: size_sat,
-            price: price,
+            price,
             date: TaxDate(date),
         }
     }
@@ -702,7 +702,7 @@ impl PositionTracker {
         for close in closes {
             debug!("push_lot: logging close {} at date {}", close, date.0);
             self.events.push(Event {
-                date: date,
+                date,
                 label: label.clone(),
                 open_close: OpenClose::Close(close),
             });
@@ -710,7 +710,7 @@ impl PositionTracker {
         if let Some(open) = open {
             debug!("push_lot: logging open {} at date {}", open, date.0);
             self.events.push(Event {
-                date: date,
+                date,
                 label: label.clone(),
                 open_close: OpenClose::Open(open),
             });

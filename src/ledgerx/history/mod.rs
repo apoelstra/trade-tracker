@@ -578,7 +578,7 @@ impl History {
                     {
                         deposit_outpoint = bitcoin::OutPoint {
                             txid: tx.txid(),
-                            vout: vout,
+                            vout,
                         };
                         if tx.output.len() == 1 {
                             debug!(

@@ -52,7 +52,7 @@ pub fn get_json<D: serde::de::DeserializeOwned>(
     api_key: Option<&str>,
 ) -> Result<D, anyhow::Error> {
     let bytes = get_bytes(url, api_key)?;
-    Ok(serde_json::from_slice(&bytes).with_context(|| format!("parsing json from {url}"))?)
+    serde_json::from_slice(&bytes).with_context(|| format!("parsing json from {url}"))
 }
 
 /// Make a HTTP GET request and JSON-parse the result

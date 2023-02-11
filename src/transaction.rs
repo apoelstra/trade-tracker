@@ -41,8 +41,7 @@ impl Database {
         let fh = fs::File::open(filepath.as_ref())
             .with_context(|| format!("opening tx database {filename}"))?;
         let bf = io::BufReader::new(fh);
-        Ok(serde_json::from_reader(bf)
-            .with_context(|| format!("parsing tx database {filename}"))?)
+        serde_json::from_reader(bf).with_context(|| format!("parsing tx database {filename}"))
     }
 
     /// Saves out the database to a file
@@ -51,8 +50,7 @@ impl Database {
         let fh = fs::File::create(filepath.as_ref())
             .with_context(|| format!("creating tx database {filename}"))?;
         let bf = io::BufWriter::new(fh);
-        Ok(serde_json::to_writer(bf, self)
-            .with_context(|| format!("parsing tx database {filename}"))?)
+        serde_json::to_writer(bf, self).with_context(|| format!("parsing tx database {filename}"))
     }
 
     /// Adds a transaction to the map

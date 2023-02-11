@@ -24,11 +24,10 @@ use std::convert::TryFrom;
 use time::OffsetDateTime;
 
 pub fn parse_num(obj: &Map<String, Value>, field: &str) -> Result<u64, String> {
-    Ok(obj
-        .get(field)
+    obj.get(field)
         .ok_or(format!("missing field {field} in contract"))?
         .as_u64()
-        .ok_or(format!("field {field} in contract is not number"))?)
+        .ok_or(format!("field {field} in contract is not number"))
 }
 
 pub fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>

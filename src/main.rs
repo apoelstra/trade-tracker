@@ -310,7 +310,7 @@ fn main() -> Result<(), anyhow::Error> {
             info!("Success.");
         }
         Command::RecordTx { rawtx, timestamp } => {
-            let bytes: Vec<u8> = hex::decode(&rawtx).context("decoding rawtx as hex")?;
+            let bytes: Vec<u8> = hex::decode(rawtx).context("decoding rawtx as hex")?;
             let tx: bitcoin::Transaction =
                 bitcoin::consensus::deserialize(&bytes).context("decoding rawtx as transaction")?;
 

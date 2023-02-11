@@ -164,7 +164,7 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
     struct Response<U> {
         data: Vec<U>,
     }
-    let json: Response<T> = serde_json::from_slice(&data)?;
+    let json: Response<T> = serde_json::from_slice(data)?;
     Ok(json.data)
 }
 

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fmt, fs,
     io::{self, BufRead},
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr,
 };
 
@@ -52,11 +52,11 @@ impl BitcoinPrice {
         let mut data = data.split(',');
 
         let date = match data.next() {
-            Some(date) => time::OffsetDateTime::from_unix_timestamp(i64::from_str(&date)?),
+            Some(date) => time::OffsetDateTime::from_unix_timestamp(i64::from_str(date)?),
             None => return Err(anyhow::Error::msg("CSV line had no timestamp")),
         };
         let price = match data.next() {
-            Some(price) => rust_decimal::Decimal::from_str(&price)?,
+            Some(price) => rust_decimal::Decimal::from_str(price)?,
             None => return Err(anyhow::Error::msg("CSV line had no price")),
         };
         // These checks aren't really necessary but are useful as sanity checks
@@ -174,8 +174,8 @@ impl Historic {
     }
 
     /// Writes out all price records
-    pub fn write_out(&self, datadir: &PathBuf) -> Result<(), anyhow::Error> {
-        let mut datadir = datadir.clone();
+    pub fn write_out(&self, datadir: &Path) -> Result<(), anyhow::Error> {
+        let mut datadir = datadir.to_path_buf();
         let mut last_year_mo = 0;
         let mut mo_entries = vec![];
         fs::create_dir_all(&datadir).context("creating pricedata directory")?;

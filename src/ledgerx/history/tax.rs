@@ -731,7 +731,7 @@ impl PositionTracker {
             if x.date != y.date {
                 return cmp::Ordering::Equal;
             }
-            if let (&C(ref cx), &C(ref cy)) = (&x.open_close, &y.open_close) {
+            if let (C(cx), C(cy)) = (&x.open_close, &y.open_close) {
                 cx.open_date.0.cmp(&cy.open_date.0)
             } else {
                 cmp::Ordering::Equal

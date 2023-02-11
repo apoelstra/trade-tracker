@@ -37,7 +37,7 @@ where
     let s: Option<&str> = Deserialize::deserialize(deser)?;
     match s {
         Some(s) => Ok(Some(OffsetDateTime::parse(s, "%F %T%z").map_err(|_| {
-            de::Error::invalid_value(de::Unexpected::Str(&s), &"a datetime in %F %T%z format")
+            de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in %F %T%z format")
         })?)),
         None => Ok(None),
     }

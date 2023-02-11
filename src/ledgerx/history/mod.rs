@@ -37,7 +37,7 @@ where
 {
     let s: &str = Deserialize::deserialize(deser)?;
     OffsetDateTime::parse(s, time::Format::Rfc3339).map_err(|_| {
-        de::Error::invalid_value(de::Unexpected::Str(&s), &"a datetime in RFC 3339 format")
+        de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in RFC 3339 format")
     })
 }
 
@@ -606,7 +606,7 @@ impl History {
                                         txout_date,
                                     );
                                     let lot_date = if let Some(lot_date) =
-                                        lot_db.and_then(|db| db.find_lot(&open.id()))
+                                        lot_db.and_then(|db| db.find_lot(open.id()))
                                     {
                                         debug!(
                                             "Using date {} from database for lot {}",

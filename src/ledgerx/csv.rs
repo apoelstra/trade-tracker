@@ -25,6 +25,8 @@
 //! assigned.
 //!
 
+use crate::units::Price;
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use time::{time, OffsetDateTime};
@@ -32,8 +34,8 @@ use time::{time, OffsetDateTime};
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum CsvType {
     BtcTrade,
-    CallExercise { strike: Decimal },
-    PutExercise { strike: Decimal },
+    CallExercise { strike: Price },
+    PutExercise { strike: Price },
     Other,
 }
 
@@ -44,13 +46,13 @@ pub struct CsvLine {
     quantity: Decimal,
     date_1: OffsetDateTime,
     date_2: OffsetDateTime,
-    basis_1: Decimal,
-    basis_2: Decimal,
+    basis_1: Price,
+    basis_2: Price,
 }
 
 impl CsvLine {
     /// Retrieve however many price references (0-2) that we can extract from this line
-    pub fn price_references(&self) -> Vec<(OffsetDateTime, Decimal)> {
+    pub fn price_references(&self) -> Vec<(OffsetDateTime, Price)> {
         let mut ret = vec![];
         match self.ty {
             CsvType::BtcTrade => {
@@ -59,10 +61,18 @@ impl CsvLine {
                 //
                 // Note that date_1 corresponds to basis_2 and vice-versa!
                 if self.date_1.time() == time!(21:00) || self.date_1.time() == time!(22:00) {
-                    ret.push((self.date_1, self.basis_2 / self.quantity));
+                    ret.push((
+                        self.date_1,
+                        self.basis_2
+                            .scale_approx(1.0 / self.quantity.to_f64().unwrap()),
+                    ));
                 }
                 if self.date_2.time() == time!(21:00) || self.date_2.time() == time!(22:00) {
-                    ret.push((self.date_2, self.basis_1 / self.quantity));
+                    ret.push((
+                        self.date_2,
+                        self.basis_1
+                            .scale_approx(1.0 / self.quantity.to_f64().unwrap()),
+                    ));
                 }
                 ret
             }
@@ -127,8 +137,12 @@ impl FromStr for CsvLine {
                 * Decimal::from_str(strike_str)
                     .map_err(|e| format!("Parsing strike {contract_str}: {e}"))?;
             match put_call {
-                "Call " => CsvType::CallExercise { strike },
-                "Put " => CsvType::PutExercise { strike },
+                "Call " => CsvType::CallExercise {
+                    strike: strike.into(),
+                },
+                "Put " => CsvType::PutExercise {
+                    strike: strike.into(),
+                },
                 x => return Err(format!("unknown put/call string {x}")),
             }
         };
@@ -145,9 +159,9 @@ impl FromStr for CsvLine {
                 .map_err(|e| format!("parsing date 1 {date_1_str}: {e}"))?,
             date_2: OffsetDateTime::parse(date_2_str, time::Format::Rfc3339)
                 .map_err(|e| format!("parsing date 2 {date_2_str}: {e}"))?,
-            basis_1: Decimal::from_str(basis_1_str)
+            basis_1: Price::from_str(basis_1_str)
                 .map_err(|e| format!("parsing basis 1 {basis_1_str}: {e}"))?,
-            basis_2: Decimal::from_str(basis_2_str)
+            basis_2: Price::from_str(basis_2_str)
                 .map_err(|e| format!("parsing basis 2 {basis_2_str}: {e}"))?,
         })
     }
@@ -177,13 +191,13 @@ mod tests {
             ),
             Ok(CsvLine {
                 ty: CsvType::PutExercise {
-                    strike: Decimal::new(32_000, 0),
+                    strike: crate::price!(32000),
                 },
                 quantity: Decimal::new(6, 0),
                 date_1: date!(2021-07-16).with_time(time!(22:00:00)).assume_utc(),
                 date_2: date!(2021-07-15).with_time(time!(17:10:37)).assume_utc(),
-                basis_1: Decimal::new(4710, 2),
-                basis_2: Decimal::new(1334, 2),
+                basis_1: crate::price!(47.10),
+                basis_2: crate::price!(13.34),
             }),
         );
 
@@ -196,8 +210,8 @@ mod tests {
                 quantity: Decimal::new(1, 2),
                 date_1: date!(2021-04-14).with_time(time!(21:00:00)).assume_utc(),
                 date_2: date!(2021-07-18).with_time(time!(21:00:00)).assume_utc(),
-                basis_1: Decimal::new(32187, 2),
-                basis_2: Decimal::new(62905, 2),
+                basis_1: crate::price!(321.87),
+                basis_2: crate::price!(629.05),
             }),
         );
     }

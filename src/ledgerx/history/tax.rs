@@ -18,9 +18,9 @@
 //! reproducing LX's weird CSV fies.
 //!
 
-use crate::csv;
+use crate::{csv, units::Price};
 use log::debug;
-use rust_decimal::prelude::{RoundingStrategy, ToPrimitive};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -140,20 +140,15 @@ impl Label {
 
         let s = match contract.ty() {
             Type::Option { opt, .. } => {
-                let strike_int = opt.strike.to_i64().unwrap();
-                assert_eq!(Decimal::from(strike_int), opt.strike); // check no cents
-                assert!(strike_int >= 1000);
-                assert!(strike_int < 1000000); // so I can be lazy about comma placement
                 format!(
-                    "{} Mini {} {} ${},{:03}.00",
+                    "{} Mini {} {} {:#}",
                     contract.underlying(),
                     opt.expiry.lazy_format("%F"),
                     match opt.pc {
                         crate::option::Call => "Call",
                         crate::option::Put => "Put",
                     },
-                    strike_int / 1000,
-                    strike_int % 1000,
+                    opt.strike,
                 )
             }
             Type::NextDay { .. } => "BTC".into(),
@@ -226,7 +221,7 @@ pub struct Lot<ID> {
     close_ty: CloseType,
     direction: Direction,
     quantity: u64,
-    price: Decimal,
+    price: Price,
     date: TaxDate,
 }
 
@@ -267,7 +262,7 @@ impl Lot<LotId> {
     /// Constructs an `Lot` object from a deposit
     pub fn from_deposit_utxo(
         outpoint: bitcoin::OutPoint,
-        price: Decimal,
+        price: Price,
         size_sat: u64,
         date: time::OffsetDateTime,
     ) -> Self {
@@ -299,23 +294,18 @@ impl Lot<UnknownBtcId> {
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
             direction: Direction::Short,
             quantity: size_sat,
-            price: Decimal::ZERO,
+            price: Price::ZERO,
             date: TaxDate(date),
         }
     }
 
     /// Constructs an `Lot` object from a trade event
-    pub fn from_trade_btc(
-        price: Decimal,
-        size: i64,
-        fee: Decimal,
-        date: time::OffsetDateTime,
-    ) -> Self {
+    pub fn from_trade_btc(price: Price, size: i64, fee: Price, date: time::OffsetDateTime) -> Self {
         debug!(
             "Lot::from_trade_btc price {} size {} fee {} date {}",
             price, size, fee, date
         );
-        let unit_fee = fee / Decimal::new(size, 8);
+        let unit_fee = fee.div_btc_qty(size);
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
             id: UnknownBtcId,
@@ -334,17 +324,12 @@ impl Lot<UnknownBtcId> {
 
 impl Lot<UnknownOptId> {
     /// Constructs an `Lot` object from a trade event
-    pub fn from_trade_opt(
-        price: Decimal,
-        size: i64,
-        fee: Decimal,
-        date: time::OffsetDateTime,
-    ) -> Self {
+    pub fn from_trade_opt(price: Price, size: i64, fee: Price, date: time::OffsetDateTime) -> Self {
         debug!(
             "Lot::from_trade_opt price {} size {} fee {} date {}",
             price, size, fee, date
         );
-        let unit_fee = fee / Decimal::new(size, 2);
+        let unit_fee = fee.div_option_qty(size);
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
             id: UnknownOptId,
@@ -374,16 +359,12 @@ impl Lot<UnknownOptId> {
             close_ty: CloseType::Expiry,
             direction: Direction::from_size(n_expired),
             quantity: n_expired.unsigned_abs(),
-            price: Decimal::ZERO,
+            price: Price::ZERO,
             date: TaxDate(expiry),
         }
     }
 
-    pub fn from_assignment(
-        opt: &crate::option::Option,
-        n_assigned: i64,
-        btc_price: Decimal,
-    ) -> Self {
+    pub fn from_assignment(opt: &crate::option::Option, n_assigned: i64, btc_price: Price) -> Self {
         debug!("Lot::from_assignment opt {} n {}", opt, n_assigned);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
@@ -406,9 +387,9 @@ pub struct Close {
     gain_ty: GainType,
     open_id: LotId,
     open_direction: Direction,
-    open_price: Decimal,
+    open_price: Price,
     open_date: TaxDate,
-    close_price: Decimal,
+    close_price: Price,
     close_date: TaxDate,
     quantity: u64,
 }
@@ -442,10 +423,15 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
         } else {
             Decimal::new(i_qty, 2)
         };
-        let mut proceeds = real_amount * self.close.close_price;
-        let mut basis = real_amount * self.close.open_price;
-        proceeds = proceeds.round_dp_with_strategy(2, RoundingStrategy::AwayFromZero);
-        basis = basis.round_dp_with_strategy(2, RoundingStrategy::AwayFromZero);
+        // FIXME FIXME FIXME
+        let mut proceeds = self
+            .close
+            .close_price
+            .scale_approx(real_amount.to_f64().unwrap());
+        let mut basis = self
+            .close
+            .open_price
+            .scale_approx(real_amount.to_f64().unwrap());
 
         let mut close_date = self.close.close_date;
         let mut open_date = self.close.open_date;

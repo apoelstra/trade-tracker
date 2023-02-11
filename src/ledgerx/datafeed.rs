@@ -18,7 +18,7 @@
 //!
 
 use super::{json, Contract, ContractId};
-use rust_decimal::Decimal;
+use crate::units::Price;
 use serde::Deserialize;
 use std::fmt;
 use time::OffsetDateTime;
@@ -55,7 +55,7 @@ pub struct Order {
     /// Number of contracts
     pub size: u64,
     /// Limit price
-    pub price: Decimal,
+    pub price: Price,
     /// ID of the contract being bid/ask on
     pub contract_id: ContractId,
     /// ID of the manifest
@@ -71,8 +71,8 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
         Order {
             bid_ask: if data.0.is_ask { Ask } else { Bid },
             size: data.0.size,
-            contract_id: ContractId::from(data.0.contract_id),
-            price: Decimal::new(data.0.price, 2),
+            contract_id: data.0.contract_id,
+            price: data.0.price,
             manifest_id: ManifestId(data.0.mid),
             timestamp: data.1,
             last_log: None,
@@ -88,14 +88,14 @@ pub enum Object {
     Order(Order),
     BookTop {
         contract_id: ContractId,
-        ask: Decimal,
+        ask: Price,
         ask_size: u64,
-        bid: Decimal,
+        bid: Price,
         bid_size: u64,
     },
     AvailableBalances {
-        btc: Decimal,
-        usd: Decimal,
+        btc: bitcoin::Amount,
+        usd: Price,
     },
     ContractAdded(Contract),
     ContractRemoved(ContractId),
@@ -114,10 +114,10 @@ impl From<json::DataFeedObject> for Object {
                 timestamp,
                 ..
             } => Object::Order(Order {
-                contract_id: ContractId::from(contract_id),
+                contract_id,
                 manifest_id: ManifestId(mid),
                 size,
-                price: price / Decimal::from(100),
+                price,
                 bid_ask: if is_ask { Ask } else { Bid },
                 timestamp,
                 last_log: None,
@@ -130,16 +130,16 @@ impl From<json::DataFeedObject> for Object {
                 bid_size,
                 ..
             } => Object::BookTop {
-                contract_id: ContractId::from(contract_id),
-                ask: ask / Decimal::from(100),
+                contract_id,
+                ask,
                 ask_size,
-                bid: bid / Decimal::from(100),
+                bid,
                 bid_size,
             },
             json::DataFeedObject::CollateralBalanceUpdate { collateral } => {
                 Object::AvailableBalances {
-                    btc: collateral.available_balances.btc / Decimal::from(100000000),
-                    usd: collateral.available_balances.usd / Decimal::from(100),
+                    btc: collateral.available_balances.btc,
+                    usd: collateral.available_balances.usd,
                 }
             }
             json::DataFeedObject::ContractAdded { data } => Object::ContractAdded(data),
@@ -163,7 +163,7 @@ mod tests {
             Object::Order(Order {
                 bid_ask: Ask,
                 size: 0,
-                price: Decimal::from(0),
+                price: Price::ZERO,
                 contract_id: ContractId::from(22256362),
                 manifest_id: ManifestId([
                     0x01, 0x4a, 0xa5, 0xad, 0x13, 0x56, 0x42, 0x72, 0xa7, 0x93, 0xc0, 0x58, 0x2a,

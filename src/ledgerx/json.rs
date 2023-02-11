@@ -17,18 +17,10 @@
 //! Some utility methods for parsing json from the LX API
 //!
 
-use rust_decimal::Decimal;
+use crate::units::Price;
 use serde::{de, Deserialize, Deserializer};
-use serde_json::{Map, Value};
 use std::convert::TryFrom;
 use time::OffsetDateTime;
-
-pub fn parse_num(obj: &Map<String, Value>, field: &str) -> Result<u64, String> {
-    obj.get(field)
-        .ok_or(format!("missing field {field} in contract"))?
-        .as_u64()
-        .ok_or(format!("field {field} in contract is not number"))
-}
 
 pub fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>
 where
@@ -155,7 +147,8 @@ pub struct Contract {
     pub is_next_day: Option<bool>,
     pub is_ecp_only: Option<bool>,
     pub derivative_type: DerivativeType,
-    pub strike_price: Option<i64>,
+    #[serde(default, deserialize_with = "crate::units::deserialize_cents_opt")]
+    pub strike_price: Option<Price>,
     pub min_increment: usize,
     #[serde(default)]
     pub open_interest: Option<usize>,
@@ -177,10 +170,10 @@ pub struct DataFeedMeta {
 
 #[derive(Deserialize, Debug)]
 pub struct Balances {
-    #[serde(rename = "USD")]
-    pub usd: Decimal,
-    #[serde(rename = "CBTC")]
-    pub btc: Decimal,
+    #[serde(rename = "USD", deserialize_with = "crate::units::deserialize_cents")]
+    pub usd: Price,
+    #[serde(rename = "CBTC", with = "bitcoin::util::amount::serde::as_sat")]
+    pub btc: bitcoin::Amount,
 }
 
 #[derive(Deserialize, Debug)]
@@ -194,22 +187,24 @@ pub struct AllBalances {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum DataFeedObject {
     ActionReport {
-        contract_id: usize,
+        contract_id: super::ContractId,
         open_interest: usize,
         #[serde(deserialize_with = "hex::serde::deserialize")]
         mid: [u8; 16],
         /// Will always be `customer_limit_order`
         order_type: String,
-        price: Decimal,
+        #[serde(deserialize_with = "crate::units::deserialize_cents")]
+        price: Price,
         size: u64,
-        inserted_price: Decimal,
+        #[serde(deserialize_with = "crate::units::deserialize_cents")]
+        inserted_price: Price,
         inserted_size: u64,
-        filled_price: Decimal,
+        #[serde(deserialize_with = "crate::units::deserialize_cents")]
+        filled_price: Price,
         filled_size: u64,
-        original_price: Decimal,
+        #[serde(deserialize_with = "crate::units::deserialize_cents")]
+        original_price: Price,
         original_size: u64,
-        /// volume-weighted average price the order has been filled at
-        vwap: Decimal,
         is_ask: bool,
         /// Whether the order auto-cancels at 4PM
         is_volatile: bool,
@@ -252,10 +247,12 @@ pub enum DataFeedObject {
     ContactDisconnected {},
     StateManifest {},
     BookTop {
-        contract_id: usize,
-        ask: Decimal,
+        contract_id: super::ContractId,
+        #[serde(default, deserialize_with = "crate::units::deserialize_cents")]
+        ask: Price,
         ask_size: u64,
-        bid: Decimal,
+        #[serde(default, deserialize_with = "crate::units::deserialize_cents")]
+        bid: Price,
         bid_size: u64,
         /// "The current clock for the entire contract"
         clock: u64,
@@ -270,17 +267,18 @@ pub struct BookStateMessage {
 }
 #[derive(Deserialize, Debug)]
 pub struct BookStateData {
-    pub contract_id: usize,
+    pub contract_id: super::ContractId,
     pub book_states: Vec<BookState>,
 }
 #[derive(Deserialize, Debug)]
 pub struct BookState {
     pub clock: u64,
-    pub contract_id: usize,
+    pub contract_id: super::ContractId,
     #[serde(deserialize_with = "hex::serde::deserialize")]
     pub mid: [u8; 16],
     pub is_ask: bool,
-    pub price: i64,
+    #[serde(default, deserialize_with = "crate::units::deserialize_cents")]
+    pub price: Price,
     pub size: u64,
 }
 

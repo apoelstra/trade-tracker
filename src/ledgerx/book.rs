@@ -20,8 +20,8 @@
 use super::{Ask, Bid, ManifestId, Order};
 use crate::option::{Call, Put};
 use crate::terminal::format_color;
+use crate::units::Price;
 use log::info;
-use rust_decimal::Decimal;
 use std::cmp;
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
@@ -29,8 +29,8 @@ use time::OffsetDateTime;
 /// Book state for a specific contract
 #[derive(Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct BookState {
-    bids: BTreeMap<(Decimal, ManifestId), Order>,
-    asks: BTreeMap<(Decimal, ManifestId), Order>,
+    bids: BTreeMap<(Price, ManifestId), Order>,
+    asks: BTreeMap<(Price, ManifestId), Order>,
 }
 
 impl BookState {
@@ -60,29 +60,29 @@ impl BookState {
     }
 
     /// Return the price and size of the best bid, or (0, 0) if there is none
-    pub fn best_bid(&self) -> (Decimal, u64) {
+    pub fn best_bid(&self) -> (Price, u64) {
         if let Some((_, last)) = self.bids.iter().rev().next() {
             (last.price, last.size)
         } else {
-            (Decimal::from(0), 0)
+            (Price::ZERO, 0)
         }
     }
 
     /// Return the price and size of the best ask, or (0, 0) if there is none
-    pub fn best_ask(&self) -> (Decimal, u64) {
+    pub fn best_ask(&self) -> (Price, u64) {
         if let Some((_, last)) = self.asks.iter().next() {
             (last.price, last.size)
         } else {
-            (Decimal::from(0), 0)
+            (Price::ZERO, 0)
         }
     }
 
     /// Returns the (gain in contracts, cost in USD) of buying into every offer
-    pub fn clear_asks(&self) -> (u64, Decimal) {
-        let mut ret_usd = Decimal::from(0);
+    pub fn clear_asks(&self) -> (u64, Price) {
+        let mut ret_usd = Price::ZERO;
         let mut ret_contr = 0;
         for (_, order) in self.asks.iter() {
-            ret_usd += order.price * Decimal::new(order.size as i64, 2);
+            ret_usd += order.price.times_option_qty(order.size as i64);
             ret_contr += order.size;
         }
         (ret_contr, ret_usd)
@@ -92,10 +92,10 @@ impl BookState {
     pub fn clear_bids(
         &self,
         option: &crate::option::Option,
-        mut max_usd: Decimal,
-        mut max_btc: Decimal,
-    ) -> (u64, Decimal) {
-        let mut ret_usd = Decimal::from(0);
+        mut max_usd: Price,
+        mut max_btc: bitcoin::Amount,
+    ) -> (u64, Price) {
+        let mut ret_usd = Price::ZERO;
         let mut ret_contr = 0;
         for (_, order) in self.bids.iter() {
             let (max_sale, usd_per_contract) = option.max_sale(order.price, max_usd, max_btc);
@@ -104,11 +104,11 @@ impl BookState {
                 break;
             }
 
-            ret_usd += order.price * Decimal::new(sale as i64, 2);
+            ret_usd += order.price.times_option_qty(sale as i64);
             ret_contr += sale;
             match option.pc {
-                Call => max_btc -= Decimal::new(sale as i64, 2),
-                Put => max_usd -= Decimal::from(sale) * usd_per_contract,
+                Call => max_btc -= bitcoin::Amount::from_sat(sale * 1_000_000),
+                Put => max_usd -= usd_per_contract.times_option_qty(sale as i64),
             }
         }
         (ret_contr, ret_usd)
@@ -118,16 +118,16 @@ impl BookState {
         &mut self,
         opt: &crate::option::Option,
         now: OffsetDateTime,
-        btc_bid: Decimal,
-        btc_ask: Decimal,
-        available_usd: Decimal,
-        available_btc: Decimal,
+        btc_bid: Price,
+        btc_ask: Price,
+        available_usd: Price,
+        available_btc: bitcoin::Amount,
     ) {
         let (best_bid, _) = self.best_bid();
         let mut bid_depth = 0;
         for bid in self.bids.values_mut().rev() {
             // Don't bother logging bids that are less than 50% of the best
-            if bid.price < best_bid / Decimal::TWO {
+            if bid.price < best_bid.half() {
                 break;
             }
             // Similarly, if you need to sell more than 100 contracts to get
@@ -152,7 +152,7 @@ impl BookState {
         let mut ask_depth = 0;
         for ask in self.asks.values_mut() {
             // Don't bother logging asks that are more than 200% of the best
-            if ask.price < best_ask * Decimal::TWO {
+            if ask.price < best_ask.double() {
                 break;
             }
             // Similarly, if you need to sell more than 100 contracts to get
@@ -179,10 +179,10 @@ fn log_bid_if_interesting(
     order: &mut Order,
     opt: &crate::option::Option,
     now: OffsetDateTime,
-    btc_bid: Decimal,
-    btc_ask: Decimal,
-    available_usd: Decimal,
-    available_btc: Decimal,
+    btc_bid: Price,
+    btc_ask: Price,
+    available_usd: Price,
+    available_btc: bitcoin::Amount,
 ) {
     if let Some(last_log) = order.last_log {
         // Refuse to log the same order more than once every 4 hours
@@ -193,7 +193,7 @@ fn log_bid_if_interesting(
     // For bids we'll just use the midpoint since we're not thinking
     // about any short-option-delta-neutral strategies. If we were
     // trying to go delta-neutral we should use the best BTC ask instead.
-    let btc_price = (btc_bid + btc_ask) / Decimal::from(2);
+    let btc_price = (btc_bid + btc_ask).half();
     // Also, cap the order size at the amount that we could actually
     // take. Puts especially may seem worthwhile but unless we have
     // a big pile of cash on hand, we can only get a couple bucks out.
@@ -217,10 +217,10 @@ fn log_ask_if_interesting(
     order: &mut Order,
     opt: &crate::option::Option,
     now: OffsetDateTime,
-    btc_bid: Decimal,
-    btc_ask: Decimal,
-    available_usd: Decimal,
-    available_btc: Decimal,
+    btc_bid: Price,
+    btc_ask: Price,
+    available_usd: Price,
+    available_btc: bitcoin::Amount,
 ) {
     if let Some(last_log) = order.last_log {
         // Refuse to log the same order more than once every 4 hours
@@ -231,21 +231,18 @@ fn log_ask_if_interesting(
     // Add a fudge factor because there's a race condition involved in
     // executing on something like this, so we want a nontrivial payout
     let btc_price = if opt.pc == crate::option::Call {
-        btc_bid - Decimal::from(150)
+        btc_bid - crate::price!(150)
     } else {
-        btc_ask + Decimal::from(150)
+        btc_ask + crate::price!(150)
     };
     // Asks may be interesting if they're "free money", that is, if we
     // can open a delta-neutral position which is guaranteed to pay out
     if order.price < opt.intrinsic_value(btc_price) {
         let profit100 = opt.intrinsic_value(btc_price) - order.price;
-        let max_buy100 = cmp::min(
-            Decimal::new(order.size as i64, 2),
-            available_usd / order.price,
-        );
-        let max_profit = max_buy100 * profit100;
+        let max_buy100 = cmp::min(order.size, (100.0 * (available_usd / order.price)) as u64);
+        let max_profit = profit100.times_option_qty(max_buy100 as i64);
         // Don't bother if there is less than $100 to be made
-        if max_profit < Decimal::from(100) {
+        if max_profit < Price::ONE_HUNDRED {
             return;
         }
 
@@ -262,7 +259,7 @@ fn log_ask_if_interesting(
                 order.price,
                 opt.strike + order.price,
                 btc_price,
-                max_buy100 * Decimal::ONE_HUNDRED,
+                max_buy100,
                 max_profit,
             );
         } else {
@@ -272,7 +269,7 @@ fn log_ask_if_interesting(
                 order.price,
                 opt.strike - order.price,
                 btc_price,
-                max_buy100 * Decimal::ONE_HUNDRED,
+                max_buy100,
                 max_profit,
             );
         }

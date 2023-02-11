@@ -19,11 +19,85 @@
 
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::{fmt, str};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{convert::TryFrom, fmt, ops, str};
 
 /// A price, in US dollars
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
 pub struct Price(Decimal);
+
+impl Price {
+    /// Zero dollars
+    pub const ZERO: Self = Price(Decimal::ZERO);
+    /// $1
+    pub const ONE: Self = Price(Decimal::ONE);
+    /// $25
+    pub const TWENTY_FIVE: Self = Price(Decimal::from_parts(25, 0, 0, false, 0));
+    /// $100
+    pub const ONE_HUNDRED: Self = Price(Decimal::ONE_HUNDRED);
+    /// $1000
+    pub const ONE_THOUSAND: Self = Price(Decimal::ONE_THOUSAND);
+
+    /// Converts the price to a floating-point value
+    ///
+    /// Some prices cannot be represented exactly (e.g. $0.10) in a binary
+    /// representation such as IEEE floats. So this method will introduce
+    /// a tiny error factor, which may be amplified by further computations.
+    pub fn to_approx_f64(&self) -> f64 {
+        self.0.to_f64().unwrap()
+    }
+
+    /// Converts a floating-point value to a price
+    ///
+    /// If the conversion cannot be done, substitutes 0. This function is really
+    /// meant for display/informational purposes only and should not be used for
+    /// accounting.
+    pub fn from_approx_f64_or_zero(p: f64) -> Price {
+        Price(Decimal::try_from(p).unwrap_or_default())
+    }
+
+    /// Multiplies the price by a given scaling factor
+    ///
+    /// Because this uses floating-point numbers it will not give an exact
+    /// result. Extreme caution should be used whenever using this in an
+    /// accounting context.
+    pub fn scale_approx(&self, scale: f64) -> Price {
+        Price(self.0 * Decimal::try_from(scale).expect("scaling by a finite float"))
+    }
+
+    /// Given a price, return 1/100 the same price
+    pub fn one_hundredth(&self) -> Price {
+        Price(self.0 / Decimal::ONE_HUNDRED)
+    }
+
+    /// Given a price, double it
+    pub fn double(&self) -> Price {
+        Price(self.0 * Decimal::from(2))
+    }
+
+    /// Given a price, halve it
+    pub fn half(&self) -> Price {
+        Price(self.0 / Decimal::from(2))
+    }
+
+    /// Multiplies a price by a given number of contract units
+    #[deprecated = "will be replaced with better units"]
+    pub fn times_option_qty(&self, qty: i64) -> Price {
+        Price(self.0 * Decimal::new(qty, 2))
+    }
+
+    /// Divides a price by a given number of contract units
+    #[deprecated = "will be replaced with better units"]
+    pub fn div_option_qty(&self, qty: i64) -> Price {
+        Price(self.0 / Decimal::new(qty, 2))
+    }
+
+    /// Divides a price by a given number of BTC units
+    #[deprecated = "will be replaced with better units"]
+    pub fn div_btc_qty(&self, qty: i64) -> Price {
+        Price(self.0 / Decimal::new(qty, 8))
+    }
+}
 
 impl From<Decimal> for Price {
     fn from(d: Decimal) -> Price {
@@ -52,11 +126,14 @@ impl fmt::Display for Price {
                 );
                 if trunc >= 1_000_000 {
                     write!(f, "{},", trunc / 1_000_000)?;
+                    write!(f, "{:03},", (trunc / 1_000) % 1_000)?;
+                    write!(f, "{:03}.{:02}", trunc % 1_000, fract)
+                } else if trunc >= 1_000 {
+                    write!(f, "{},", trunc / 1_000)?;
+                    write!(f, "{:03}.{:02}", trunc % 1_000, fract)
+                } else {
+                    write!(f, "{}.{:02}", trunc % 1_000, fract)
                 }
-                if trunc >= 1_000 {
-                    write!(f, "{},", (trunc / 1_000) % 1_000)?;
-                }
-                write!(f, "{}.{:02}", trunc % 1_000, fract)
             }
         } else {
             let mut copy = self.0.round_dp(2);
@@ -66,12 +143,63 @@ impl fmt::Display for Price {
     }
 }
 
+super::impl_ops_0!(Price, Add, add);
+super::impl_ops_0!(Price, Sub, sub);
+super::impl_assign_ops_0!(Price, AddAssign, add_assign);
+super::impl_assign_ops_0!(Price, SubAssign, sub_assign);
+
+// Dividing two prices gets you a unitless floating-point ratio
+impl ops::Div<Price> for Price {
+    type Output = f64;
+    fn div(self, other: Price) -> f64 {
+        if other.0 == Decimal::ZERO {
+            panic!("Tried to divide price {} by zero", self);
+        }
+        (self.0 / other.0).to_f64().unwrap()
+    }
+}
+
 /// Construct a price from a decimal expression, e.g. price!(100.00) or price!(123)
 #[macro_export]
 macro_rules! price {
     ($num:expr) => {
-        $num.to_string().parse::<Price>().unwrap()
+        $num.to_string().parse::<$crate::units::Price>().unwrap()
     };
+}
+
+/// Serialize a price via serde in dollars
+pub fn serialize_dollars<S>(obj: &Price, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    Serialize::serialize(&obj.0, ser)
+}
+
+/// Deserialize a price via serde in dollars
+pub fn deserialize_dollars<'de, D>(deser: D) -> Result<Price, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let dollars: Decimal = Deserialize::deserialize(deser)?;
+    Ok(Price(dollars))
+}
+
+/// Deserialize a price via serde which is given as in integer number of pennies
+pub fn deserialize_cents<'de, D>(deser: D) -> Result<Price, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let cents: i64 = Deserialize::deserialize(deser)?;
+    Ok(Price(Decimal::new(cents, 2)))
+}
+
+/// Deserialize a price via serde which is given as in integer number of pennies
+pub fn deserialize_cents_opt<'de, D>(deser: D) -> Result<Option<Price>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let cents: Option<i64> = Deserialize::deserialize(deser)?;
+    Ok(cents.map(|cents| Price(Decimal::new(cents, 2))))
 }
 
 #[cfg(test)]

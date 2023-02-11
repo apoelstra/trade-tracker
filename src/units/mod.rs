@@ -21,4 +21,56 @@
 
 mod price;
 
-pub use price::Price;
+pub use price::{
+    deserialize_cents, deserialize_cents_opt, deserialize_dollars, serialize_dollars, Price,
+};
+
+macro_rules! impl_ops_0 {
+    ($outer:ty, $op:ident, $opfn:ident) => {
+        impl std::ops::$op<$outer> for $outer {
+            type Output = Self;
+            fn $opfn(self, other: $outer) -> Self {
+                From::from(std::ops::$op::$opfn(self.0, other.0))
+            }
+        }
+
+        impl<'a> std::ops::$op<&'a $outer> for $outer {
+            type Output = Self;
+            fn $opfn(self, other: &'a $outer) -> Self {
+                From::from(std::ops::$op::$opfn(self.0, other.0))
+            }
+        }
+
+        impl<'a> std::ops::$op<$outer> for &'a $outer {
+            type Output = $outer;
+            fn $opfn(self, other: $outer) -> $outer {
+                From::from(std::ops::$op::$opfn(self.0, other.0))
+            }
+        }
+
+        impl<'a, 'b> std::ops::$op<&'a $outer> for &'b $outer {
+            type Output = $outer;
+            fn $opfn(self, other: &'a $outer) -> $outer {
+                From::from(std::ops::$op::$opfn(self.0, other.0))
+            }
+        }
+    };
+}
+use impl_ops_0; // exported to submodules
+
+macro_rules! impl_assign_ops_0 {
+    ($outer:ty, $op:ident, $opfn:ident) => {
+        impl std::ops::$op<$outer> for $outer {
+            fn $opfn(&mut self, other: $outer) {
+                std::ops::$op::$opfn(&mut self.0, other.0)
+            }
+        }
+
+        impl<'a> std::ops::$op<&'a $outer> for $outer {
+            fn $opfn(&mut self, other: &'a $outer) {
+                std::ops::$op::$opfn(&mut self.0, other.0)
+            }
+        }
+    };
+}
+use impl_assign_ops_0; // exported to submodules

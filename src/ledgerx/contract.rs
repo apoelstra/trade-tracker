@@ -18,7 +18,6 @@
 //!
 
 use crate::{ledgerx::json, option};
-use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::{convert::TryFrom, fmt};
 use time::OffsetDateTime;
@@ -125,11 +124,11 @@ impl TryFrom<json::Contract> for Contract {
                 exercise_date: js.date_exercise.ok_or("missing field 'date_exercise'")?,
                 opt: match js.ty {
                     Some(json::Type::Call) => option::Option::new_call(
-                        Decimal::new(js.strike_price.ok_or("missing field 'strike_price'")?, 2),
+                        js.strike_price.ok_or("missing field 'strike_price'")?,
                         expiry,
                     ),
                     Some(json::Type::Put) => option::Option::new_put(
-                        Decimal::new(js.strike_price.ok_or("missing field 'strike_price'")?, 2),
+                        js.strike_price.ok_or("missing field 'strike_price'")?,
                         expiry,
                     ),
                     None => return Err("missing field 'type'"),
@@ -163,7 +162,6 @@ impl Contract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn parse_contract_put() {
@@ -179,7 +177,7 @@ mod tests {
                         .unwrap(),
                     opt: option::Option {
                         pc: option::PutCall::Put,
-                        strike: Decimal::from_str("4000.00").unwrap(),
+                        strike: crate::price!(4000),
                         expiry: OffsetDateTime::parse("2023-12-29 21:00:00+0000", "%F %T%z")
                             .unwrap(),
                     },
@@ -206,7 +204,7 @@ mod tests {
                         .unwrap(),
                     opt: option::Option {
                         pc: option::PutCall::Call,
-                        strike: Decimal::from_str("25000.00").unwrap(),
+                        strike: crate::price!(25000),
                         expiry: OffsetDateTime::parse("2023-12-29 21:00:00+0000", "%F %T%z")
                             .unwrap(),
                     },

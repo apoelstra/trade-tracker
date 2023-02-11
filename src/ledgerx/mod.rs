@@ -25,12 +25,11 @@ pub mod history;
 pub mod json;
 
 use crate::terminal::format_color;
+use crate::units::Price;
 use log::{debug, info};
-use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::{cmp, fmt};
 use time::OffsetDateTime;
 
@@ -46,7 +45,7 @@ pub struct Interestingness {
     pub min_vol: f64,
     pub max_loss80: f64,
     pub min_size: u64,
-    pub min_yield_per_week: Decimal,
+    pub min_yield_per_week: Price,
 }
 
 /// Threshold for a bid to be interesting enough for us to snipe
@@ -55,7 +54,7 @@ pub static BID_INTERESTING: Interestingness = Interestingness {
     min_vol: 0.5,
     max_loss80: 0.20,
     min_size: 1,
-    min_yield_per_week: Decimal::from_parts(25, 0, 0, false, 0), // $25
+    min_yield_per_week: Price::TWENTY_FIVE,
 };
 /// Threshold for a ask to be interesting enough for us to match
 pub static ASK_INTERESTING: Interestingness = Interestingness {
@@ -63,7 +62,7 @@ pub static ASK_INTERESTING: Interestingness = Interestingness {
     min_vol: 0.75,
     max_loss80: 0.10,
     min_size: 1,
-    min_yield_per_week: Decimal::from_parts(25, 0, 0, false, 0), // $25
+    min_yield_per_week: Price::TWENTY_FIVE,
 };
 
 impl Interestingness {
@@ -71,17 +70,18 @@ impl Interestingness {
         &self,
         opt: &crate::option::Option,
         now: OffsetDateTime,
-        btc_price: Decimal,
-        order_price: Decimal,
+        btc_price: Price,
+        order_price: Price,
         order_size: u64,
     ) -> bool {
         // Easy check: size
         if order_size < self.min_size {
             return false;
         }
-        let min_yield =
-            self.min_yield_per_week * Decimal::try_from(opt.years_to_expiry(now) * 52.0).unwrap();
-        if order_price * Decimal::from(order_size) / Decimal::from(100) < min_yield {
+        let min_yield = self
+            .min_yield_per_week
+            .scale_approx(opt.years_to_expiry(now) * 52.0);
+        if order_price.times_option_qty(order_size as i64) < min_yield {
             return false;
         }
         // Next, if the option is "free money" we consider it uninteresting for
@@ -172,10 +172,10 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LedgerX {
     contracts: HashMap<ContractId, (Contract, BookState)>,
-    available_usd: Decimal,
-    available_btc: Decimal,
-    last_btc_bid: Decimal,
-    last_btc_ask: Decimal,
+    available_usd: Price,
+    available_btc: bitcoin::Amount,
+    last_btc_bid: Price,
+    last_btc_ask: Price,
     last_btc_time: OffsetDateTime,
 }
 
@@ -196,8 +196,8 @@ impl LedgerX {
     pub fn new(btc_price: crate::price::BitcoinPrice) -> Self {
         LedgerX {
             contracts: HashMap::new(),
-            available_usd: Decimal::from(0),
-            available_btc: Decimal::from(0),
+            available_usd: Price::ZERO,
+            available_btc: bitcoin::Amount::ZERO,
             last_btc_bid: btc_price.btc_price,
             last_btc_ask: btc_price.btc_price,
             last_btc_time: btc_price.timestamp,
@@ -205,7 +205,7 @@ impl LedgerX {
     }
 
     /// Sets the "available balances" counter
-    pub fn set_balances(&mut self, usd: Decimal, btc: Decimal) {
+    pub fn set_balances(&mut self, usd: Price, btc: bitcoin::Amount) {
         if self.available_usd != usd || self.available_btc != btc {
             info!("Update balances: ${}, {} BTC", usd, btc);
         }
@@ -218,9 +218,9 @@ impl LedgerX {
     /// Initially uses a price reference supplied at construction (probably coming
     /// from the BTCCharts data ultimately); later will use the midpoint of the LX
     /// current bid/ask for day-ahead swaps.
-    pub fn current_price(&self) -> (Decimal, OffsetDateTime) {
+    pub fn current_price(&self) -> (Price, OffsetDateTime) {
         (
-            (self.last_btc_bid + self.last_btc_ask) / Decimal::from(2),
+            (self.last_btc_bid + self.last_btc_ask).half(),
             self.last_btc_time,
         )
     }
@@ -266,11 +266,10 @@ impl LedgerX {
                 // Compute yield from matching best ask, with as much money as we can
                 let (ask_price, _) = book.best_ask();
                 let (ask_size, _) = opt.max_sale(ask_price, self.available_usd, self.available_btc);
-                let ask_yield = Decimal::new(ask_size as i64, 2) * ask_price;
+                let ask_yield = ask_price.times_option_qty(ask_size as i64);
 
                 // only options where we could maybe make $100/wk
-                let yield_limit = Decimal::ONE_HUNDRED
-                    * Decimal::try_from(opt.years_to_expiry(now) * 52.0).unwrap();
+                let yield_limit = Price::ONE_HUNDRED.scale_approx(opt.years_to_expiry(now) * 52.0);
                 interesting &= clear_bid_yield > yield_limit || ask_yield > yield_limit;
                 if interesting {
                     opt.log_option_data(
@@ -279,8 +278,7 @@ impl LedgerX {
                         btc_price,
                     );
                     if clear_bid_size > 0 {
-                        let clear_price = clear_bid_yield / Decimal::from(clear_bid_size)
-                            * Decimal::from(c.multiplier());
+                        let clear_price = clear_bid_yield.div_option_qty(clear_bid_size as i64);
                         opt.log_order_data(
                             "      Order to clear: ",
                             now,
@@ -378,10 +376,10 @@ impl LedgerX {
         // For day-ahead swaps update the current BTC price reference
         if let contract::Type::NextDay { .. } = contract.ty() {
             if contract.underlying() == Asset::Btc && (is_bb || is_ba) {
-                if is_bb && new_bb.0 > Decimal::from(0) {
+                if is_bb && new_bb.0 > Price::ZERO {
                     self.last_btc_bid = new_bb.0;
                 }
-                if is_ba && new_ba.0 > Decimal::from(0) {
+                if is_ba && new_ba.0 > Price::ZERO {
                     self.last_btc_ask = new_ba.0;
                 }
                 self.last_btc_time = timestamp;
@@ -401,6 +399,6 @@ impl LedgerX {
         for order in data.data.book_states {
             self.insert_order(Order::from((order, timestamp)));
         }
-        self.log_interesting_contract(ContractId::from(data.data.contract_id));
+        self.log_interesting_contract(data.data.contract_id);
     }
 }

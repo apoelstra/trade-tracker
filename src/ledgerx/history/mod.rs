@@ -18,9 +18,9 @@
 //!
 
 use crate::csv::{self, CsvPrinter};
+use crate::units::Price;
 use anyhow::Context;
 use log::{debug, info, warn};
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -60,7 +60,8 @@ struct DepositAddress {
 
 #[derive(Deserialize, Debug)]
 struct Deposit {
-    amount: i64,
+    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    amount: bitcoin::Amount,
     asset: Asset,
     deposit_address: DepositAddress,
     #[serde(deserialize_with = "deserialize_datetime")]
@@ -118,10 +119,12 @@ struct Trade {
     contract_id: String,
     #[serde(deserialize_with = "deserialize_datetime")]
     execution_time: OffsetDateTime,
-    filled_price: i64,
+    #[serde(deserialize_with = "crate::units::deserialize_cents")]
+    filled_price: Price,
     filled_size: i64,
     side: Side,
-    fee: i64,
+    #[serde(deserialize_with = "crate::units::deserialize_cents")]
+    fee: Price,
 }
 
 #[derive(Deserialize, Debug)]
@@ -190,7 +193,7 @@ impl Positions {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Event {
     Deposit {
-        amount: Decimal,
+        amount: bitcoin::Amount,
         address: bitcoin::Address,
         asset: super::Asset,
     },
@@ -200,9 +203,9 @@ enum Event {
     },
     Trade {
         contract: super::Contract,
-        price: Decimal,
+        price: Price,
         size: i64,
-        fee: Decimal,
+        fee: Price,
     },
     Expiry {
         contract: super::Contract,
@@ -291,8 +294,8 @@ impl History {
                 dep.created_at,
                 Event::Deposit {
                     amount: match dep.asset.name {
-                        super::Asset::Btc => Decimal::new(dep.amount, 8),
-                        super::Asset::Usd => Decimal::new(dep.amount, 2),
+                        super::Asset::Btc => dep.amount,
+                        super::Asset::Usd => unimplemented!("USD deposits"),
                         super::Asset::Eth => unimplemented!("ethereum deposits"),
                     },
                     address: bitcoin::Address::from_str(&dep.deposit_address.address)
@@ -339,12 +342,12 @@ impl History {
                             )))
                         }
                     },
-                    price: Decimal::new(trade.filled_price, 2),
+                    price: trade.filled_price,
                     size: match trade.side {
                         Side::Bid => trade.filled_size,
                         Side::Ask => -trade.filled_size,
                     },
-                    fee: Decimal::new(trade.fee, 2),
+                    fee: trade.fee,
                 },
             );
         }
@@ -410,7 +413,7 @@ impl History {
                         "Deposit",
                         date_fmt,
                         (None, asset.as_str(), None),
-                        (None, *amount),
+                        (None, Decimal::new(amount.to_sat() as i64, 8)),
                         (btc_price, None, None),
                     )),
                     None,
@@ -535,7 +538,7 @@ impl History {
         price_history: &crate::price::Historic,
         transaction_db: &crate::transaction::Database,
         lot_db: Option<&crate::lot::Database>,
-        lx_price_ref: &HashMap<OffsetDateTime, Decimal>,
+        lx_price_ref: &HashMap<OffsetDateTime, Price>,
     ) {
         let btc_label = tax::Label::btc();
         let mut tracker = tax::PositionTracker::new();
@@ -562,7 +565,7 @@ impl History {
                     }
                     debug!("[deposit] \"BTC\" {} @ {}", btc_price, amount);
 
-                    let mut amount_sat = (amount * Decimal::from(100_000_000)).to_u64().unwrap();
+                    let mut amount_sat = amount.to_sat();
                     let mut just_make_something_up = false;
                     let mut deposit_outpoint = bitcoin::OutPoint::default();
                     if let Some((tx, vout)) =
@@ -760,7 +763,7 @@ impl History {
                                     crate::option::Call => *assigned_size * -1_000_000,
                                     crate::option::Put => *assigned_size * 1_000_000,
                                 },
-                                Decimal::ZERO,
+                                Price::ZERO,
                                 expiry,
                             );
                             tracker.push_lot(&btc_label, open, date);

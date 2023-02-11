@@ -32,13 +32,12 @@ pub mod units;
 
 use crate::ledgerx::LotId;
 pub use crate::timemap::TimeMap;
+use crate::units::Price;
 use anyhow::Context;
 use clap::Clap;
 use log::{info, warn};
-use rust_decimal::Decimal;
 use std::{
     collections::HashMap,
-    convert::TryInto,
     fs,
     io::{self, BufRead},
     path::PathBuf,
@@ -127,7 +126,7 @@ enum Command {
         option: option::Option,
         /// Specific price, if provided
         #[clap(long, short)]
-        price: Option<Decimal>,
+        price: Option<Price>,
     },
     /// Connect to LedgerX API and monitor activity in real-time
     Connect {
@@ -387,13 +386,10 @@ fn main() -> Result<(), anyhow::Error> {
 
             let center = match price {
                 Some(price) => price,
-                None => option
-                    .bs_price(now, current_price.btc_price, 0.75)
-                    .try_into()
-                    .unwrap_or(Decimal::from(0)),
+                None => option.bs_price(now, current_price.btc_price, 0.75),
             };
-            let mut price = center / Decimal::from(2);
-            while price - center <= center / Decimal::from(2) {
+            let mut price = center.half();
+            while price - center <= center.half() {
                 option.log_order_data(
                     if price == center { "→" } else { " " },
                     now,
@@ -401,7 +397,7 @@ fn main() -> Result<(), anyhow::Error> {
                     price,
                     None,
                 );
-                price += center / Decimal::from(40);
+                price += center.scale_approx(1.0 / 40.0);
             }
         }
         Command::Connect { api_key } => {

@@ -17,9 +17,9 @@
 //! Functionality to keep track of historic price data
 //!
 
+use crate::units::Price;
 use anyhow::Context;
 use log::info;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt, fs,
@@ -35,12 +35,16 @@ pub struct BitcoinPrice {
     #[serde(with = "time::serde::timestamp")]
     pub timestamp: time::OffsetDateTime,
     /// Price in USD, to 12 decimal places
-    pub btc_price: Decimal,
+    #[serde(
+        deserialize_with = "crate::units::deserialize_dollars",
+        serialize_with = "crate::units::serialize_dollars"
+    )]
+    pub btc_price: Price,
 }
 
 impl BitcoinPrice {
-    /// Turn a `Decimal` into a price at the current timestamp
-    pub fn from_current(num: Decimal) -> BitcoinPrice {
+    /// Turn a `Price` into a price at the current timestamp
+    pub fn from_current(num: Price) -> BitcoinPrice {
         BitcoinPrice {
             timestamp: time::OffsetDateTime::now_utc(),
             btc_price: num,
@@ -56,7 +60,7 @@ impl BitcoinPrice {
             None => return Err(anyhow::Error::msg("CSV line had no timestamp")),
         };
         let price = match data.next() {
-            Some(price) => rust_decimal::Decimal::from_str(price)?,
+            Some(price) => Price::from_str(price)?,
             None => return Err(anyhow::Error::msg("CSV line had no price")),
         };
         // These checks aren't really necessary but are useful as sanity checks

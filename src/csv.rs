@@ -105,6 +105,7 @@ impl_display!(i64);
 impl_display!(u32);
 impl_display!(u64);
 impl_display!(crate::ledgerx::Asset);
+impl_display!(crate::units::Price);
 impl_display!(rust_decimal::Decimal);
 
 macro_rules! impl_string {

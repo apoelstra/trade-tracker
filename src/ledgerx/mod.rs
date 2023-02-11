@@ -278,15 +278,17 @@ impl LedgerX {
                         now,
                         btc_price,
                     );
-                    let clear_price = clear_bid_yield / Decimal::from(clear_bid_size)
-                        * Decimal::from(c.multiplier());
-                    opt.log_order_data(
-                        "      Order to clear: ",
-                        now,
-                        btc_price,
-                        clear_price,
-                        Some(clear_bid_size),
-                    );
+                    if clear_bid_size > 0 {
+                        let clear_price = clear_bid_yield / Decimal::from(clear_bid_size)
+                            * Decimal::from(c.multiplier());
+                        opt.log_order_data(
+                            "      Order to clear: ",
+                            now,
+                            btc_price,
+                            clear_price,
+                            Some(clear_bid_size),
+                        );
+                    }
 
                     let (bid_price, bid_size) = book.best_ask();
                     let (max_bid_size, _) =

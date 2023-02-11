@@ -78,12 +78,14 @@ impl<V> TimeMap<V> {
     {
         let mut max_key_val = None;
         for (k, v) in &self.map {
+            let new_max = maxfn(v);
             if let Some((ref mut key, ref mut max)) = max_key_val {
-                let new_max = maxfn(v);
                 if new_max > *max {
                     *key = *k;
                     *max = new_max;
                 }
+            } else {
+                max_key_val = Some((*k, new_max));
             }
         }
         max_key_val.and_then(|(key, _)| self.map.remove(&key).map(|v| (key.0, v)))

@@ -30,6 +30,8 @@ pub enum Quantity {
     Zero,
     /// An (signed) amount of bitcoin
     Bitcoin(bitcoin::SignedAmount),
+    /// A (signed) number of US dollars, represented in cents
+    Cents(i64),
     /// A (signed) number of contracts
     Contracts(i64),
 }
@@ -66,6 +68,7 @@ impl Quantity {
         match *self {
             Quantity::Bitcoin(btc) => Quantity::Bitcoin(btc.abs()),
             Quantity::Contracts(n) => Quantity::Contracts(n.abs()),
+            Quantity::Cents(n) => Quantity::Cents(n.abs()),
             Quantity::Zero => Quantity::Zero,
         }
     }
@@ -75,6 +78,7 @@ impl Quantity {
         match *self {
             Quantity::Bitcoin(btc) => btc,
             Quantity::Contracts(n) => bitcoin::SignedAmount::from_sat(n * 1_000_000),
+            Quantity::Cents(_) => panic!("tried to convert USD to Bitcoin"),
             Quantity::Zero => bitcoin::SignedAmount::ZERO,
         }
     }
@@ -84,6 +88,7 @@ impl Quantity {
         match *self {
             Quantity::Bitcoin(btc) => !btc.is_negative(),
             Quantity::Contracts(n) => n >= 0,
+            Quantity::Cents(n) => n >= 0,
             Quantity::Zero => true,
         }
     }
@@ -93,6 +98,7 @@ impl Quantity {
         match *self {
             Quantity::Bitcoin(btc) => btc.is_positive(),
             Quantity::Contracts(n) => n > 0,
+            Quantity::Cents(n) => n > 0,
             Quantity::Zero => false,
         }
     }
@@ -102,6 +108,7 @@ impl Quantity {
         match *self {
             Quantity::Bitcoin(btc) => btc.to_sat() != 0,
             Quantity::Contracts(n) => n != 0,
+            Quantity::Cents(n) => n != 0,
             Quantity::Zero => false,
         }
     }
@@ -130,6 +137,7 @@ impl Quantity {
             (Quantity::Zero, _) | (_, Quantity::Zero) => true,
             (Quantity::Bitcoin(_), Quantity::Bitcoin(_)) => true,
             (Quantity::Contracts(_), Quantity::Contracts(_)) => true,
+            (Quantity::Cents(_), Quantity::Cents(_)) => true,
             _ => false,
         }
     }
@@ -186,6 +194,7 @@ impl fmt::Display for Quantity {
         match self {
             Quantity::Bitcoin(btc) => fmt::Display::fmt(&btc, f),
             Quantity::Contracts(n) => write!(f, "{} contracts", n),
+            Quantity::Cents(n) => write!(f, "${}.{:02}", n / 100, n % 100),
             Quantity::Zero => fmt::Display::fmt("ZERO", f),
         }
     }
@@ -208,10 +217,13 @@ impl cmp::PartialOrd for Quantity {
         match (self, other) {
             (Quantity::Bitcoin(amt), Quantity::Bitcoin(other)) => amt.partial_cmp(&other),
             (Quantity::Contracts(n), Quantity::Contracts(other)) => n.partial_cmp(&other),
+            (Quantity::Cents(n), Quantity::Cents(other)) => n.partial_cmp(&other),
             (Quantity::Bitcoin(amt), Quantity::Zero) => amt.to_sat().partial_cmp(&0),
             (Quantity::Zero, Quantity::Bitcoin(amt)) => 0.partial_cmp(&amt.to_sat()),
             (Quantity::Contracts(n), Quantity::Zero) => n.partial_cmp(&0),
             (Quantity::Zero, Quantity::Contracts(n)) => 0.partial_cmp(n),
+            (Quantity::Cents(n), Quantity::Zero) => n.partial_cmp(&0),
+            (Quantity::Zero, Quantity::Cents(n)) => 0.partial_cmp(n),
             _ => None,
         }
     }
@@ -227,6 +239,7 @@ impl ops::Neg for Quantity {
                 bitcoin::SignedAmount::from_sat(-btc.to_sat()),
             ),
             Quantity::Contracts(n) => Quantity::Contracts(-n),
+            Quantity::Cents(n) => Quantity::Cents(-n),
         }
     }
 }
@@ -244,6 +257,7 @@ impl ops::Add for Quantity {
                 (Quantity::Contracts(n), Quantity::Contracts(other)) => {
                     Quantity::Contracts(n + other)
                 }
+                (Quantity::Cents(n), Quantity::Cents(other)) => Quantity::Cents(n + other),
                 _ => panic!("Cannot add {} to {}", other, self),
             }
         }
@@ -305,8 +319,7 @@ impl UnknownQuantity {
         match asset {
             Asset::Btc => Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner)),
             Asset::Eth => unimplemented!("ethereum quantity"),
-            Asset::Usd => Quantity::Contracts(self.inner), // FIXME don't abuse Contracts for
-            // dollars
+            Asset::Usd => Quantity::Cents(self.inner),
             Asset::Option { .. } => Quantity::Contracts(self.inner),
         }
     }
@@ -319,8 +332,7 @@ impl UnknownQuantity {
                 Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner * 1_000_000))
             }
             Asset::Eth => unimplemented!("ethereum quantity"),
-            Asset::Usd => Quantity::Contracts(self.inner), // FIXME don't abuse Contracts for
-            // dollars
+            Asset::Usd => Quantity::Cents(self.inner),
             Asset::Option { .. } => Quantity::Contracts(self.inner),
         }
     }

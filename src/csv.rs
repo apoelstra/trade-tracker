@@ -108,6 +108,7 @@ impl PrintCsv for crate::units::Quantity {
         use bitcoin::util::amount::Denomination::Bitcoin;
         match *self {
             crate::units::Quantity::Bitcoin(btc) => fmt::Display::fmt(&btc.display_in(Bitcoin), f),
+            crate::units::Quantity::Cents(n) => write!(f, "{}.{:02}", n / 100, n % 100),
             crate::units::Quantity::Contracts(n) => fmt::Display::fmt(&n, f),
             crate::units::Quantity::Zero => f.write_str("0"),
         }

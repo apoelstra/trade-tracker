@@ -557,6 +557,7 @@ impl History {
                         Quantity::Zero => 0,
                         Quantity::Bitcoin(btc) => btc.to_sat() as u64,
                         Quantity::Contracts(_) => unreachable!("deposit of so many contracts"),
+                        Quantity::Cents(_) => unreachable!("USD deposits not supported yet"),
                     };
                     let mut just_make_something_up = false;
                     let mut deposit_outpoint = bitcoin::OutPoint::default();

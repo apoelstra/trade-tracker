@@ -154,6 +154,10 @@ impl ops::Mul<Quantity> for Price {
         match other {
             Quantity::Bitcoin(btc) => Price(self.0 * Decimal::new(btc.to_sat(), 8)),
             Quantity::Contracts(n) => Price(self.0 * Decimal::new(n, 2)),
+            Quantity::Cents(_) => panic!(
+                "Tried to multiply price {} by dollar-quantity {}",
+                self, other
+            ),
             Quantity::Zero => Price::ZERO,
         }
     }
@@ -170,6 +174,10 @@ impl ops::Div<Quantity> for Price {
         match other {
             Quantity::Bitcoin(btc) => Price(self.0 / Decimal::new(btc.to_sat(), 8)),
             Quantity::Contracts(n) => Price(self.0 / Decimal::new(n, 2)),
+            Quantity::Cents(_) => panic!(
+                "Tried to divide price {} by dollar-quantity {}",
+                self, other
+            ),
             Quantity::Zero => unreachable!(),
         }
     }

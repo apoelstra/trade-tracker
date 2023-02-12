@@ -422,6 +422,7 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
                 }
             }
             Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.label),
+            Quantity::Cents(_) => panic!("tried to write out a sale of dollars as a tax event"),
             Quantity::Zero => "0".into(), // maybe we should just panic here
         };
 

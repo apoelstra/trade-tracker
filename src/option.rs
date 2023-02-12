@@ -420,6 +420,7 @@ impl Option {
                 let logsize = match size {
                     Quantity::Zero => f64::MIN,
                     Quantity::Bitcoin(_) => unreachable!(),
+                    Quantity::Cents(n) => (n as f64).log10(),
                     Quantity::Contracts(n) => (n as f64).log10(),
                 };
                 let total = self_price * size;

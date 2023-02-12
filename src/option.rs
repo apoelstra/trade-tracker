@@ -18,7 +18,7 @@
 //!
 
 use crate::terminal::{format_color, format_redgreen};
-use crate::units::Price;
+use crate::units::{Price, Quantity};
 use log::info;
 use std::{fmt, str};
 use time::OffsetDateTime;
@@ -187,16 +187,16 @@ impl Option {
     /// we could short on LX without running out of cash/collateral.
     ///
     /// Assumes a fee on puts of $25/100 contracts. Returns the number of contracts
-    /// that could be sold along with the cost in USD of each
+    /// that could be sold along with the cost in USD of every 100 contracts
     pub fn max_sale(
         &self,
         sale_price: Price,
         available_usd: Price,
         available_btc: bitcoin::Amount,
-    ) -> (u64, Price) {
+    ) -> (Quantity, Price) {
         match self.pc {
             // For a call, we can sell as many as we have BTC to support
-            Call => ((available_btc.to_btc() * 100.0).floor() as u64, Price::ZERO),
+            Call => (Quantity::contracts_from_btc(available_btc), Price::ZERO),
             // For a put it's a little more involved
             Put => {
                 if sale_price > self.strike {
@@ -204,11 +204,13 @@ impl Option {
                     // than the strike price, so any buyers would be buying the right to get
                     // some (but not all) of their money back in exchange for a coin. To avoid
                     // it causing us grief we just return 0s rather than computing crazy numbers.
-                    return (0, Price::ZERO);
+                    return (Quantity::Zero, Price::ZERO);
                 }
                 let locked_per_100 = self.strike - sale_price + crate::price!(25);
-                let locked_per_1 = locked_per_100.one_hundredth();
-                ((available_usd / locked_per_1).round() as u64, locked_per_1)
+                (
+                    Quantity::contracts_from_ratio(available_usd, locked_per_100),
+                    locked_per_100,
+                )
             }
         }
     }
@@ -385,7 +387,7 @@ impl Option {
         now: OffsetDateTime,
         btc_price: Price,
         self_price: Price,
-        size: std::option::Option<u64>,
+        size: std::option::Option<Quantity>,
     ) {
         let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(now, btc_price, self_price) {
             let theta = self.bs_theta(now, btc_price, vol);
@@ -415,10 +417,15 @@ impl Option {
                 3.0
             ),
             if let Some(size) = size {
-                let total = self_price.times_option_qty(size as i64);
+                let logsize = match size {
+                    Quantity::Zero => f64::MIN,
+                    Quantity::Bitcoin(_) => unreachable!(),
+                    Quantity::Contracts(n) => (n as f64).log10(),
+                };
+                let total = self_price * size;
                 format!(
                     " × {} = {}",
-                    format_redgreen(format_args!("{size:4}"), (size as f64).log10(), 1.0, 4.0),
+                    format_redgreen(format_args!("{size:4}"), logsize, 1.0, 4.0),
                     format_redgreen(
                         format_args!("{total:8.2}"),
                         total.to_approx_f64().log10(),

@@ -194,16 +194,16 @@ pub enum DataFeedObject {
         order_type: String,
         #[serde(deserialize_with = "crate::units::deserialize_cents")]
         price: Price,
-        size: u64,
+        size: i64,
         #[serde(deserialize_with = "crate::units::deserialize_cents")]
         inserted_price: Price,
-        inserted_size: u64,
+        inserted_size: i64,
         #[serde(deserialize_with = "crate::units::deserialize_cents")]
         filled_price: Price,
-        filled_size: u64,
+        filled_size: i64,
         #[serde(deserialize_with = "crate::units::deserialize_cents")]
         original_price: Price,
-        original_size: u64,
+        original_size: i64,
         is_ask: bool,
         /// Whether the order auto-cancels at 4PM
         is_volatile: bool,
@@ -249,10 +249,10 @@ pub enum DataFeedObject {
         contract_id: super::ContractId,
         #[serde(default, deserialize_with = "crate::units::deserialize_cents")]
         ask: Price,
-        ask_size: u64,
+        ask_size: i64,
         #[serde(default, deserialize_with = "crate::units::deserialize_cents")]
         bid: Price,
-        bid_size: u64,
+        bid_size: i64,
         /// "The current clock for the entire contract"
         clock: u64,
     },
@@ -278,7 +278,7 @@ pub struct BookState {
     pub is_ask: bool,
     #[serde(default, deserialize_with = "crate::units::deserialize_cents")]
     pub price: Price,
-    pub size: u64,
+    pub size: i64,
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@
 //! Data Structures etc for the LedgerX API
 //!
 
-use crate::units::{BudgetAsset, TaxAsset, Underlying};
+use crate::units::{Asset, BudgetAsset, TaxAsset, Underlying};
 use crate::{ledgerx::json, option};
 use serde::Deserialize;
 use std::{convert::TryFrom, fmt};
@@ -92,6 +92,21 @@ impl Contract {
     /// Type of the contract
     pub fn ty(&self) -> Type {
         self.ty
+    }
+
+    /// If this contract represents an asset we track for tax purposes, return it
+    pub fn asset(&self) -> Asset {
+        match self.ty {
+            Type::Option { opt, .. } => Asset::Option {
+                underlying: self.underlying,
+                option: opt,
+            },
+            Type::NextDay { .. } => match self.underlying {
+                Underlying::Btc => Asset::Btc,
+                Underlying::Eth => Asset::Eth,
+            },
+            Type::Future { .. } => unimplemented!("futures"),
+        }
     }
 
     /// If this contract represents an asset we track for tax purposes, return it

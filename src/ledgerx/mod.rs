@@ -25,26 +25,25 @@ pub mod history;
 pub mod json;
 
 use crate::terminal::format_color;
-use crate::units::{Price, Underlying};
+use crate::units::{Price, Quantity, Underlying};
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json;
-use std::cmp;
 use std::collections::HashMap;
 use time::OffsetDateTime;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
-pub use datafeed::{BidAsk::Ask, BidAsk::Bid, ManifestId, Order};
+pub use datafeed::{BidAsk::Ask, BidAsk::Bid, ManifestId};
 pub use history::tax::LotId;
 
 /// Thresholds of interestingness
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct Interestingness {
     pub min_arr: f64,
     pub min_vol: f64,
     pub max_loss80: f64,
-    pub min_size: u64,
+    pub min_size: Quantity,
     pub min_yield_per_week: Price,
 }
 
@@ -53,7 +52,7 @@ pub static BID_INTERESTING: Interestingness = Interestingness {
     min_arr: 0.05,
     min_vol: 0.5,
     max_loss80: 0.20,
-    min_size: 1,
+    min_size: Quantity::Contracts(1),
     min_yield_per_week: Price::TWENTY_FIVE,
 };
 /// Threshold for a ask to be interesting enough for us to match
@@ -61,7 +60,7 @@ pub static ASK_INTERESTING: Interestingness = Interestingness {
     min_arr: 0.10,
     min_vol: 0.75,
     max_loss80: 0.10,
-    min_size: 1,
+    min_size: Quantity::Contracts(1),
     min_yield_per_week: Price::TWENTY_FIVE,
 };
 
@@ -72,7 +71,7 @@ impl Interestingness {
         now: OffsetDateTime,
         btc_price: Price,
         order_price: Price,
-        order_size: u64,
+        order_size: Quantity,
     ) -> bool {
         // Easy check: size
         if order_size < self.min_size {
@@ -81,7 +80,7 @@ impl Interestingness {
         let min_yield = self
             .min_yield_per_week
             .scale_approx(opt.years_to_expiry(now) * 52.0);
-        if order_price.times_option_qty(order_size as i64) < min_yield {
+        if order_price * order_size < min_yield {
             return false;
         }
         // Next, if the option is "free money" we consider it uninteresting for
@@ -150,7 +149,7 @@ pub enum UpdateResponse {
     /// Update was accepted; no new interesting info
     Accepted,
     /// Order was ignored because we didn't know the contract
-    UnknownContract(Order),
+    UnknownContract(datafeed::Order),
     /// Order was ignored because it wasn't a bitcoin order
     NonBtcOrder,
     /// Update was accepted and was for a day-ahead sway
@@ -232,7 +231,7 @@ impl LedgerX {
                 // Compute yield from matching best ask, with as much money as we can
                 let (ask_price, _) = book.best_ask();
                 let (ask_size, _) = opt.max_sale(ask_price, self.available_usd, self.available_btc);
-                let ask_yield = ask_price.times_option_qty(ask_size as i64);
+                let ask_yield = ask_price * ask_size;
 
                 // only options where we could maybe make $100/wk
                 let yield_limit = Price::ONE_HUNDRED.scale_approx(opt.years_to_expiry(now) * 52.0);
@@ -243,8 +242,8 @@ impl LedgerX {
                         now,
                         btc_price,
                     );
-                    if clear_bid_size > 0 {
-                        let clear_price = clear_bid_yield.div_option_qty(clear_bid_size as i64);
+                    if clear_bid_size.is_positive() {
+                        let clear_price = clear_bid_yield * clear_bid_size;
                         opt.log_order_data(
                             "      Order to clear: ",
                             now,
@@ -262,7 +261,7 @@ impl LedgerX {
                         now,
                         btc_price,
                         bid_price,
-                        Some(cmp::min(bid_size, max_bid_size)),
+                        Some(bid_size.min(max_bid_size)),
                     );
                     opt.log_order_data(
                         " Best ask  (matched): ",
@@ -294,7 +293,8 @@ impl LedgerX {
     /// at the current price, and if so, we print a log message.
     pub fn add_contract(&mut self, c: Contract) {
         info!("Add contract {}: {}", c.id(), c.label());
-        self.contracts.insert(c.id(), (c, BookState::new()));
+        let asset = c.asset();
+        self.contracts.insert(c.id(), (c, BookState::new(asset)));
     }
 
     /// Remove a contract from the tracker
@@ -307,7 +307,7 @@ impl LedgerX {
     }
 
     /// Inserts a new order into the book
-    pub fn insert_order(&mut self, order: Order) -> UpdateResponse {
+    pub fn insert_order(&mut self, order: datafeed::Order) -> UpdateResponse {
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => {
@@ -363,7 +363,7 @@ impl LedgerX {
         timestamp: OffsetDateTime,
     ) {
         for order in data.data.book_states {
-            self.insert_order(Order::from((order, timestamp)));
+            self.insert_order(datafeed::Order::from((order, timestamp)));
         }
         self.log_interesting_contract(data.data.contract_id);
     }

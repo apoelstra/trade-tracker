@@ -19,11 +19,11 @@
 //! smell and should be replaced by one of these.
 //!
 
-use crate::units::Asset;
-use std::{fmt, iter, ops};
+use crate::units::{Asset, Price};
+use std::{cmp, fmt, iter, ops};
 
 /// A tradeable quantity of some object
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Quantity {
     /// A unitless zero
     Zero,
@@ -34,6 +34,27 @@ pub enum Quantity {
 }
 
 impl Quantity {
+    /// Constructs a quantity of contracts by multiplying a number of BTC by 100
+    pub fn contracts_from_ratio(available: Price, price_per_100: Price) -> Quantity {
+        let n = (100.0 * (available / price_per_100)).floor() as i64;
+        Quantity::Contracts(n)
+    }
+
+    /// Constructs a quantity of bitcoin by dividing a number of contracts by 100
+    pub fn btc_from_contracts(n: i64) -> Quantity {
+        Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(n * 1_000_000))
+    }
+
+    /// Constructs a quantity of contracts by multiplying a number of BTC by 100
+    pub fn contracts_from_btc(btc: bitcoin::Amount) -> Quantity {
+        Quantity::Contracts(btc.to_sat() as i64 / 1_000_000)
+    }
+
+    /// Constructs a quantity of contracts by multiplying a number of BTC by 100
+    pub fn contracts_from_signed_btc(btc: bitcoin::SignedAmount) -> Quantity {
+        Quantity::Contracts(btc.to_sat() / 1_000_000)
+    }
+
     /// Constructs a quantity from a number of contracts
     pub fn from_contracts(n: i64) -> Quantity {
         Quantity::Contracts(n)
@@ -45,6 +66,15 @@ impl Quantity {
             Quantity::Bitcoin(btc) => Quantity::Bitcoin(btc.abs()),
             Quantity::Contracts(n) => Quantity::Contracts(n.abs()),
             Quantity::Zero => Quantity::Zero,
+        }
+    }
+
+    /// Returns the number of BTC for a Bitcoin quantity, or the number of contracts / 100
+    pub fn btc_equivalent(&self) -> bitcoin::SignedAmount {
+        match *self {
+            Quantity::Bitcoin(btc) => btc,
+            Quantity::Contracts(n) => bitcoin::SignedAmount::from_sat(n * 1_000_000),
+            Quantity::Zero => bitcoin::SignedAmount::ZERO,
         }
     }
 
@@ -66,13 +96,18 @@ impl Quantity {
         }
     }
 
-    /// Whether this is a positive number
+    /// Whether this is a nonzero number
     pub fn is_nonzero(&self) -> bool {
         match *self {
             Quantity::Bitcoin(btc) => btc.to_sat() != 0,
             Quantity::Contracts(n) => n != 0,
             Quantity::Zero => false,
         }
+    }
+
+    /// Whether this represents zero
+    pub fn is_zero(&self) -> bool {
+        !self.is_nonzero()
     }
 
     /// Whether this has the same sign as some other quantity
@@ -97,6 +132,52 @@ impl Quantity {
             _ => false,
         }
     }
+
+    /// Whether this quantity has the same units as some other quantity
+    ///
+    /// # Panics
+    ///
+    /// Panics if the two quantites differ in units. To check this, call
+    /// [Quantity::has_same_unit] before calling this method.
+    pub fn min(&self, other: Quantity) -> Quantity {
+        match (*self, other) {
+            (Quantity::Bitcoin(btc), Quantity::Zero) => {
+                if btc.is_positive() {
+                    *self
+                } else {
+                    other
+                }
+            }
+            (Quantity::Zero, Quantity::Bitcoin(btc)) => {
+                if btc.is_positive() {
+                    other
+                } else {
+                    *self
+                }
+            }
+            (Quantity::Contracts(n), Quantity::Zero) => {
+                if n >= 0 {
+                    *self
+                } else {
+                    other
+                }
+            }
+            (Quantity::Zero, Quantity::Contracts(n)) => {
+                if n < 0 {
+                    *self
+                } else {
+                    other
+                }
+            }
+            (Quantity::Bitcoin(btc), Quantity::Bitcoin(other)) => {
+                Quantity::Bitcoin(cmp::min(btc, other))
+            }
+            (Quantity::Contracts(n), Quantity::Contracts(other)) => {
+                Quantity::Contracts(cmp::min(n, other))
+            }
+            _ => panic!("Cannot take minimum of {} and {}", self, other),
+        }
+    }
 }
 
 impl fmt::Display for Quantity {
@@ -118,6 +199,20 @@ impl From<bitcoin::SignedAmount> for Quantity {
 impl From<bitcoin::Amount> for Quantity {
     fn from(amt: bitcoin::Amount) -> Quantity {
         Quantity::Bitcoin(amt.to_signed().expect("can this overflow even happen"))
+    }
+}
+
+impl cmp::PartialOrd for Quantity {
+    fn partial_cmp(&self, other: &Quantity) -> Option<cmp::Ordering> {
+        match (self, other) {
+            (Quantity::Bitcoin(amt), Quantity::Bitcoin(other)) => amt.partial_cmp(&other),
+            (Quantity::Contracts(n), Quantity::Contracts(other)) => n.partial_cmp(&other),
+            (Quantity::Bitcoin(amt), Quantity::Zero) => amt.to_sat().partial_cmp(&0),
+            (Quantity::Zero, Quantity::Bitcoin(amt)) => 0.partial_cmp(&amt.to_sat()),
+            (Quantity::Contracts(n), Quantity::Zero) => n.partial_cmp(&0),
+            (Quantity::Zero, Quantity::Contracts(n)) => 0.partial_cmp(n),
+            _ => None,
+        }
     }
 }
 
@@ -192,7 +287,13 @@ pub struct UnknownQuantity {
 }
 
 impl UnknownQuantity {
-    pub fn set_asset(&self, asset: Asset) -> Quantity {
+    /// Consruct a unknown quantity from an integer number of base units
+    pub fn from_i64(n: i64) -> UnknownQuantity {
+        UnknownQuantity { inner: n }
+    }
+
+    /// Define the quantity based on a given asset
+    pub fn with_asset(&self, asset: Asset) -> Quantity {
         match asset {
             Asset::Btc => {
                 assert!(self.inner >= 0, "negative quantity of Bitcoins");

@@ -17,33 +17,37 @@
 //! Tracks the book state for a specific contract
 //!
 
-use super::{Ask, Bid, ManifestId, Order};
+use super::{datafeed, Ask, Bid, ManifestId};
 use crate::option::{Call, Put};
 use crate::terminal::format_color;
-use crate::units::Price;
+use crate::units::{Asset, Price, Quantity, UnknownQuantity};
 use log::info;
-use std::cmp;
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 /// Book state for a specific contract
-#[derive(Clone, PartialEq, Eq, Debug, Default, Hash)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct BookState {
+    asset: Asset,
     bids: BTreeMap<(Price, ManifestId), Order>,
     asks: BTreeMap<(Price, ManifestId), Order>,
 }
 
 impl BookState {
     /// Create a new empty book state
-    pub fn new() -> BookState {
-        Default::default()
+    pub fn new(asset: Asset) -> BookState {
+        BookState {
+            asset,
+            bids: BTreeMap::new(),
+            asks: BTreeMap::new(),
+        }
     }
 
     /// Add an order to the book
-    pub fn insert_order(&mut self, order: Order) {
-        let book = match order.bid_ask {
-            Bid => &mut self.bids,
-            Ask => &mut self.asks,
+    pub fn insert_order(&mut self, order: datafeed::Order) {
+        let (size, book) = match order.bid_ask {
+            Bid => (order.size, &mut self.bids),
+            Ask => (-order.size, &mut self.asks),
         };
 
         // Annoyingly the price on a cancelled order is set to 0 (which I suppose makes
@@ -55,34 +59,41 @@ impl BookState {
         // So we have to scan the whole book to find the mid.
         book.retain(|(_, mid), _| *mid != order.manifest_id);
         if order.size > 0 {
-            book.insert((order.price, order.manifest_id), order);
+            let book_order = Order {
+                price: order.price,
+                size: UnknownQuantity::from_i64(size).with_asset(self.asset),
+                manifest_id: order.manifest_id,
+                timestamp: order.timestamp,
+                last_log: None,
+            };
+            book.insert((order.price, order.manifest_id), book_order);
         }
     }
 
     /// Return the price and size of the best bid, or (0, 0) if there is none
-    pub fn best_bid(&self) -> (Price, u64) {
+    pub fn best_bid(&self) -> (Price, Quantity) {
         if let Some((_, last)) = self.bids.iter().rev().next() {
             (last.price, last.size)
         } else {
-            (Price::ZERO, 0)
+            (Price::ZERO, Quantity::Zero)
         }
     }
 
     /// Return the price and size of the best ask, or (0, 0) if there is none
-    pub fn best_ask(&self) -> (Price, u64) {
+    pub fn best_ask(&self) -> (Price, Quantity) {
         if let Some((_, last)) = self.asks.iter().next() {
             (last.price, last.size)
         } else {
-            (Price::ZERO, 0)
+            (Price::ZERO, Quantity::Zero)
         }
     }
 
     /// Returns the (gain in contracts, cost in USD) of buying into every offer
-    pub fn clear_asks(&self) -> (u64, Price) {
+    pub fn clear_asks(&self) -> (Quantity, Price) {
         let mut ret_usd = Price::ZERO;
-        let mut ret_contr = 0;
+        let mut ret_contr = Quantity::Zero;
         for (_, order) in self.asks.iter() {
-            ret_usd += order.price.times_option_qty(order.size as i64);
+            ret_usd += order.price * order.size;
             ret_contr += order.size;
         }
         (ret_contr, ret_usd)
@@ -94,21 +105,25 @@ impl BookState {
         option: &crate::option::Option,
         mut max_usd: Price,
         mut max_btc: bitcoin::Amount,
-    ) -> (u64, Price) {
+    ) -> (Quantity, Price) {
         let mut ret_usd = Price::ZERO;
-        let mut ret_contr = 0;
+        let mut ret_contr = Quantity::Zero;
         for (_, order) in self.bids.iter() {
-            let (max_sale, usd_per_contract) = option.max_sale(order.price, max_usd, max_btc);
-            let sale = cmp::min(max_sale, order.size);
-            if sale == 0 {
+            let (max_sale, usd_per_100) = option.max_sale(order.price, max_usd, max_btc);
+            let sale = max_sale.min(order.size);
+            if sale.is_zero() {
                 break;
             }
+            assert!(
+                sale.is_nonnegative(),
+                "somehow our maximum sale amount is negative"
+            );
 
-            ret_usd += order.price.times_option_qty(sale as i64);
+            ret_usd += order.price * sale;
             ret_contr += sale;
             match option.pc {
-                Call => max_btc -= bitcoin::Amount::from_sat(sale * 1_000_000),
-                Put => max_usd -= usd_per_contract.times_option_qty(sale as i64),
+                Call => max_btc -= sale.btc_equivalent().to_unsigned().unwrap(),
+                Put => max_usd -= usd_per_100 * sale,
             }
         }
         (ret_contr, ret_usd)
@@ -124,7 +139,7 @@ impl BookState {
         available_btc: bitcoin::Amount,
     ) {
         let (best_bid, _) = self.best_bid();
-        let mut bid_depth = 0;
+        let mut bid_depth = Quantity::Zero;
         for bid in self.bids.values_mut().rev() {
             // Don't bother logging bids that are less than 50% of the best
             if bid.price < best_bid.half() {
@@ -133,7 +148,7 @@ impl BookState {
             // Similarly, if you need to sell more than 100 contracts to get
             // this bid, don't bother logging. If it were interesting, the
             // better ones would be interesting too.
-            if bid_depth > 100 {
+            if bid_depth > Quantity::Contracts(100) {
                 break;
             }
             bid_depth += bid.size;
@@ -149,7 +164,7 @@ impl BookState {
         }
 
         let (best_ask, _) = self.best_ask();
-        let mut ask_depth = 0;
+        let mut ask_depth = Quantity::Zero;
         for ask in self.asks.values_mut() {
             // Don't bother logging asks that are more than 200% of the best
             if ask.price < best_ask.double() {
@@ -158,7 +173,7 @@ impl BookState {
             // Similarly, if you need to sell more than 100 contracts to get
             // this ask, don't bother logging. If it were interesting, the
             // better ones would be interesting too.
-            if ask_depth > 100 {
+            if ask_depth > Quantity::Contracts(100) {
                 break;
             }
             ask_depth += ask.size;
@@ -173,6 +188,21 @@ impl BookState {
             );
         }
     }
+}
+
+/// An order, as recorded in the orderbook
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub struct Order {
+    /// The price at which the order is placed
+    pub price: Price,
+    /// The (signed) quantity
+    pub size: Quantity,
+    /// ID of the manifest
+    pub manifest_id: ManifestId,
+    /// Timestamp that the order occured on
+    pub timestamp: OffsetDateTime,
+    /// The most recent time this order was logged as "interesting"
+    pub last_log: Option<OffsetDateTime>,
 }
 
 fn log_bid_if_interesting(
@@ -198,7 +228,7 @@ fn log_bid_if_interesting(
     // take. Puts especially may seem worthwhile but unless we have
     // a big pile of cash on hand, we can only get a couple bucks out.
     let (max_size, _) = opt.max_sale(order.price, available_usd, available_btc);
-    let order_size = cmp::min(max_size, order.size);
+    let order_size = max_size.min(order.size);
     // For bids, we need to be able to compute volatility (otherwise
     // this is a "free money" bid, which we don't want to be short.
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order_size) {
@@ -239,8 +269,10 @@ fn log_ask_if_interesting(
     // can open a delta-neutral position which is guaranteed to pay out
     if order.price < opt.intrinsic_value(btc_price) {
         let profit100 = opt.intrinsic_value(btc_price) - order.price;
-        let max_buy100 = cmp::min(order.size, (100.0 * (available_usd / order.price)) as u64);
-        let max_profit = profit100.times_option_qty(max_buy100 as i64);
+        let max_buy100 = order
+            .size
+            .min(Quantity::contracts_from_ratio(available_usd, order.price));
+        let max_profit = profit100 * max_buy100;
         // Don't bother if there is less than $100 to be made
         if max_profit < Price::ONE_HUNDRED {
             return;

@@ -85,24 +85,6 @@ impl Price {
     pub fn half(&self) -> Price {
         Price(self.0 / Decimal::from(2))
     }
-
-    /// Multiplies a price by a given number of contract units
-    #[deprecated = "will be replaced with better units"]
-    pub fn times_option_qty(&self, qty: i64) -> Price {
-        Price(self.0 * Decimal::new(qty, 2))
-    }
-
-    /// Divides a price by a given number of contract units
-    #[deprecated = "will be replaced with better units"]
-    pub fn div_option_qty(&self, qty: i64) -> Price {
-        Price(self.0 / Decimal::new(qty, 2))
-    }
-
-    /// Divides a price by a given number of BTC units
-    #[deprecated = "will be replaced with better units"]
-    pub fn div_btc_qty(&self, qty: i64) -> Price {
-        Price(self.0 / Decimal::new(qty, 8))
-    }
 }
 
 impl From<Decimal> for Price {

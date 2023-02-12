@@ -696,9 +696,7 @@ impl History {
                             (date, false)
                         };
                     if is_btc {
-                        // FIXME don't do this explicitly
-                        let adj_size =
-                            Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(*size * 1_000_000));
+                        let adj_size = Quantity::btc_from_contracts(*size);
                         let open = tax::Lot::from_trade_btc(*price, adj_size, *fee, tax_date);
                         tracker.push_lot(&label, open, date);
                     } else {
@@ -757,10 +755,7 @@ impl History {
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), Underlying::Btc);
-                            // FIXME this should also be encapsulated
-                            let contracts_in_btc = Quantity::Bitcoin(
-                                bitcoin::SignedAmount::from_sat(*assigned_size * 1_000_000),
-                            );
+                            let contracts_in_btc = Quantity::btc_from_contracts(*assigned_size);
                             let open = tax::Lot::from_trade_btc(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.

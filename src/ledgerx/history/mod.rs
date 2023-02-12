@@ -18,10 +18,9 @@
 //!
 
 use crate::csv::{self, CsvPrinter};
-use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying};
+use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying, UnknownQuantity};
 use anyhow::Context;
 use log::{debug, info, warn};
-use rust_decimal::Decimal;
 use serde::{de, Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -55,8 +54,7 @@ struct DepositAddress {
 
 #[derive(Deserialize, Debug)]
 struct Deposit {
-    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
-    amount: bitcoin::Amount,
+    amount: UnknownQuantity,
     #[serde(deserialize_with = "crate::units::deserialize_name_deposit_asset")]
     asset: DepositAsset,
     deposit_address: DepositAddress,
@@ -81,7 +79,7 @@ impl Deposits {
 
 #[derive(Deserialize, Debug)]
 struct Withdrawal {
-    amount: i64,
+    amount: UnknownQuantity,
     // Note: withdrawals don't have the extra "name" indirection for some reason
     asset: DepositAsset,
     #[serde(deserialize_with = "deserialize_datetime")]
@@ -117,7 +115,7 @@ struct Trade {
     execution_time: OffsetDateTime,
     #[serde(deserialize_with = "crate::units::deserialize_cents")]
     filled_price: Price,
-    filled_size: i64,
+    filled_size: UnknownQuantity,
     side: Side,
     #[serde(deserialize_with = "crate::units::deserialize_cents")]
     fee: Price,
@@ -189,24 +187,24 @@ impl Positions {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Event {
     Deposit {
-        amount: bitcoin::Amount,
+        amount: Quantity,
         address: bitcoin::Address,
         asset: DepositAsset,
     },
     Withdrawal {
-        amount: Decimal,
+        amount: Quantity,
         asset: DepositAsset,
     },
     Trade {
         contract: super::Contract,
         price: Price,
-        size: i64,
+        size: Quantity,
         fee: Price,
     },
     Expiry {
         contract: super::Contract,
-        assigned_size: i64,
-        expired_size: i64,
+        assigned_size: Quantity,
+        expired_size: Quantity,
     },
 }
 
@@ -289,11 +287,7 @@ impl History {
             self.events.insert(
                 dep.created_at,
                 Event::Deposit {
-                    amount: match dep.asset {
-                        DepositAsset::Btc => dep.amount,
-                        DepositAsset::Usd => unimplemented!("USD deposits"),
-                        DepositAsset::Eth => unimplemented!("ethereum deposits"),
-                    },
+                    amount: dep.amount.with_asset(dep.asset.into()),
                     address: bitcoin::Address::from_str(&dep.deposit_address.address)
                         .expect("bitcoin address from LX was not a valid BTC address"),
                     asset: dep.asset,
@@ -308,11 +302,7 @@ impl History {
             self.events.insert(
                 withd.created_at,
                 Event::Withdrawal {
-                    amount: match withd.asset {
-                        DepositAsset::Btc => Decimal::new(withd.amount, 8),
-                        DepositAsset::Usd => Decimal::new(withd.amount, 2),
-                        DepositAsset::Eth => unimplemented!("ethereum withdrawals"),
-                    },
+                    amount: withd.amount.with_asset(withd.asset.into()),
                     asset: withd.asset,
                 },
             );
@@ -326,22 +316,24 @@ impl History {
         contracts: &HashMap<String, super::Contract>,
     ) -> Result<(), anyhow::Error> {
         for trade in &trades.data {
+            let contract = match contracts.get(&trade.contract_id) {
+                Some(contract) => contract.clone(),
+                None => {
+                    return Err(anyhow::Error::msg(format!(
+                        "Unknown contract ID {}",
+                        trade.contract_id
+                    )))
+                }
+            };
+            let asset = contract.asset();
             self.events.insert(
                 trade.execution_time,
                 Event::Trade {
-                    contract: match contracts.get(&trade.contract_id) {
-                        Some(contract) => contract.clone(),
-                        None => {
-                            return Err(anyhow::Error::msg(format!(
-                                "Unknown contract ID {}",
-                                trade.contract_id
-                            )))
-                        }
-                    },
+                    contract,
                     price: trade.filled_price,
                     size: match trade.side {
-                        Side::Bid => trade.filled_size,
-                        Side::Ask => -trade.filled_size,
+                        Side::Bid => trade.filled_size.with_asset_trade(asset),
+                        Side::Ask => -trade.filled_size.with_asset_trade(asset),
                     },
                     fee: trade.fee,
                 },
@@ -381,8 +373,8 @@ impl History {
                 pos.contract.expiry(),
                 Event::Expiry {
                     contract: pos.contract.clone(),
-                    assigned_size: assigned,
-                    expired_size: expired,
+                    assigned_size: UnknownQuantity::from(assigned).with_asset(pos.contract.asset()),
+                    expired_size: UnknownQuantity::from(expired).with_asset(pos.contract.asset()),
                 },
             );
         }
@@ -409,7 +401,7 @@ impl History {
                         "Deposit",
                         date_fmt,
                         BudgetAsset::from(*asset),
-                        (None, Decimal::new(amount.to_sat() as i64, 8)),
+                        (None, *amount),
                         (btc_price, None, None),
                     )),
                     None,
@@ -435,7 +427,7 @@ impl History {
                             "Trade",
                             date_fmt,
                             contract.budget_asset().unwrap(),
-                            (Some(*price), Decimal::from(*size)),
+                            (Some(*price), *size),
                             (
                                 btc_price,
                                 Some(csv::Iv(opt.bs_iv(date, btc_price, *price))),
@@ -449,7 +441,7 @@ impl History {
                             "Trade",
                             date_fmt,
                             contract.budget_asset().unwrap(),
-                            (Some(*price), Decimal::from(*size)),
+                            (Some(*price), *size),
                             (btc_price, None, None),
                         )),
                         None,
@@ -468,21 +460,21 @@ impl History {
                             "X",
                             date_fmt,
                             contract.budget_asset().unwrap(),
-                            (None, Decimal::ZERO),
+                            (None, Quantity::Zero),
                             (btc_price, None, None),
                         );
                         let mut expiry_csv = None;
-                        if *expired_size != 0 {
+                        if expired_size.is_nonzero() {
                             let mut csv_copy = csv;
                             csv_copy.0 = "Expiry";
-                            csv_copy.3 .1 = Decimal::from(*expired_size);
+                            csv_copy.3 .1 = *expired_size;
                             expiry_csv = Some(csv_copy);
                         }
                         let mut assign_csv = None;
-                        if *assigned_size != 0 {
+                        if assigned_size.is_nonzero() {
                             let mut csv_copy = csv;
                             csv_copy.0 = "Assignment";
-                            csv_copy.3 .1 = Decimal::from(*assigned_size);
+                            csv_copy.3 .1 = *assigned_size;
                             assign_csv = Some(csv_copy);
                         }
                         (expiry_csv, assign_csv)
@@ -490,7 +482,7 @@ impl History {
                     // NextDays don't expire, they are "assigned". We don't log this as a distinct
                     // event because we consider the originating trade to be the actual event.
                     super::contract::Type::NextDay { .. } => {
-                        assert_eq!(*expired_size, 0);
+                        assert!(expired_size.is_zero());
                         (None, None)
                     }
                     // TBH I don't know what happens with futures
@@ -561,7 +553,11 @@ impl History {
                     }
                     debug!("[deposit] \"BTC\" {} @ {}", btc_price, amount);
 
-                    let mut amount_sat = amount.to_sat();
+                    let mut amount_sat = match amount {
+                        Quantity::Zero => 0,
+                        Quantity::Bitcoin(btc) => btc.to_sat() as u64,
+                        Quantity::Contracts(_) => unreachable!("deposit of so many contracts"),
+                    };
                     let mut just_make_something_up = false;
                     let mut deposit_outpoint = bitcoin::OutPoint::default();
                     if let Some((tx, vout)) =
@@ -696,12 +692,10 @@ impl History {
                             (date, false)
                         };
                     if is_btc {
-                        let adj_size = Quantity::btc_from_contracts(*size);
-                        let open = tax::Lot::from_trade_btc(*price, adj_size, *fee, tax_date);
+                        let open = tax::Lot::from_trade_btc(*price, *size, *fee, tax_date);
                         tracker.push_lot(&label, open, date);
                     } else {
-                        let adj_size = Quantity::Contracts(*size);
-                        let open = tax::Lot::from_trade_opt(*price, adj_size, *fee, tax_date);
+                        let open = tax::Lot::from_trade_opt(*price, *size, *fee, tax_date);
                         tracker.push_lot(&label, open, date);
                     }
                 }
@@ -720,13 +714,13 @@ impl History {
                     // also expire, but dayaheads we treat as sales at the time of sale, and
                     // futures we don't support.
                     if let Some(opt) = contract.as_option() {
-                        if *expired_size != 0 {
+                        if expired_size.is_nonzero() {
                             let open = tax::Lot::from_expiry(&opt, *expired_size);
                             tracker.push_lot(&label, open, date);
                         }
 
                         // An assignment is also a trade
-                        if *assigned_size != 0 {
+                        if assigned_size.is_nonzero() {
                             // see "seriously WTF" doccomment
                             let expiry =
                                 opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
@@ -755,7 +749,7 @@ impl History {
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), Underlying::Btc);
-                            let contracts_in_btc = Quantity::btc_from_contracts(*assigned_size);
+                            let contracts_in_btc = Quantity::from(assigned_size.btc_equivalent());
                             let open = tax::Lot::from_trade_btc(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.

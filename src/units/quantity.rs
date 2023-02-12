@@ -20,6 +20,7 @@
 //!
 
 use crate::units::{Asset, Price};
+use serde::Deserialize;
 use std::{cmp, fmt, iter, ops};
 
 /// A tradeable quantity of some object
@@ -281,26 +282,45 @@ impl iter::Sum for Quantity {
 ///
 /// There is not much you can do with this object without first determining
 /// its units; but you can deserialize and serialize it
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash, Deserialize)]
+#[serde(from = "i64")]
 pub struct UnknownQuantity {
     inner: i64,
 }
 
+impl From<i64> for UnknownQuantity {
+    fn from(n: i64) -> UnknownQuantity {
+        UnknownQuantity { inner: n }
+    }
+}
+
 impl UnknownQuantity {
     /// Consruct a unknown quantity from an integer number of base units
-    pub fn from_i64(n: i64) -> UnknownQuantity {
-        UnknownQuantity { inner: n }
+    pub fn from_i64(n: i64) -> Self {
+        From::from(n)
     }
 
     /// Define the quantity based on a given asset
     pub fn with_asset(&self, asset: Asset) -> Quantity {
         match asset {
+            Asset::Btc => Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner)),
+            Asset::Eth => unimplemented!("ethereum quantity"),
+            Asset::Usd => Quantity::Contracts(self.inner), // FIXME don't abuse Contracts for
+            // dollars
+            Asset::Option { .. } => Quantity::Contracts(self.inner),
+        }
+    }
+
+    /// Define the quantity based on a given asset, using 1/100th-of-a-coin size base units
+    /// rather than satoshis
+    pub fn with_asset_trade(&self, asset: Asset) -> Quantity {
+        match asset {
             Asset::Btc => {
-                assert!(self.inner >= 0, "negative quantity of Bitcoins");
-                Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner))
+                Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner * 1_000_000))
             }
             Asset::Eth => unimplemented!("ethereum quantity"),
-            Asset::Usd => panic!("tried to interpret 'quantity' of dollars"),
+            Asset::Usd => Quantity::Contracts(self.inner), // FIXME don't abuse Contracts for
+            // dollars
             Asset::Option { .. } => Quantity::Contracts(self.inner),
         }
     }

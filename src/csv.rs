@@ -103,6 +103,17 @@ impl PrintCsv for crate::units::BudgetAsset {
     }
 }
 
+impl PrintCsv for crate::units::Quantity {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use bitcoin::util::amount::Denomination::Bitcoin;
+        match *self {
+            crate::units::Quantity::Bitcoin(btc) => fmt::Display::fmt(&btc.display_in(Bitcoin), f),
+            crate::units::Quantity::Contracts(n) => fmt::Display::fmt(&n, f),
+            crate::units::Quantity::Zero => f.write_str("0"),
+        }
+    }
+}
+
 macro_rules! impl_display {
     ($ty:ty) => {
         impl PrintCsv for $ty {
@@ -119,7 +130,6 @@ impl_display!(i64);
 impl_display!(u32);
 impl_display!(u64);
 impl_display!(crate::units::Price);
-impl_display!(rust_decimal::Decimal);
 
 macro_rules! impl_string {
     ($ty:ty) => {

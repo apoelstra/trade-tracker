@@ -325,7 +325,7 @@ impl Lot<UnknownOptId> {
 
 impl Lot<UnknownOptId> {
     /// Constructs an `Lot` object from an expiration event
-    pub fn from_expiry(opt: &crate::option::Option, n_expired: i64) -> Self {
+    pub fn from_expiry(opt: &crate::option::Option, n_expired: Quantity) -> Self {
         debug!("Lot::from_expiry opt {} n {}", opt, n_expired);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
@@ -334,13 +334,17 @@ impl Lot<UnknownOptId> {
         Lot {
             id: UnknownOptId,
             close_ty: CloseType::Expiry,
-            quantity: Quantity::from_contracts(n_expired),
+            quantity: n_expired,
             price: Price::ZERO,
             date: TaxDate(expiry),
         }
     }
 
-    pub fn from_assignment(opt: &crate::option::Option, n_assigned: i64, btc_price: Price) -> Self {
+    pub fn from_assignment(
+        opt: &crate::option::Option,
+        n_assigned: Quantity,
+        btc_price: Price,
+    ) -> Self {
         debug!("Lot::from_assignment opt {} n {}", opt, n_assigned);
         // seriously WTF -- the time is always fixed at 22:00 even though this
         // is 5PM in winter and 6PM in summer, neither of which are 4PM when
@@ -349,7 +353,7 @@ impl Lot<UnknownOptId> {
         Lot {
             id: UnknownOptId,
             close_ty: CloseType::Exercise,
-            quantity: Quantity::from_contracts(n_assigned),
+            quantity: n_assigned,
             price: opt.intrinsic_value(btc_price),
             date: TaxDate(expiry),
         }

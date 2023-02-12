@@ -18,7 +18,7 @@
 //!
 
 use crate::csv::{self, CsvPrinter};
-use crate::units::{BudgetAsset, DepositAsset, Price, Underlying};
+use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying};
 use anyhow::Context;
 use log::{debug, info, warn};
 use rust_decimal::Decimal;
@@ -593,7 +593,7 @@ impl History {
                                     let mut open = tax::Lot::from_deposit_utxo(
                                         op,
                                         price.btc_price,
-                                        txout.value,
+                                        bitcoin::Amount::from_sat(txout.value),
                                         txout_date,
                                     );
                                     let lot_date = if let Some(lot_date) =
@@ -612,7 +612,9 @@ impl History {
                                     // Take fees away from the last input(s). We consider this a
                                     // partial loss of the lot corresponding to the input
                                     if txout.value > amount_sat {
-                                        open.dock_fee(txout.value - amount_sat);
+                                        open.dock_fee(bitcoin::Amount::from_sat(
+                                            txout.value - amount_sat,
+                                        ));
                                         // FiXME record these explicitly
                                         /*
                                         let open = tax::Lot::from_tx_fee(
@@ -660,7 +662,7 @@ impl History {
                         let open = tax::Lot::from_deposit_utxo(
                             deposit_outpoint,
                             btc_price,
-                            amount_sat,
+                            bitcoin::Amount::from_sat(amount_sat),
                             date,
                         );
                         assert_eq!(tracker.push_lot(&btc_label, open, date), 0);
@@ -694,11 +696,14 @@ impl History {
                             (date, false)
                         };
                     if is_btc {
-                        let adj_size = *size * 1_000_000;
+                        // FIXME don't do this explicitly
+                        let adj_size =
+                            Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(*size * 1_000_000));
                         let open = tax::Lot::from_trade_btc(*price, adj_size, *fee, tax_date);
                         tracker.push_lot(&label, open, date);
                     } else {
-                        let open = tax::Lot::from_trade_opt(*price, *size, *fee, tax_date);
+                        let adj_size = Quantity::Contracts(*size);
+                        let open = tax::Lot::from_trade_opt(*price, adj_size, *fee, tax_date);
                         tracker.push_lot(&label, open, date);
                     }
                 }
@@ -752,12 +757,16 @@ impl History {
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), Underlying::Btc);
+                            // FIXME this should also be encapsulated
+                            let contracts_in_btc = Quantity::Bitcoin(
+                                bitcoin::SignedAmount::from_sat(*assigned_size * 1_000_000),
+                            );
                             let open = tax::Lot::from_trade_btc(
                                 btc_price, // notice the basis is NOT the strike price but the
                                 // actual market price.
                                 match opt.pc {
-                                    crate::option::Call => *assigned_size * -1_000_000,
-                                    crate::option::Put => *assigned_size * 1_000_000,
+                                    crate::option::Call => -contracts_in_btc,
+                                    crate::option::Put => contracts_in_btc,
                                 },
                                 Price::ZERO,
                                 expiry,

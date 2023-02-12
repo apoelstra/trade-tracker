@@ -17,6 +17,7 @@
 //! Prices in US dollars
 //!
 
+use super::Quantity;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -63,6 +64,11 @@ impl Price {
     /// accounting context.
     pub fn scale_approx(&self, scale: f64) -> Price {
         Price(self.0 * Decimal::try_from(scale).expect("scaling by a finite float"))
+    }
+
+    /// Absolute value of the price
+    pub fn abs(&self) -> Price {
+        Price(self.0.abs())
     }
 
     /// Given a price, return 1/100 the same price
@@ -156,6 +162,34 @@ impl ops::Div<Price> for Price {
             panic!("Tried to divide price {} by zero", self);
         }
         (self.0 / other.0).to_f64().unwrap()
+    }
+}
+
+// Multiplying or dividing a price by a quantity gets you another price
+impl ops::Mul<Quantity> for Price {
+    type Output = Price;
+    fn mul(self, other: Quantity) -> Price {
+        match other {
+            Quantity::Bitcoin(btc) => Price(self.0 * Decimal::new(btc.to_sat(), 8)),
+            Quantity::Contracts(n) => Price(self.0 * Decimal::new(n, 2)),
+            Quantity::Zero => Price::ZERO,
+        }
+    }
+}
+
+impl ops::Div<Quantity> for Price {
+    type Output = Price;
+    fn div(self, other: Quantity) -> Price {
+        assert!(
+            other.is_nonzero(),
+            "Trying to divide a price {} by a zero quantity",
+            self
+        );
+        match other {
+            Quantity::Bitcoin(btc) => Price(self.0 / Decimal::new(btc.to_sat(), 8)),
+            Quantity::Contracts(n) => Price(self.0 / Decimal::new(n, 2)),
+            Quantity::Zero => unreachable!(),
+        }
     }
 }
 

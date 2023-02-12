@@ -18,15 +18,16 @@
 //! reproducing LX's weird CSV fies.
 //!
 
-use crate::{csv, units::Price};
+use crate::{
+    csv,
+    units::{Price, Quantity},
+};
 use log::debug;
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp,
     collections::HashMap,
-    convert::TryFrom,
     fmt, mem, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -181,31 +182,13 @@ impl csv::PrintCsv for CloseType {
     }
 }
 
-/// If a position is open, what direction it is going in
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Direction {
-    Short,
-    Long,
-}
-impl Direction {
-    /// Turns a positive number into "long" and a negative into "short"
-    fn from_size(s: i64) -> Self {
-        if s < 0 {
-            Direction::Short
-        } else {
-            Direction::Long
-        }
-    }
-}
-
 /// Event that creates or enlarges a position
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Lot<ID> {
     id: ID,
     /// If this is used to close a position rather than create a new lot
     close_ty: CloseType,
-    direction: Direction,
-    quantity: u64,
+    quantity: Quantity,
     price: Price,
     date: TaxDate,
 }
@@ -226,12 +209,11 @@ impl<ID: fmt::Display> fmt::Display for Lot<ID> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
+            "{} {{ {} @ {} on {} }}",
             self.id,
-            self.direction,
-            self.date.0.lazy_format("%FT%T"),
-            self.price,
             self.quantity,
+            self.price,
+            self.date.0.lazy_format("%FT%T"),
         )
     }
 }
@@ -248,59 +230,65 @@ impl Lot<LotId> {
     pub fn from_deposit_utxo(
         outpoint: bitcoin::OutPoint,
         price: Price,
-        size_sat: u64,
+        size: bitcoin::Amount,
         date: time::OffsetDateTime,
     ) -> Self {
         debug!(
-            "Lot::from_deposit_utxo price {} size {}sat date {}",
-            price, size_sat, date
+            "Lot::from_deposit_utxo price {} size {} date {}",
+            price, size, date
         );
         Lot {
             id: LotId::from_outpoint(outpoint),
             close_ty: CloseType::TxFee, // lol a deposit better not close a position..
-            direction: Direction::Long,
-            quantity: size_sat,
+            quantity: size.into(),
             price,
             date: TaxDate(date),
         }
     }
 
     /// Reduces a lot by a transaction fee amount
-    pub fn dock_fee(&mut self, n_sat: u64) {
-        self.quantity -= n_sat;
+    pub fn dock_fee(&mut self, n: bitcoin::Amount) {
+        if let Quantity::Bitcoin(ref mut btc) = self.quantity {
+            *btc -= n.to_signed().expect("bitcoin amount overflow");
+        } else {
+            panic!("{}: tried to dock fees but this is a non-bitcoin lot", self)
+        }
     }
 }
 
 impl Lot<UnknownBtcId> {
     /// Constructs an `Lot` object from a transaction fee
-    pub fn from_tx_fee(size_sat: u64, date: time::OffsetDateTime) -> Self {
+    pub fn from_tx_fee(size: bitcoin::Amount, date: time::OffsetDateTime) -> Self {
         Lot {
             id: UnknownBtcId,
             close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
-            direction: Direction::Short,
-            quantity: size_sat,
+            quantity: -Quantity::from(size),
             price: Price::ZERO,
             date: TaxDate(date),
         }
     }
 
     /// Constructs an `Lot` object from a trade event
-    pub fn from_trade_btc(price: Price, size: i64, fee: Price, date: time::OffsetDateTime) -> Self {
+    pub fn from_trade_btc(
+        price: Price,
+        size: Quantity,
+        fee: Price,
+        date: time::OffsetDateTime,
+    ) -> Self {
         debug!(
             "Lot::from_trade_btc price {} size {} fee {} date {}",
             price, size, fee, date
         );
-        let unit_fee = fee.div_btc_qty(size);
+        let unit_fee = fee / size;
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
             id: UnknownBtcId,
-            close_ty: if size > 0 {
+            close_ty: if size.is_nonnegative() {
                 CloseType::BuyBack
             } else {
                 CloseType::Sell
             },
-            direction: Direction::from_size(size),
-            quantity: size.unsigned_abs(),
+            quantity: size,
             price: adj_price,
             date: TaxDate(date),
         }
@@ -309,22 +297,26 @@ impl Lot<UnknownBtcId> {
 
 impl Lot<UnknownOptId> {
     /// Constructs an `Lot` object from a trade event
-    pub fn from_trade_opt(price: Price, size: i64, fee: Price, date: time::OffsetDateTime) -> Self {
+    pub fn from_trade_opt(
+        price: Price,
+        size: Quantity,
+        fee: Price,
+        date: time::OffsetDateTime,
+    ) -> Self {
         debug!(
             "Lot::from_trade_opt price {} size {} fee {} date {}",
             price, size, fee, date
         );
-        let unit_fee = fee.div_option_qty(size);
+        let unit_fee = fee / size;
         let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
         Lot {
             id: UnknownOptId,
-            close_ty: if size > 0 {
+            close_ty: if size.is_nonnegative() {
                 CloseType::BuyBack
             } else {
                 CloseType::Sell
             },
-            direction: Direction::from_size(size),
-            quantity: size.unsigned_abs(),
+            quantity: size,
             price: adj_price,
             date: TaxDate(date),
         }
@@ -342,8 +334,7 @@ impl Lot<UnknownOptId> {
         Lot {
             id: UnknownOptId,
             close_ty: CloseType::Expiry,
-            direction: Direction::from_size(n_expired),
-            quantity: n_expired.unsigned_abs(),
+            quantity: Quantity::from_contracts(n_expired),
             price: Price::ZERO,
             date: TaxDate(expiry),
         }
@@ -358,8 +349,7 @@ impl Lot<UnknownOptId> {
         Lot {
             id: UnknownOptId,
             close_ty: CloseType::Exercise,
-            direction: Direction::from_size(n_assigned),
-            quantity: n_assigned.unsigned_abs(),
+            quantity: Quantity::from_contracts(n_assigned),
             price: opt.intrinsic_value(btc_price),
             date: TaxDate(expiry),
         }
@@ -371,12 +361,11 @@ pub struct Close {
     ty: CloseType,
     gain_ty: GainType,
     open_id: LotId,
-    open_direction: Direction,
     open_price: Price,
     open_date: TaxDate,
     close_price: Price,
     close_date: TaxDate,
-    quantity: u64,
+    quantity: Quantity,
 }
 
 impl fmt::Display for Close {
@@ -402,44 +391,34 @@ pub struct CloseCsv<'label, 'close> {
 
 impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let i_qty = i64::try_from(self.close.quantity).unwrap();
-        let real_amount = if self.label.is_btc() {
-            Decimal::new(i_qty, 8)
-        } else {
-            Decimal::new(i_qty, 2)
-        };
-        // FIXME FIXME FIXME
-        let mut proceeds = self
-            .close
-            .close_price
-            .scale_approx(real_amount.to_f64().unwrap());
-        let mut basis = self
-            .close
-            .open_price
-            .scale_approx(real_amount.to_f64().unwrap());
+        let mut proceeds = self.close.close_price * self.close.quantity;
+        let mut basis = self.close.open_price * self.close.quantity;
 
         let mut close_date = self.close.close_date;
         let mut open_date = self.close.open_date;
-        if self.close.open_direction == Direction::Long {
+        if !self.close.quantity.is_positive() {
             // wtf
             mem::swap(&mut close_date, &mut open_date);
             mem::swap(&mut basis, &mut proceeds);
         }
+        proceeds = proceeds.abs();
+        basis = basis.abs();
 
-        let i_qty = i64::try_from(self.close.quantity).unwrap();
-        let description = if self.label.0 == "BTC" {
-            // If we can, reduce to 2 decimal points. This will be the common case since LX
-            // will only let us trade in 1/100th of a bitcoin, and will let us better match
-            // their output.
-            if real_amount == real_amount.round_dp(2) {
-                let mut trunc = real_amount;
-                trunc.rescale(2);
-                format!("{}, {}", trunc, self.label)
-            } else {
-                format!("{}, {}", real_amount, self.label)
+        let description = match self.close.quantity {
+            Quantity::Bitcoin(btc) => {
+                let real_amount = Decimal::new(btc.to_sat(), 8);
+                let round_amount = real_amount.round_dp(2);
+                // If we can, reduce to 2 decimal points. This will be the common case since LX
+                // will only let us trade in 1/100th of a bitcoin, and will let us better match
+                // their output.
+                if real_amount == round_amount {
+                    format!("{}, {}", round_amount.abs(), self.label)
+                } else {
+                    format!("{}, {}", real_amount.abs(), self.label)
+                }
             }
-        } else {
-            format!("{}, {}", i_qty, self.label)
+            Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.label),
+            Quantity::Zero => "0".into(), // maybe we should just panic here
         };
 
         (
@@ -494,12 +473,8 @@ impl Position {
         }
     }
 
-    fn total_size(&self) -> u64 {
+    fn total_size(&self) -> Quantity {
         self.fifo.values().map(|open| open.quantity).sum()
-    }
-
-    fn direction(&self) -> Option<Direction> {
-        self.fifo.values().next().map(|open| open.direction)
     }
 
     /// Assigns an ID to a lot and adds it to the position tracker
@@ -511,7 +486,6 @@ impl Position {
         let new_lot = Lot {
             id: lot.id.into(),
             close_ty: lot.close_ty,
-            direction: lot.direction,
             quantity: lot.quantity,
             price: lot.price,
             date: lot.date,
@@ -543,10 +517,16 @@ impl Position {
         }
         // If there is an open position, in the same direction as the new open,
         // add the new open to the FIFO.
-        if self.fifo.values().next().unwrap().direction == open.direction {
+        if self
+            .fifo
+            .values()
+            .next()
+            .unwrap()
+            .quantity
+            .has_same_sign(open.quantity)
+        {
             debug!(
-                "Increasing position ({:?}, qty {}) with open {}; sort date {}",
-                self.direction(),
+                "Increasing position (total qty {}) with open {}; sort date {}",
                 self.total_size(),
                 open,
                 sort_date,
@@ -556,7 +536,8 @@ impl Position {
         }
         // Otherwise, we must close the position
         let mut ret = vec![];
-        while open.quantity > 0 {
+        while open.quantity.is_nonzero() {
+            let pre_pop_total = self.total_size();
             let to_match = if is_1256 {
                 self.fifo.pop_first()
             } else {
@@ -575,13 +556,9 @@ impl Position {
                     return (ret, Some(lot));
                 }
             };
-            assert_ne!(open.direction, front.direction);
             debug!(
-                "closing lot {} (position {:?}, qty {}) with potential-lot {}",
-                front,
-                self.direction(),
-                self.total_size(),
-                open
+                "closing lot {} (total qty {}) with potential-lot {}",
+                front, pre_pop_total, open
             );
 
             // Construct a close object with everything known but the quantity
@@ -595,25 +572,30 @@ impl Position {
                     GainType::LongTerm
                 },
                 open_id: front.id.clone(),
-                open_direction: front.direction,
                 open_price: front.price,
                 open_date: front.date,
                 close_price: open.price,
                 close_date: open.date,
-                quantity: 0, // TBD
+                quantity: Quantity::Zero, // TBD below
             };
 
             // ...figure out the quantity
-            if front.quantity > open.quantity {
+            assert!(
+                !front.quantity.has_same_sign(open.quantity),
+                "cancelling lot {} should have opposite sign of opened lot {}",
+                open,
+                front,
+            );
+            if front.quantity.abs() > open.quantity.abs() {
                 // Partial close
-                front.quantity -= open.quantity;
+                front.quantity += open.quantity;
                 close.quantity = open.quantity;
-                open.quantity = 0;
+                open.quantity = Quantity::Zero;
                 self.fifo.insert(front_date, front); // put incompletely closed position back
             } else {
                 // Full close
-                close.quantity = front.quantity;
-                open.quantity -= front.quantity;
+                close.quantity = -front.quantity;
+                open.quantity += front.quantity;
             }
             debug!("push_event: pushing close {} onto ret", close);
             ret.push(close);

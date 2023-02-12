@@ -21,6 +21,7 @@
 
 mod asset;
 mod price;
+mod quantity;
 
 pub use asset::{
     deserialize_name_deposit_asset, Asset, BudgetAsset, DepositAsset, TaxAsset, Underlying,
@@ -28,6 +29,7 @@ pub use asset::{
 pub use price::{
     deserialize_cents, deserialize_cents_opt, deserialize_dollars, serialize_dollars, Price,
 };
+pub use quantity::{Quantity, UnknownQuantity};
 
 macro_rules! impl_ops_0 {
     ($outer:ty, $op:ident, $opfn:ident) => {

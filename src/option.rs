@@ -43,7 +43,8 @@ impl PutCall {
         }
     }
 
-    fn to_char(self) -> char {
+    /// Gives a one-character representation as 'P' or 'C'
+    pub fn to_char(self) -> char {
         match self {
             Call => 'C',
             Put => 'P',
@@ -113,24 +114,6 @@ impl Option {
             strike,
             expiry,
         }
-    }
-
-    /// Outputs a tuple suitable for copy/pasting into Andrew's Excel sheet
-    pub fn csv_tuple(
-        &self,
-    ) -> (
-        std::option::Option<crate::csv::DateOnly>,
-        &'static str,
-        std::option::Option<Price>,
-    ) {
-        (
-            Some(crate::csv::DateOnly(self.expiry)),
-            match self.pc {
-                crate::option::Call => "C",
-                crate::option::Put => "P",
-            },
-            Some(self.strike),
-        )
     }
 
     /// Compute the number of years to expiry, as a float, given current time

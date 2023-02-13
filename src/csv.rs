@@ -96,8 +96,13 @@ impl PrintCsv for crate::units::BudgetAsset {
             crate::units::BudgetAsset::Eth => f.write_str(",ETH,"),
             crate::units::BudgetAsset::Usd => f.write_str(",USD,"),
             crate::units::BudgetAsset::Option { underlying, option } => {
+                assert_eq!(
+                    underlying,
+                    crate::units::Underlying::Btc,
+                    "non-BTC budget asset ID (do you need to update your spreadsheet?)",
+                );
                 DateTime(option.expiry).print(f)?;
-                write!(f, ",{},{}", underlying, option.strike)
+                write!(f, ",{},{}", option.pc.to_char(), option.strike)
             }
         }
     }

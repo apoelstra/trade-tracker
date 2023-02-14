@@ -243,7 +243,7 @@ impl LedgerX {
                         btc_price,
                     );
                     if clear_bid_size.is_positive() {
-                        let clear_price = clear_bid_yield * clear_bid_size;
+                        let clear_price = clear_bid_yield / clear_bid_size;
                         opt.log_order_data(
                             "      Order to clear: ",
                             now,

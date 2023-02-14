@@ -80,6 +80,24 @@ pub struct Contract {
     pub last_log: Option<OffsetDateTime>,
 }
 
+impl fmt::Display for Contract {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.ty {
+            Type::Option { opt, .. } => fmt::Display::fmt(&opt, f),
+            Type::NextDay { expiry } => {
+                fmt::Display::fmt(&self.underlying(), f)?;
+                f.write_str(" next-day ")?;
+                fmt::Display::fmt(&expiry.lazy_format("%F"), f)
+            }
+            Type::Future { expiry } => {
+                fmt::Display::fmt(&self.underlying(), f)?;
+                f.write_str(" future ")?;
+                fmt::Display::fmt(&expiry.lazy_format("%F"), f)
+            }
+        }
+    }
+}
+
 impl Contract {
     /// Accessor for contract ID
     pub fn id(&self) -> ContractId {

@@ -23,6 +23,7 @@ pub mod csv;
 pub mod datafeed;
 pub mod history;
 pub mod json;
+pub mod own_orders;
 
 use crate::terminal::format_color;
 use crate::units::{Price, Quantity, Underlying};
@@ -34,7 +35,7 @@ use time::OffsetDateTime;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
-pub use datafeed::{BidAsk::Ask, BidAsk::Bid, MessageId};
+pub use datafeed::{BidAsk::Ask, BidAsk::Bid, CustomerId, MessageId};
 pub use history::tax::LotId;
 
 /// Thresholds of interestingness
@@ -137,6 +138,7 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LedgerX {
     contracts: HashMap<ContractId, (Contract, BookState)>,
+    own_orders: own_orders::Tracker,
     available_usd: Price,
     available_btc: bitcoin::Amount,
     last_btc_bid: Price,
@@ -161,6 +163,7 @@ impl LedgerX {
     pub fn new(btc_price: crate::price::BitcoinPrice) -> Self {
         LedgerX {
             contracts: HashMap::new(),
+            own_orders: own_orders::Tracker::new(),
             available_usd: Price::ZERO,
             available_btc: bitcoin::Amount::ZERO,
             last_btc_bid: btc_price.btc_price,
@@ -308,6 +311,7 @@ impl LedgerX {
 
     /// Inserts a new order into the book
     pub fn insert_order(&mut self, order: datafeed::Order) -> UpdateResponse {
+        // Then do usual order trackin
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => {
@@ -324,6 +328,10 @@ impl LedgerX {
                 order.message_id, order.contract_id,
             );
             return UpdateResponse::NonBtcOrder;
+        }
+        // Before doing anything else, track this if it's an own-order
+        if order.customer_id.is_some() {
+            self.own_orders.insert_order(contract, order.clone());
         }
         let timestamp = order.timestamp;
         // Insert the order and signal if the best bid/ask has changed.

@@ -18,17 +18,26 @@
 //!
 
 use super::{json, Contract, ContractId};
-use crate::units::Price;
+use crate::units::{Price, UnknownQuantity};
 use serde::Deserialize;
 use std::fmt;
 use time::OffsetDateTime;
+
+/// ID of a customer; provided only for own trades
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct CustomerId(usize);
+
+impl fmt::Display for CustomerId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
 
 /// ID of a specific message, which is the same across an order submission/edit/cancel/etc
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct MessageId([u8; 16]);
 
 impl fmt::Display for MessageId {
-    #[rustfmt::skip]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         bitcoin::hashes::hex::format_hex(&self.0, f)
     }
@@ -47,14 +56,20 @@ pub struct Order {
     pub bid_ask: BidAsk,
     /// Number of contracts
     pub size: i64,
+    /// Number of contracts filled
+    pub filled_size: UnknownQuantity,
     /// Limit price
     pub price: Price,
     /// ID of the contract being bid/ask on
     pub contract_id: ContractId,
+    /// ID of the customer, if provided (only provided for own trades)
+    pub customer_id: Option<CustomerId>,
     /// ID of the manifest
     pub message_id: MessageId,
     /// Timestamp that the order occured on
     pub timestamp: OffsetDateTime,
+    /// Timestamp that the order was last updated on
+    pub updated_timestamp: OffsetDateTime,
 }
 
 impl From<(json::BookState, OffsetDateTime)> for Order {
@@ -62,9 +77,12 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
         Order {
             bid_ask: if data.0.is_ask { Ask } else { Bid },
             size: data.0.size,
+            filled_size: UnknownQuantity::from(0), // not provided for book states, assume 0
             contract_id: data.0.contract_id,
             price: data.0.price,
+            customer_id: None, // not provided for book states
             message_id: MessageId(data.0.mid),
+            updated_timestamp: data.1,
             timestamp: data.1,
         }
     }
@@ -99,17 +117,23 @@ impl From<json::DataFeedObject> for Object {
                 contract_id,
                 price,
                 size,
+                filled_size,
                 is_ask,
+                cid,
                 mid,
                 timestamp,
+                updated_time,
                 ..
             } => Object::Order(Order {
                 contract_id,
+                customer_id: cid.map(CustomerId),
                 message_id: MessageId(mid),
                 size,
+                filled_size: UnknownQuantity::from(filled_size),
                 price,
                 bid_ask: if is_ask { Ask } else { Bid },
                 timestamp,
+                updated_timestamp: updated_time,
             }),
             json::DataFeedObject::BookTop {
                 contract_id,
@@ -154,6 +178,7 @@ mod tests {
                 size: 0,
                 price: Price::ZERO,
                 contract_id: ContractId::from(22256362),
+                customer_id: None,
                 message_id: MessageId([
                     0x01, 0x4a, 0xa5, 0xad, 0x13, 0x56, 0x42, 0x72, 0xa7, 0x93, 0xc0, 0x58, 0x2a,
                     0x77, 0x60, 0x00,

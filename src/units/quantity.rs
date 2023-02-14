@@ -346,3 +346,21 @@ impl UnknownQuantity {
         }
     }
 }
+
+impl ops::Add for UnknownQuantity {
+    type Output = UnknownQuantity;
+    fn add(self, other: Self) -> Self {
+        UnknownQuantity {
+            inner: self.inner + other.inner,
+        }
+    }
+}
+
+impl ops::Sub for UnknownQuantity {
+    type Output = UnknownQuantity;
+    fn sub(self, other: Self) -> Self {
+        UnknownQuantity {
+            inner: self.inner - other.inner,
+        }
+    }
+}

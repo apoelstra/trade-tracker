@@ -82,7 +82,7 @@ impl BookState {
     /// Return the price and size of the best ask, or (0, 0) if there is none
     pub fn best_ask(&self) -> (Price, Quantity) {
         if let Some((_, last)) = self.asks.iter().next() {
-            (last.price, last.size)
+            (last.price, -last.size)
         } else {
             (Price::ZERO, Quantity::Zero)
         }
@@ -269,9 +269,8 @@ fn log_ask_if_interesting(
     // can open a delta-neutral position which is guaranteed to pay out
     if order.price < opt.intrinsic_value(btc_price) {
         let profit100 = opt.intrinsic_value(btc_price) - order.price;
-        let max_buy100 = order
-            .size
-            .min(Quantity::contracts_from_ratio(available_usd, order.price));
+        let max_buy100 =
+            Quantity::contracts_from_ratio(available_usd, order.price).min(-order.size);
         let max_profit = profit100 * max_buy100;
         // Don't bother if there is less than $100 to be made
         if max_profit < Price::ONE_HUNDRED {
@@ -283,7 +282,13 @@ fn log_ask_if_interesting(
             now,
             btc_price,
         );
-        opt.log_order_data("    Price: ", now, btc_price, order.price, Some(order.size));
+        opt.log_order_data(
+            "    Price: ",
+            now,
+            btc_price,
+            order.price,
+            Some(-order.size),
+        );
         if opt.pc == crate::option::Call {
             info!(
                 "       Strike {} + {} = {}, vs BTC price {}. By arbing {} units you can make {}.",

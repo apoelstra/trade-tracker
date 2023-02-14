@@ -193,8 +193,15 @@ impl fmt::Display for Quantity {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Quantity::Bitcoin(btc) => fmt::Display::fmt(&btc, f),
-            Quantity::Contracts(n) => write!(f, "{} contracts", n),
-            Quantity::Cents(n) => write!(f, "${}.{:02}", n / 100, n % 100),
+            Quantity::Contracts(n) => {
+                fmt::Display::fmt(&n, f)?;
+                f.write_str(" contracts")
+            }
+            Quantity::Cents(n) => {
+                f.write_str("$")?;
+                fmt::Display::fmt(&(n / 100), f)?;
+                write!(f, ".{:02}", n % 100)
+            }
             Quantity::Zero => fmt::Display::fmt("ZERO", f),
         }
     }

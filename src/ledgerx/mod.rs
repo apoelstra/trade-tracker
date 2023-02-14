@@ -34,7 +34,7 @@ use time::OffsetDateTime;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
-pub use datafeed::{BidAsk::Ask, BidAsk::Bid, ManifestId};
+pub use datafeed::{BidAsk::Ask, BidAsk::Bid, MessageId};
 pub use history::tax::LotId;
 
 /// Thresholds of interestingness
@@ -313,7 +313,7 @@ impl LedgerX {
             None => {
                 debug!(
                     "Received order mid {} for unknown contract {}",
-                    order.manifest_id, order.contract_id,
+                    order.message_id, order.contract_id,
                 );
                 return UpdateResponse::UnknownContract(order);
             }
@@ -321,7 +321,7 @@ impl LedgerX {
         if contract.underlying() != Underlying::Btc {
             debug!(
                 "Ignoring order mid {} for non-BTC contract {}",
-                order.manifest_id, order.contract_id,
+                order.message_id, order.contract_id,
             );
             return UpdateResponse::NonBtcOrder;
         }

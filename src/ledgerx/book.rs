@@ -17,7 +17,7 @@
 //! Tracks the book state for a specific contract
 //!
 
-use super::{datafeed, Ask, Bid, ManifestId};
+use super::{datafeed, Ask, Bid, MessageId};
 use crate::option::{Call, Put};
 use crate::terminal::format_color;
 use crate::units::{Asset, Price, Quantity, UnknownQuantity};
@@ -29,8 +29,8 @@ use time::OffsetDateTime;
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct BookState {
     asset: Asset,
-    bids: BTreeMap<(Price, ManifestId), Order>,
-    asks: BTreeMap<(Price, ManifestId), Order>,
+    bids: BTreeMap<(Price, MessageId), Order>,
+    asks: BTreeMap<(Price, MessageId), Order>,
 }
 
 impl BookState {
@@ -57,16 +57,16 @@ impl BookState {
         // believe it will do the right thing for repeated edits.)
         //
         // So we have to scan the whole book to find the mid.
-        book.retain(|(_, mid), _| *mid != order.manifest_id);
+        book.retain(|(_, mid), _| *mid != order.message_id);
         if order.size > 0 {
             let book_order = Order {
                 price: order.price,
                 size: UnknownQuantity::from_i64(size).with_asset(self.asset),
-                manifest_id: order.manifest_id,
+                message_id: order.message_id,
                 timestamp: order.timestamp,
                 last_log: None,
             };
-            book.insert((order.price, order.manifest_id), book_order);
+            book.insert((order.price, order.message_id), book_order);
         }
     }
 
@@ -198,7 +198,7 @@ pub struct Order {
     /// The (signed) quantity
     pub size: Quantity,
     /// ID of the manifest
-    pub manifest_id: ManifestId,
+    pub message_id: MessageId,
     /// Timestamp that the order occured on
     pub timestamp: OffsetDateTime,
     /// The most recent time this order was logged as "interesting"

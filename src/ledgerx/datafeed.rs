@@ -23,21 +23,14 @@ use serde::Deserialize;
 use std::fmt;
 use time::OffsetDateTime;
 
-/// ID of a specific "manifest", which is the same across an order submission/edit/cancel/etc
+/// ID of a specific message, which is the same across an order submission/edit/cancel/etc
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct ManifestId(pub [u8; 16]);
+pub struct MessageId([u8; 16]);
 
-impl fmt::Display for ManifestId {
+impl fmt::Display for MessageId {
     #[rustfmt::skip]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
-            self.0[0], self.0[1], self.0[2], self.0[3],
-            self.0[4], self.0[5], self.0[6], self.0[7],
-            self.0[8], self.0[9], self.0[10], self.0[11],
-            self.0[12], self.0[13], self.0[14], self.0[15],
-        )
+        bitcoin::hashes::hex::format_hex(&self.0, f)
     }
 }
 
@@ -59,7 +52,7 @@ pub struct Order {
     /// ID of the contract being bid/ask on
     pub contract_id: ContractId,
     /// ID of the manifest
-    pub manifest_id: ManifestId,
+    pub message_id: MessageId,
     /// Timestamp that the order occured on
     pub timestamp: OffsetDateTime,
 }
@@ -71,7 +64,7 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
             size: data.0.size,
             contract_id: data.0.contract_id,
             price: data.0.price,
-            manifest_id: ManifestId(data.0.mid),
+            message_id: MessageId(data.0.mid),
             timestamp: data.1,
         }
     }
@@ -112,7 +105,7 @@ impl From<json::DataFeedObject> for Object {
                 ..
             } => Object::Order(Order {
                 contract_id,
-                manifest_id: ManifestId(mid),
+                message_id: MessageId(mid),
                 size,
                 price,
                 bid_ask: if is_ask { Ask } else { Bid },
@@ -161,7 +154,7 @@ mod tests {
                 size: 0,
                 price: Price::ZERO,
                 contract_id: ContractId::from(22256362),
-                manifest_id: ManifestId([
+                message_id: MessageId([
                     0x01, 0x4a, 0xa5, 0xad, 0x13, 0x56, 0x42, 0x72, 0xa7, 0x93, 0xc0, 0x58, 0x2a,
                     0x77, 0x60, 0x00,
                 ]),

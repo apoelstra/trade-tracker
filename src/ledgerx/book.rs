@@ -20,7 +20,7 @@
 use super::{datafeed, Ask, Bid, MessageId};
 use crate::option::{Call, Put};
 use crate::terminal::format_color;
-use crate::units::{Asset, Price, Quantity, UnknownQuantity};
+use crate::units::{Asset, Price, Quantity};
 use log::info;
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
@@ -49,6 +49,7 @@ impl BookState {
             Bid => (order.size, &mut self.bids),
             Ask => (-order.size, &mut self.asks),
         };
+        let size = size.with_asset(self.asset);
 
         // Annoyingly the price on a cancelled order is set to 0 (which I suppose makes
         // some sort of sense since it's a "null order") so we can't just look it up
@@ -58,10 +59,10 @@ impl BookState {
         //
         // So we have to scan the whole book to find the mid.
         book.retain(|(_, mid), _| *mid != order.message_id);
-        if order.size > 0 {
+        if size.is_nonzero() {
             let book_order = Order {
                 price: order.price,
-                size: UnknownQuantity::from_i64(size).with_asset(self.asset),
+                size,
                 message_id: order.message_id,
                 timestamp: order.timestamp,
                 last_log: None,

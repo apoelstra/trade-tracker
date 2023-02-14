@@ -364,3 +364,10 @@ impl ops::Sub for UnknownQuantity {
         }
     }
 }
+
+impl ops::Neg for UnknownQuantity {
+    type Output = Self;
+    fn neg(self) -> Self {
+        UnknownQuantity { inner: -self.inner }
+    }
+}

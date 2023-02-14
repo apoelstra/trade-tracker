@@ -55,7 +55,7 @@ pub struct Order {
     /// Whether the order is a bid or an ask
     pub bid_ask: BidAsk,
     /// Number of contracts
-    pub size: i64,
+    pub size: UnknownQuantity,
     /// Number of contracts filled
     pub filled_size: UnknownQuantity,
     /// Limit price
@@ -76,7 +76,7 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
     fn from(data: (json::BookState, OffsetDateTime)) -> Self {
         Order {
             bid_ask: if data.0.is_ask { Ask } else { Bid },
-            size: data.0.size,
+            size: UnknownQuantity::from(data.0.size),
             filled_size: UnknownQuantity::from(0), // not provided for book states, assume 0
             contract_id: data.0.contract_id,
             price: data.0.price,
@@ -128,7 +128,7 @@ impl From<json::DataFeedObject> for Object {
                 contract_id,
                 customer_id: cid.map(CustomerId),
                 message_id: MessageId(mid),
-                size,
+                size: UnknownQuantity::from(size),
                 filled_size: UnknownQuantity::from(filled_size),
                 price,
                 bid_ask: if is_ask { Ask } else { Bid },
@@ -175,7 +175,8 @@ mod tests {
             obj,
             Object::Order(Order {
                 bid_ask: Ask,
-                size: 0,
+                filled_size: UnknownQuantity::from(0),
+                size: UnknownQuantity::from(0),
                 price: Price::ZERO,
                 contract_id: ContractId::from(22256362),
                 customer_id: None,
@@ -184,6 +185,7 @@ mod tests {
                     0x77, 0x60, 0x00,
                 ]),
                 timestamp: OffsetDateTime::from_unix_timestamp_nanos(1674839748016616735),
+                updated_timestamp: OffsetDateTime::from_unix_timestamp_nanos(1674839748016616735),
             })
         );
     }

@@ -41,6 +41,11 @@ pub enum Asset {
         underlying: Underlying,
         option: crate::option::Option,
     },
+    /// A future
+    Future {
+        underlying: Underlying,
+        expiry: time::OffsetDateTime,
+    },
 }
 
 /// A kind of asset that can be deposited or withdrawn

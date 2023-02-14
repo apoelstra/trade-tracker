@@ -321,6 +321,7 @@ impl UnknownQuantity {
             Asset::Eth => unimplemented!("ethereum quantity"),
             Asset::Usd => Quantity::Cents(self.inner),
             Asset::Option { .. } => Quantity::Contracts(self.inner),
+            Asset::Future { .. } => Quantity::Contracts(self.inner),
         }
     }
 
@@ -334,6 +335,7 @@ impl UnknownQuantity {
             Asset::Eth => unimplemented!("ethereum quantity"),
             Asset::Usd => Quantity::Cents(self.inner),
             Asset::Option { .. } => Quantity::Contracts(self.inner),
+            Asset::Future { .. } => Quantity::Contracts(self.inner),
         }
     }
 }

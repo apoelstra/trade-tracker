@@ -105,7 +105,10 @@ impl Contract {
                 Underlying::Btc => Asset::Btc,
                 Underlying::Eth => Asset::Eth,
             },
-            Type::Future { .. } => unimplemented!("futures"),
+            Type::Future { expiry } => Asset::Future {
+                underlying: self.underlying,
+                expiry,
+            },
         }
     }
 

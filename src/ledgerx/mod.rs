@@ -311,7 +311,8 @@ impl LedgerX {
 
     /// Inserts a new order into the book
     pub fn insert_order(&mut self, order: datafeed::Order) -> UpdateResponse {
-        // Then do usual order trackin
+        let price_ref = self.current_price(); // need this now for borrowck reasons
+                                              // Then do usual order trackin
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => {
@@ -331,7 +332,8 @@ impl LedgerX {
         }
         // Before doing anything else, track this if it's an own-order
         if order.customer_id.is_some() {
-            self.own_orders.insert_order(contract, order.clone());
+            self.own_orders
+                .insert_order(contract, order.clone(), price_ref);
         }
         let timestamp = order.timestamp;
         // Insert the order and signal if the best bid/ask has changed.

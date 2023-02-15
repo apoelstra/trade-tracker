@@ -441,7 +441,7 @@ fn main() -> Result<(), anyhow::Error> {
                             if let ledgerx::UpdateResponse::UnknownContract(order) =
                                 tracker.insert_order(order)
                             {
-                                warn!("unknown CID {}", order.contract_id);
+                                warn!("unknown contract ID {}", order.contract_id);
                                 warn!("full msg {}", msg);
                             }
                         }

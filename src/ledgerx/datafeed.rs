@@ -172,6 +172,7 @@ mod tests {
         assert_eq!(
             obj,
             Object::Order(Order {
+                filled_price: Price::ZERO,
                 filled_size: UnknownQuantity::from(0),
                 size: UnknownQuantity::from(0),
                 price: Price::ZERO,

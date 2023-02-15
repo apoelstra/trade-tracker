@@ -18,7 +18,6 @@
 //!
 
 use crate::terminal::ColorFormat;
-use crate::terminal::{format_color, format_redgreen};
 use crate::units::{Price, Quantity};
 use log::info;
 use std::{fmt, str};
@@ -356,11 +355,11 @@ impl Option {
         info!(
             "{}{:#}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
             prefix,
-            ColorFormat::new_light_blue(format_args!("{self:17}")),
-            format_redgreen(format_args!("{dte:6.3}"), dte, 90.0, 0.0),
+            ColorFormat::light_blue(format_args!("{self:17}")),
+            ColorFormat::redgreen(format_args!("{dte:6.3}"), dte, 90.0, 0.0),
             btc_price,
             intrinsic_str,
-            format_redgreen(format_args!("{:5.3}%", dd80 * 100.0), dd80, 0.15, 0.0),
+            ColorFormat::redgreen(format_args!("{:5.3}%", dd80 * 100.0), dd80, 0.15, 0.0),
         );
     }
 
@@ -373,19 +372,23 @@ impl Option {
         self_price: Price,
         size: std::option::Option<Quantity>,
     ) {
+        // nb use of format! rather than format_args! for borrowck reasons
         let (vol_str, theta_str) = if let Ok(vol) = self.bs_iv(now, btc_price, self_price) {
             let theta = self.bs_theta(now, btc_price, vol);
             (
-                format_redgreen(format_args!("{:3.2}", vol * 100.0), vol, 0.5, 1.2),
-                format_redgreen(
-                    format_args!("{theta:6.2}"),
+                ColorFormat::redgreen(format!("{:3.2}", vol * 100.0), vol, 0.5, 1.2),
+                ColorFormat::redgreen(
+                    format!("{theta:6.2}"),
                     theta,
                     0.0,
                     -self_price.to_approx_f64(),
                 ),
             )
         } else {
-            ("XXX".into(), "XXX".into())
+            (
+                ColorFormat::grey("XXX".into()),
+                ColorFormat::grey("XXX".into()),
+            )
         };
         let arr = self.arr(now, btc_price, self_price);
         // The "loss 80" is the likelihood that the option will end so far ITM that
@@ -394,7 +397,7 @@ impl Option {
         info!(
             "{}${}{}  sigma: {}%  loss80: {}  ARR: {}%, Theta: {}",
             prefix,
-            format_redgreen(
+            ColorFormat::redgreen(
                 format_args!("{self_price:8.2}"),
                 self_price.to_approx_f64().log10(),
                 1.0,
@@ -410,8 +413,8 @@ impl Option {
                 let total = self_price * size;
                 format!(
                     " × {} = {}",
-                    format_redgreen(format_args!("{size:4}"), logsize, 1.0, 4.0),
-                    format_redgreen(
+                    ColorFormat::redgreen(format_args!("{size:4}"), logsize, 1.0, 4.0),
+                    ColorFormat::redgreen(
                         format_args!("{total:8.2}"),
                         total.to_approx_f64().log10(),
                         1.5,
@@ -422,11 +425,12 @@ impl Option {
                 "".into()
             },
             vol_str,
-            format_redgreen(format_args!("{:5.3}%", loss80 * 100.0), loss80, 0.15, 0.0),
+            ColorFormat::redgreen(format_args!("{:5.3}%", loss80 * 100.0), loss80, 0.15, 0.0),
+            // same here, borrowck makes us use format!
             if arr > 10.0 {
-                format_color(">1000%", 130, 220, 130)
+                ColorFormat::dull_green(">1000%".into())
             } else {
-                format_redgreen(format_args!("{:4.2}", arr * 100.0), arr, 0.0, 0.2)
+                ColorFormat::redgreen(format!("{:4.2}", arr * 100.0), arr, 0.0, 0.2)
             },
             theta_str,
         );

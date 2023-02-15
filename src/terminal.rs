@@ -104,33 +104,65 @@ impl<D: fmt::Display> ColorFormat<D> {
         }
     }
 
+    /// Construct a formatter which takes a value, a "red endpoint" and a "green endpoint"
+    /// and interpolates a color between them
+    pub fn redgreen(data: D, val: f64, red: f64, green: f64) -> Self {
+        let mut percent_red = if green >= red {
+            (val - red) / (green - red)
+        } else {
+            1.0 - (val - green) / (red - green)
+        };
+        if percent_red < 0.0 {
+            percent_red = 0.0;
+        }
+        if percent_red > 1.0 {
+            percent_red = 1.0;
+        }
+        let rgb = hsv_to_rgb((percent_red * 120.0) as usize, 1.0, 0.6);
+        Self::new(data, rgb.0, rgb.1, rgb.2)
+    }
+
     /// Construct a new white formatter
-    pub fn new_white(data: D) -> Self {
+    pub fn white(data: D) -> Self {
         Self::new(data, 250, 250, 250)
     }
 
     /// Construct a new light-blue formatter
-    pub fn new_light_blue(data: D) -> Self {
+    pub fn pale_aqua(data: D) -> Self {
+        Self::new(data, 110, 250, 250)
+    }
+
+    /// Construct a new light-blue formatter
+    pub fn pale_blue(data: D) -> Self {
+        Self::new(data, 180, 180, 250)
+    }
+
+    /// Construct a new light-blue formatter
+    pub fn light_blue(data: D) -> Self {
         Self::new(data, 64, 192, 255)
     }
-}
 
-pub fn format_color<D: fmt::Display>(disp: D, red: usize, green: usize, blue: usize) -> String {
-    format!("\x1b[38;2;{red};{green};{blue}m{disp}\x1b[0m")
-}
+    /// Construct a new light-green formatter
+    pub fn light_green(data: D) -> Self {
+        Self::new(data, 80, 250, 80)
+    }
 
-pub fn format_redgreen<D: fmt::Display>(disp: D, val: f64, red: f64, green: f64) -> String {
-    let mut percent_red = if green >= red {
-        (val - red) / (green - red)
-    } else {
-        1.0 - (val - green) / (red - green)
-    };
-    if percent_red < 0.0 {
-        percent_red = 0.0;
+    /// Construct a new light-purple formatter
+    pub fn light_purple(data: D) -> Self {
+        Self::new(data, 250, 110, 250)
     }
-    if percent_red > 1.0 {
-        percent_red = 1.0;
+
+    /// Construct a new pale yellow formatter
+    pub fn pale_yellow(data: D) -> Self {
+        Self::new(data, 250, 250, 180)
     }
-    let rgb = hsv_to_rgb((percent_red * 120.0) as usize, 1.0, 0.6);
-    format_color(disp, rgb.0, rgb.1, rgb.2)
+
+    /// Construct a new dull-green formatter
+    pub fn dull_green(data: D) -> Self {
+        Self::new(data, 130, 220, 130)
+    }
+
+    pub fn grey(data: D) -> Self {
+        Self::new(data, 160, 160, 160)
+    }
 }

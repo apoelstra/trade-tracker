@@ -137,16 +137,11 @@ impl log::Log for Logger {
                         println!();
                         println!(
                             "{}",
-                            crate::terminal::format_color(
-                                format_args!(
-                                    "Time: {}  BTC Price: {}",
-                                    now.lazy_format("%F %T%z"),
-                                    self.price.lock().unwrap(),
-                                ),
-                                255,
-                                255,
-                                180,
-                            ),
+                            crate::terminal::ColorFormat::pale_yellow(format_args!(
+                                "Time: {}  BTC Price: {}",
+                                now.lazy_format("%F %T%z"),
+                                self.price.lock().unwrap(),
+                            ),),
                         );
                         *last_time_lock = now;
                     }

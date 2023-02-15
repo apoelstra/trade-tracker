@@ -19,7 +19,7 @@
 
 use super::{datafeed, MessageId};
 use crate::option::{Call, Put};
-use crate::terminal::format_color;
+use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity};
 use log::info;
 use std::collections::BTreeMap;
@@ -233,11 +233,7 @@ fn log_bid_if_interesting(
     // For bids, we need to be able to compute volatility (otherwise
     // this is a "free money" bid, which we don't want to be short.
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order_size) {
-        opt.log_option_data(
-            format_color("Interesting bid: ", 110, 250, 250),
-            now,
-            btc_price,
-        );
+        opt.log_option_data(ColorFormat::pale_aqua("Interesting bid: "), now, btc_price);
         opt.log_order_data("    Price: ", now, btc_price, order.price, Some(order_size));
 
         order.last_log = Some(now);
@@ -279,7 +275,7 @@ fn log_ask_if_interesting(
         }
 
         opt.log_option_data(
-            format_color("Apparent free money ask: ", 80, 255, 80),
+            ColorFormat::light_green("Apparent free money ask: "),
             now,
             btc_price,
         );
@@ -318,7 +314,7 @@ fn log_ask_if_interesting(
         let (max_ask_size, _) = opt.max_sale(order.price, available_usd, available_btc);
         if super::ASK_INTERESTING.is_interesting(opt, now, btc_price, order.price, max_ask_size) {
             opt.log_option_data(
-                format_color("Interesting ask (to match): ", 180, 180, 250),
+                ColorFormat::pale_blue("Interesting ask (to match): "),
                 now,
                 btc_price,
             );

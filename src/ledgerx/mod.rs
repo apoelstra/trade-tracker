@@ -25,7 +25,7 @@ pub mod history;
 pub mod json;
 pub mod own_orders;
 
-use crate::terminal::format_color;
+use crate::terminal::ColorFormat;
 use crate::units::{Price, Quantity, Underlying};
 use log::{debug, info};
 use serde::Deserialize;
@@ -241,7 +241,7 @@ impl LedgerX {
                 interesting &= clear_bid_yield > yield_limit || ask_yield > yield_limit;
                 if interesting {
                     opt.log_option_data(
-                        format_color("Interesting contract: ", 250, 110, 250),
+                        ColorFormat::light_purple("Interesting contract: "),
                         now,
                         btc_price,
                     );

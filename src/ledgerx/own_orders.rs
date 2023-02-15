@@ -63,9 +63,16 @@ impl Tracker {
             // A deletion or fill?
             let filled_size = order.filled_size.with_asset(contract.asset());
             if filled_size.is_nonzero() {
+                use std::process::Command;
+                let text = format!(
+                    "LedgerX filled order\n{}: {} @ {}\nID {}",
+                    contract, filled_size, order.filled_price, order.message_id,
+                );
+                let _ = Command::new("send-text.sh").arg(&text).output();
+
                 info!(
                     "Filled order: id {} contract {}, filled size {}, price {}",
-                    order.message_id, contract, filled_size, order.price,
+                    order.message_id, contract, filled_size, order.filled_price,
                 );
             } else if let Some(old_order) = self.map.remove(&order.message_id) {
                 info!(

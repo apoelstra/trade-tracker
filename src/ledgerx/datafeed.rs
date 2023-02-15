@@ -58,6 +58,8 @@ pub struct Order {
     pub size: UnknownQuantity,
     /// Number of contracts filled
     pub filled_size: UnknownQuantity,
+    /// Price at which fill happened
+    pub filled_price: Price,
     /// Limit price
     pub price: Price,
     /// ID of the contract being bid/ask on
@@ -78,6 +80,7 @@ impl From<(json::BookState, OffsetDateTime)> for Order {
             bid_ask: if data.0.is_ask { Ask } else { Bid },
             size: UnknownQuantity::from(data.0.size),
             filled_size: UnknownQuantity::from(0), // not provided for book states, assume 0
+            filled_price: Price::ZERO,             // not provided for book states, assume 0
             contract_id: data.0.contract_id,
             price: data.0.price,
             customer_id: None, // not provided for book states
@@ -118,6 +121,7 @@ impl From<json::DataFeedObject> for Object {
                 price,
                 size,
                 filled_size,
+                filled_price,
                 is_ask,
                 cid,
                 mid,
@@ -130,6 +134,7 @@ impl From<json::DataFeedObject> for Object {
                 message_id: MessageId(mid),
                 size: UnknownQuantity::from(size),
                 filled_size: UnknownQuantity::from(filled_size),
+                filled_price,
                 price,
                 bid_ask: if is_ask { Ask } else { Bid },
                 timestamp,

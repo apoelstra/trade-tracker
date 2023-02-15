@@ -43,18 +43,9 @@ impl fmt::Display for MessageId {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum BidAsk {
-    Bid,
-    Ask,
-}
-pub use BidAsk::{Ask, Bid};
-
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Order {
-    /// Whether the order is a bid or an ask
-    pub bid_ask: BidAsk,
-    /// Number of contracts
+    /// Number of contracts (negative for asks, positive for bids)
     pub size: UnknownQuantity,
     /// Number of contracts filled
     pub filled_size: UnknownQuantity,
@@ -76,9 +67,9 @@ pub struct Order {
 
 impl From<(json::BookState, OffsetDateTime)> for Order {
     fn from(data: (json::BookState, OffsetDateTime)) -> Self {
+        let ba_mult = if data.0.is_ask { -1 } else { 1 };
         Order {
-            bid_ask: if data.0.is_ask { Ask } else { Bid },
-            size: UnknownQuantity::from(data.0.size),
+            size: UnknownQuantity::from(ba_mult * data.0.size),
             filled_size: UnknownQuantity::from(0), // not provided for book states, assume 0
             filled_price: Price::ZERO,             // not provided for book states, assume 0
             contract_id: data.0.contract_id,
@@ -128,18 +119,20 @@ impl From<json::DataFeedObject> for Object {
                 timestamp,
                 updated_time,
                 ..
-            } => Object::Order(Order {
-                contract_id,
-                customer_id: cid.map(CustomerId),
-                message_id: MessageId(mid),
-                size: UnknownQuantity::from(size),
-                filled_size: UnknownQuantity::from(filled_size),
-                filled_price,
-                price,
-                bid_ask: if is_ask { Ask } else { Bid },
-                timestamp,
-                updated_timestamp: updated_time,
-            }),
+            } => {
+                let ba_mult = if is_ask { -1 } else { 1 };
+                Object::Order(Order {
+                    contract_id,
+                    customer_id: cid.map(CustomerId),
+                    message_id: MessageId(mid),
+                    size: UnknownQuantity::from(ba_mult * size),
+                    filled_size: UnknownQuantity::from(ba_mult * filled_size),
+                    filled_price,
+                    price,
+                    timestamp,
+                    updated_timestamp: updated_time,
+                })
+            }
             json::DataFeedObject::BookTop {
                 contract_id,
                 ask,
@@ -179,7 +172,6 @@ mod tests {
         assert_eq!(
             obj,
             Object::Order(Order {
-                bid_ask: Ask,
                 filled_size: UnknownQuantity::from(0),
                 size: UnknownQuantity::from(0),
                 price: Price::ZERO,

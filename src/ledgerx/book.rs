@@ -17,7 +17,7 @@
 //! Tracks the book state for a specific contract
 //!
 
-use super::{datafeed, Ask, Bid, MessageId};
+use super::{datafeed, MessageId};
 use crate::option::{Call, Put};
 use crate::terminal::format_color;
 use crate::units::{Asset, Price, Quantity};
@@ -45,11 +45,11 @@ impl BookState {
 
     /// Add an order to the book
     pub fn insert_order(&mut self, order: datafeed::Order) {
-        let (size, book) = match order.bid_ask {
-            Bid => (order.size, &mut self.bids),
-            Ask => (-order.size, &mut self.asks),
+        let size = order.size.with_asset(self.asset);
+        let book = match size.is_positive() {
+            true => &mut self.bids,
+            false => &mut self.asks,
         };
-        let size = size.with_asset(self.asset);
 
         // Annoyingly the price on a cancelled order is set to 0 (which I suppose makes
         // some sort of sense since it's a "null order") so we can't just look it up

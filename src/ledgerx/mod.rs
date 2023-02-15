@@ -35,7 +35,7 @@ use time::OffsetDateTime;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
-pub use datafeed::{BidAsk::Ask, BidAsk::Bid, CustomerId, MessageId};
+pub use datafeed::{CustomerId, MessageId};
 pub use history::tax::LotId;
 
 /// Thresholds of interestingness

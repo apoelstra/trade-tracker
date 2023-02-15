@@ -60,16 +60,30 @@ impl Tracker {
         }
 
         if order.size == UnknownQuantity::from(0) {
-            // Is this a deletion?
-            self.map.remove(&order.message_id);
-            info!(
-                "Deleted order: id {} contract {}",
-                order.message_id, contract,
-            );
+            // A deletion or fill?
+            let filled_size = order.filled_size.with_asset(contract.asset());
+            if filled_size.is_nonzero() {
+                info!(
+                    "Filled order: id {} contract {}, filled size {}, price {}",
+                    order.message_id, contract, filled_size, order.price,
+                );
+            } else if let Some(old_order) = self.map.remove(&order.message_id) {
+                info!(
+                    "Deleted order: id {} contract {}, size {}, price {}",
+                    old_order.message_id,
+                    contract,
+                    old_order.size.with_asset(contract.asset()),
+                    old_order.price,
+                );
+            } else {
+                warn!(
+                    "Deleted order {} for {} which we weren't tracking.",
+                    order.message_id, contract
+                );
+            }
         } else if let Some(existing) = self.map.get(&order.message_id) {
             // Or an update?
             if existing.updated_timestamp != order.updated_timestamp {
-                let filled_size = order.filled_size.with_asset(contract.asset());
                 if existing.size != order.size || existing.price != order.price {
                     info!(
                         "Updated order: id {} contract {}, size {}, price {}",
@@ -77,12 +91,6 @@ impl Tracker {
                         contract,
                         order.size.with_asset(contract.asset()),
                         order.price,
-                    );
-                }
-                if filled_size.is_nonzero() {
-                    info!(
-                        "Filled order: id {} contract {}, filled size {}, price {}",
-                        order.message_id, contract, filled_size, order.price,
                     );
                 }
             }

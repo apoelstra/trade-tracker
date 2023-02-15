@@ -24,6 +24,7 @@
 //! logged. Errors related to initially opening the files should kill the program.
 //!
 
+use crate::terminal::{set_color_off_thread_local, set_color_on_thread_local};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Mutex;
@@ -50,7 +51,9 @@ impl log::Log for StdoutOnly {
             return;
         }
         if self.enabled(record.metadata()) {
+            set_color_on_thread_local();
             println!("{}", record.args());
+            set_color_off_thread_local();
         }
     }
 
@@ -122,6 +125,7 @@ impl log::Log for Logger {
 
                 // If it's more important than info, log to stdout
                 if record.level() <= log::Level::Info {
+                    set_color_on_thread_local();
                     let mut last_time_lock = self.last_stdout_time.lock().unwrap();
                     if now - *last_time_lock > time::Duration::minutes(10) {
                         println!();
@@ -147,6 +151,7 @@ impl log::Log for Logger {
                         *last_time_lock = now;
                     }
                     println!("{}", record.args());
+                    set_color_off_thread_local();
                 }
                 // Regardless, log to debug log with more precise timestamp and log level
                 let _ = writeln!(

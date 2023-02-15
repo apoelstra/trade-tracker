@@ -17,7 +17,24 @@
 //! Utilities to output RGB to a terminal
 //!
 
+use std::cell::Cell;
 use std::fmt;
+use std::thread_local;
+
+thread_local! {
+    /// Whether or not we should output color control codes
+    static COLOR_ON: Cell<bool> = Cell::new(false);
+}
+
+/// Turn on the color coding *for the current thread*
+pub fn set_color_on_thread_local() {
+    COLOR_ON.with(|c| c.set(true))
+}
+
+/// Turn off the color coding *for the current thread*
+pub fn set_color_off_thread_local() {
+    COLOR_ON.with(|c| c.set(false))
+}
 
 fn hsv_to_rgb(hue: usize, sat: f64, light: f64) -> (usize, usize, usize) {
     assert!(hue <= 360, "Hue must lie between 0 and 360 inclusive.");
@@ -47,6 +64,55 @@ fn hsv_to_rgb(hue: usize, sat: f64, light: f64) -> (usize, usize, usize) {
         (255.0 * ret_f64.1) as usize,
         (255.0 * ret_f64.2) as usize,
     )
+}
+
+/// Structure wrapping a "color formatter"
+///
+/// When run through Display with the alternate flag set, this will output the
+/// enclosed data with terminal codes to display the RGB.
+pub struct ColorFormat<D: fmt::Display> {
+    data: D,
+    red: usize,
+    green: usize,
+    blue: usize,
+}
+
+impl<D: fmt::Display> fmt::Display for ColorFormat<D> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        COLOR_ON.with(|c| {
+            let color_on = c.get();
+            if color_on {
+                write!(f, "\x1b[38;2;{};{};{}m", self.red, self.green, self.blue)?;
+            }
+            fmt::Display::fmt(&self.data, f)?;
+            if color_on {
+                write!(f, "\x1b[0m")?
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<D: fmt::Display> ColorFormat<D> {
+    /// Construct a new formatter with a given color
+    pub fn new(data: D, red: usize, green: usize, blue: usize) -> Self {
+        ColorFormat {
+            data,
+            red,
+            green,
+            blue,
+        }
+    }
+
+    /// Construct a new white formatter
+    pub fn new_white(data: D) -> Self {
+        Self::new(data, 250, 250, 250)
+    }
+
+    /// Construct a new light-blue formatter
+    pub fn new_light_blue(data: D) -> Self {
+        Self::new(data, 64, 192, 255)
+    }
 }
 
 pub fn format_color<D: fmt::Display>(disp: D, red: usize, green: usize, blue: usize) -> String {

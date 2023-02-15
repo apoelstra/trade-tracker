@@ -17,6 +17,7 @@
 //! Data structure representing a single option
 //!
 
+use crate::terminal::ColorFormat;
 use crate::terminal::{format_color, format_redgreen};
 use crate::units::{Price, Quantity};
 use log::info;
@@ -353,9 +354,9 @@ impl Option {
         };
 
         info!(
-            "{}{}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
+            "{}{:#}  dte: {}  BTC: {:8.2}  intrinsic: {}  dd80: {}",
             prefix,
-            format_color(format_args!("{self:17}"), 64, 192, 255),
+            ColorFormat::new_light_blue(format_args!("{self:17}")),
             format_redgreen(format_args!("{dte:6.3}"), dte, 90.0, 0.0),
             btc_price,
             intrinsic_str,

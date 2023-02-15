@@ -72,8 +72,8 @@ impl Tracker {
                 // For fills specifically send a text
                 use std::process::Command;
                 let text = format!(
-                    "LedgerX filled order\n{}: {} @ {}\nID {}",
-                    contract, filled_size, order.filled_price, order.message_id,
+                    "LedgerX filled order\n{}: {} @ {}\nID {}\nBTC Price {}",
+                    contract, filled_size, order.filled_price, order.message_id, price_ref.0,
                 );
                 let _ = Command::new("send-text.sh").arg(&text).output();
                 ("Filled ", filled_size, order.filled_price)

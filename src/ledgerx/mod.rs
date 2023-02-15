@@ -175,7 +175,7 @@ impl LedgerX {
     /// Sets the "available balances" counter
     pub fn set_balances(&mut self, usd: Price, btc: bitcoin::Amount) {
         if self.available_usd != usd || self.available_btc != btc {
-            info!("Update balances: ${}, {} BTC", usd, btc);
+            info!("Update balances: ${}, {}", usd, btc);
         }
         self.available_usd = usd;
         self.available_btc = btc;

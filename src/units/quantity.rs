@@ -195,7 +195,7 @@ impl fmt::Display for Quantity {
             Quantity::Bitcoin(btc) => fmt::Display::fmt(&btc, f),
             Quantity::Contracts(n) => {
                 fmt::Display::fmt(&n, f)?;
-                f.write_str(" contracts")
+                f.write_str(" cts")
             }
             Quantity::Cents(n) => {
                 f.write_str("$")?;

@@ -554,6 +554,34 @@ impl History {
                     },
                 );
 
+                // For tax purposes, after exercising we exchange Bitcoin **at the market price**,
+                // not **at the strike price**. This is a bit confusing because of course, in the
+                // trading interface, it appears that you get assigned and forced to trade at the
+                // strike.
+                //
+                // However, tax-wise this would mean taking an instanteous loss (presumably a
+                // short-term loss) and getting Bitcoin at a favorable basis. The IRS instead
+                // wants the loss to be taxed as 1256 and for the Bitcoin to be traded at the
+                // actual market price. Ok, fair enough.
+                //
+                // What this means for us here is that we actually need a price reference, we can't
+                // just look at the price at which the coins changed hands.
+                let trade_price = match self.lx_price_ref.get(&price_ref_date) {
+                    Some(price) => *price,
+                    None => {
+                        warn!(
+                            "Do not have a LX price reference for {price_ref_date}. \
+                             An option assignment occured at this date. For tax purposes \
+                             the consequential trade needs to happen at market prices. \
+                             We do not have this, so we are using the strike price of \
+                             {} which is NOT CORRECT and implies a BETTER TAX OUTCOME \
+                             for you than the IRS will perceive.",
+                            option.strike,
+                        );
+                        option.strike
+                    }
+                };
+
                 // Assignments also cause synthetic trades to happen, which have the
                 // same tax consequences as any other trade.
                 debug!("Because of assignment inserting a synthetic BTC trade");
@@ -562,7 +590,7 @@ impl History {
                     price_ref_date,
                     Event::Trade {
                         asset: TaxAsset::Bitcoin,
-                        price: option.strike,
+                        price: trade_price,
                         size: match option.pc {
                             crate::option::Call => -contracts_in_btc,
                             crate::option::Put => contracts_in_btc,

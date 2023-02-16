@@ -550,34 +550,25 @@ impl History {
             // which is a basic sanity check.
             let csv = match event {
                 Event::UsdDeposit { amount, .. } => (
-                    Some((
-                        "Deposit",
-                        date_fmt,
-                        BudgetAsset::Usd,
-                        (None, *amount),
-                        (btc_price, None, None),
-                    )),
-                    Some("temp"),
+                    "Deposit",
+                    date_fmt,
+                    BudgetAsset::Usd,
+                    (None, *amount),
+                    (btc_price, None, None),
                 ),
                 Event::BtcDeposit { amount, .. } => (
-                    Some((
-                        "Deposit",
-                        date_fmt,
-                        BudgetAsset::Btc,
-                        (None, (*amount).into()),
-                        (btc_price, None, None),
-                    )),
-                    None,
+                    "Deposit",
+                    date_fmt,
+                    BudgetAsset::Btc,
+                    (None, (*amount).into()),
+                    (btc_price, None, None),
                 ),
                 Event::Withdrawal { asset, amount } => (
-                    Some((
-                        "Withdraw",
-                        date_fmt,
-                        BudgetAsset::from(*asset),
-                        (None, *amount),
-                        (btc_price, None, None),
-                    )),
-                    None,
+                    "Withdraw",
+                    date_fmt,
+                    BudgetAsset::from(*asset),
+                    (None, *amount),
+                    (btc_price, None, None),
                 ),
                 Event::Trade {
                     contract,
@@ -586,28 +577,22 @@ impl History {
                     ..
                 } => match contract.ty() {
                     super::contract::Type::Option { opt, .. } => (
-                        Some((
-                            "Trade",
-                            date_fmt,
-                            contract.budget_asset().unwrap(),
-                            (Some(*price), *size),
-                            (
-                                btc_price,
-                                Some(csv::Iv(opt.bs_iv(date, btc_price, *price))),
-                                Some(csv::Arr(opt.arr(date, btc_price, *price))),
-                            ),
-                        )),
-                        None,
+                        "Trade",
+                        date_fmt,
+                        contract.budget_asset().unwrap(),
+                        (Some(*price), *size),
+                        (
+                            btc_price,
+                            Some(csv::Iv(opt.bs_iv(date, btc_price, *price))),
+                            Some(csv::Arr(opt.arr(date, btc_price, *price))),
+                        ),
                     ),
                     super::contract::Type::NextDay { .. } => (
-                        Some((
-                            "Trade",
-                            date_fmt,
-                            contract.budget_asset().unwrap(),
-                            (Some(*price), *size),
-                            (btc_price, None, None),
-                        )),
-                        None,
+                        "Trade",
+                        date_fmt,
+                        contract.budget_asset().unwrap(),
+                        (Some(*price), *size),
+                        (btc_price, None, None),
                     ),
                     super::contract::Type::Future { .. } => {
                         unimplemented!("futures trading")
@@ -615,23 +600,20 @@ impl History {
                 },
                 Event::Expiry { contract, size } | Event::Assignment { contract, size } => {
                     match contract.ty() {
-                        super::contract::Type::Option { .. } => {
-                            let csv = (
-                                if let Event::Expiry { .. } = event {
-                                    "Expiry"
-                                } else {
-                                    "Assignment"
-                                },
-                                date_fmt,
-                                contract.budget_asset().unwrap(),
-                                (None, *size),
-                                (btc_price, None, None),
-                            );
-                            (Some(csv), None)
-                        }
+                        super::contract::Type::Option { .. } => (
+                            if let Event::Expiry { .. } = event {
+                                "Expiry"
+                            } else {
+                                "Assignment"
+                            },
+                            date_fmt,
+                            contract.budget_asset().unwrap(),
+                            (None, *size),
+                            (btc_price, None, None),
+                        ),
                         // NextDays don't expire, they are "assigned". We don't log this as a distinct
                         // event because we consider the originating trade to be the actual event.
-                        super::contract::Type::NextDay { .. } => (None, None),
+                        super::contract::Type::NextDay { .. } => continue,
                         // TBH I don't know what happens with futures
                         super::contract::Type::Future { .. } => unreachable!(),
                     }
@@ -639,9 +621,7 @@ impl History {
             };
 
             // ...then output it
-            if let Some(first) = csv.0 {
-                println!("{}", CsvPrinter(first));
-            }
+            println!("{}", CsvPrinter(csv));
         }
     }
 

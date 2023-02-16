@@ -19,9 +19,7 @@
 
 use crate::csv::{self, CsvPrinter};
 use crate::file::create_text_file;
-use crate::units::{
-    BudgetAsset, DepositAsset, Price, Quantity, TaxAsset, Underlying, UnknownQuantity,
-};
+use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying, UnknownQuantity};
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
@@ -745,7 +743,7 @@ impl History {
                     debug!("[deposit] \"BTC\" {} outpoint {}", amount, outpoint);
                     let lot =
                         lot::Lot::from_deposit(*outpoint, lot_info.price, *amount, lot_info.date);
-                    tracker.push_lot1(lot);
+                    tracker.push_lot(lot);
                 }
                 // Withdrawals of any kind are not taxable events.
                 //
@@ -769,28 +767,23 @@ impl History {
                     let asset = contract
                         .tax_asset()
                         .with_context(|| format!("asset of {contract} not supported (taxes)"))?;
-                    let (tax_date, is_btc) =
-                        if let super::contract::Type::NextDay { .. } = contract.ty() {
-                            // BTC longs don't happen until the following day...also ofc LX fucks
-                            // up the date and fixes the time to 21:00
-                            (
-                                contract
-                                    .expiry()
-                                    .date()
-                                    .with_time(time::time!(21:00))
-                                    .assume_utc(),
-                                true,
-                            )
-                        } else {
-                            (date, false)
-                        };
-                    if is_btc {
-                        let open = tax::Lot::from_trade_btc(*price, *size, *fee, tax_date);
-                        tracker.push_lot(asset, open, date);
+                    let tax_date = if let super::contract::Type::NextDay { .. } = contract.ty() {
+                        // BTC longs don't happen until the following day...also ofc LX fucks
+                        // up the date and fixes the time to 21:00
+                        contract
+                            .expiry()
+                            .date()
+                            .with_time(time::time!(21:00))
+                            .assume_utc()
                     } else {
-                        let open = tax::Lot::from_trade_opt(*price, *size, *fee, tax_date);
-                        tracker.push_lot(asset, open, date);
-                    }
+                        date
+                    };
+
+                    let unit_fee = *fee / *size;
+                    let adj_price = *price + unit_fee; // nb `unit_fee` is a signed quantity
+                    tracker
+                        .push_trade(asset, *size, adj_price, tax_date.into())
+                        .with_context(|| format!("pushing trade of {asset} size {size}"))?;
                 }
                 // Expiries are a simple tax event (a straight gain)
                 Event::Expiry {
@@ -798,29 +791,20 @@ impl History {
                     underlying,
                     size,
                 } => {
-                    let asset = TaxAsset::Option {
-                        underlying: *underlying,
-                        option: *option,
-                    };
-                    debug!("[expiry] {} expired {}", asset, size);
-                    // Only do something if this is an option expiry -- dayaheads and futures
-                    // also expire, but dayaheads we treat as sales at the time of sale, and
-                    // futures we don't support.
-                    let open = tax::Lot::from_expiry(option, *size);
-                    tracker.push_lot(asset, open, date);
+                    debug!("[expiry] {} {} expired {}", underlying, option, size);
+                    tracker
+                        .push_expiry(*option, *underlying, *size)
+                        .with_context(|| format!("expiring option {option} n {size}"))?;
                 }
-                // Assignments are less simple
+                // Assignments are less simple because we need a price reference to compute
+                // the intrinsic price (with expiries this is assumed to be zero)
                 Event::Assignment {
                     option,
                     underlying,
                     size,
                     price_ref,
                 } => {
-                    let asset = TaxAsset::Option {
-                        underlying: *underlying,
-                        option: *option,
-                    };
-                    debug!("[expiry] {} assigned {}", asset, size);
+                    debug!("[expiry] {} {} assigned {}", underlying, option, size);
                     // see "seriously WTF" doccomment
                     let expiry = option
                         .expiry
@@ -845,8 +829,9 @@ impl History {
                         }
                     };
 
-                    let open = tax::Lot::from_assignment(option, *size, btc_price);
-                    tracker.push_lot(asset, open, date);
+                    tracker
+                        .push_assignment(*option, *underlying, *size, btc_price)
+                        .with_context(|| format!("assignment option {option} n {size}"))?;
                 }
             };
         }

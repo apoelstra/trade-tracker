@@ -18,7 +18,7 @@
 //!
 
 use crate::csv;
-use crate::ledgerx::history::tax::TaxDate;
+use crate::ledgerx::history::tax::{Close, CloseType, GainType, TaxDate};
 use crate::units::{Price, Quantity, TaxAsset};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -116,7 +116,36 @@ pub struct Lot {
     sort_date: time::OffsetDateTime,
 }
 
+impl fmt::Display for Lot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}: {} {} at {}; date {}",
+            self.id, self.quantity, self.asset, self.price, self.date.0,
+        )
+    }
+}
+
 impl Lot {
+    /// Constructs a lot from a given asset/quantity/price/date data
+    ///
+    /// Will assign the lot a fresh ID. Don't use this for deposits!
+    /// Instead use [Lot::from_deposit] which will assign an ID based
+    /// on the outpoint of the deposit.
+    pub fn new(asset: TaxAsset, quantity: Quantity, price: Price, date: TaxDate) -> Lot {
+        Lot {
+            id: match asset {
+                TaxAsset::Btc => Id::next_btc(),
+                TaxAsset::Option { .. } => Id::next_opt(),
+            },
+            asset,
+            quantity,
+            price,
+            date,
+            sort_date: date.0,
+        }
+    }
+
     /// Directly constructs a lot from a deposit
     pub fn from_deposit(
         outpoint: bitcoin::OutPoint,
@@ -172,5 +201,59 @@ impl Lot {
     /// Accessor for the quantity
     pub fn quantity(&self) -> Quantity {
         self.quantity
+    }
+
+    /// Consume the lot by closing it. If this is a partial close, return
+    /// the reduced-size log.
+    pub fn close(
+        mut self,
+        quantity: Quantity,
+        price: Price,
+        date: TaxDate,
+        ty: CloseType,
+    ) -> anyhow::Result<(Close, Option<Self>)> {
+        if self.quantity.has_same_sign(quantity) {
+            return Err(anyhow::Error::msg(format!(
+                "Tried to close {self} with quantity {quantity} of same sign"
+            )));
+        }
+
+        let gain_ty = if self.asset == TaxAsset::Btc {
+            if date.0 - self.date.0 <= time::Duration::days(365) {
+                GainType::ShortTerm
+            } else {
+                GainType::LongTerm
+            }
+        } else {
+            GainType::Option1256
+        };
+
+        let partial;
+        let close_quantity;
+        if self.quantity.abs() > quantity.abs() {
+            // Partial close
+            self.quantity += quantity;
+            close_quantity = quantity;
+            partial = true;
+        } else {
+            // Full close
+            close_quantity = quantity;
+            partial = false;
+        }
+
+        Ok((
+            Close {
+                ty,
+                gain_ty,
+                open_id: self.id.clone(),
+                open_price: self.price,
+                open_date: self.date,
+                close_price: price,
+                close_date: date,
+                asset: self.asset,
+                quantity: close_quantity,
+            },
+            if partial { Some(self) } else { None },
+        ))
     }
 }

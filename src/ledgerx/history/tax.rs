@@ -20,10 +20,11 @@
 
 use crate::{
     csv,
-    ledgerx::history::lot::{UnknownBtcId, UnknownOptId},
+    ledgerx::history::lot::Lot,
     ledgerx::history::LotId,
-    units::{Price, Quantity, TaxAsset},
+    units::{Price, Quantity, TaxAsset, Underlying},
 };
+use anyhow::Context;
 use log::debug;
 use rust_decimal::Decimal;
 use std::{cmp, collections::HashMap, fmt, mem};
@@ -43,9 +44,15 @@ impl csv::PrintCsv for TaxDate {
     }
 }
 
+impl From<time::OffsetDateTime> for TaxDate {
+    fn from(t: time::OffsetDateTime) -> Self {
+        TaxDate(t)
+    }
+}
+
 /// Whether cap gains are short or long term, or 1256 (60% long / 40% short)
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum GainType {
+pub enum GainType {
     ShortTerm,
     LongTerm,
     Option1256,
@@ -62,7 +69,7 @@ impl csv::PrintCsv for GainType {
 
 /// The nature of a taxable "close position" event
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum CloseType {
+pub enum CloseType {
     BuyBack,
     Sell,
     Expiry,
@@ -81,192 +88,28 @@ impl csv::PrintCsv for CloseType {
     }
 }
 
-/// Event that creates or enlarges a position
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Lot<ID> {
-    id: ID,
-    /// If this is used to close a position rather than create a new lot
-    close_ty: CloseType,
-    quantity: Quantity,
-    price: Price,
-    date: TaxDate,
-}
-
-impl<ID: fmt::Display> fmt::Display for Lot<ID> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{} {{ {} @ {} on {} }}",
-            self.id,
-            self.quantity,
-            self.price,
-            self.date.0.lazy_format("%FT%T"),
-        )
-    }
-}
-
-impl<ID> Lot<ID> {
-    /// Accessor for the ID
-    pub fn id(&self) -> &ID {
-        &self.id
-    }
-}
-
-impl Lot<LotId> {
-    /// Constructs an `Lot` object from a deposit
-    pub fn from_deposit_utxo(
-        outpoint: bitcoin::OutPoint,
-        price: Price,
-        size: bitcoin::Amount,
-        date: time::OffsetDateTime,
-    ) -> Self {
-        debug!(
-            "Lot::from_deposit_utxo price {} size {} date {}",
-            price, size, date
-        );
-        Lot {
-            id: LotId::from_outpoint(outpoint),
-            close_ty: CloseType::TxFee, // lol a deposit better not close a position..
-            quantity: size.into(),
-            price,
-            date: TaxDate(date),
-        }
-    }
-
-    /// Reduces a lot by a transaction fee amount
-    pub fn dock_fee(&mut self, n: bitcoin::Amount) {
-        if let Quantity::Bitcoin(ref mut btc) = self.quantity {
-            *btc -= n.to_signed().expect("bitcoin amount overflow");
-        } else {
-            panic!("{}: tried to dock fees but this is a non-bitcoin lot", self)
-        }
-    }
-}
-
-impl Lot<UnknownBtcId> {
-    /// Constructs an `Lot` object from a transaction fee
-    pub fn from_tx_fee(size: bitcoin::Amount, date: time::OffsetDateTime) -> Self {
-        Lot {
-            id: UnknownBtcId,
-            close_ty: CloseType::TxFee, // lol a fee better *had* close a position..
-            quantity: -Quantity::from(size),
-            price: Price::ZERO,
-            date: TaxDate(date),
-        }
-    }
-
-    /// Constructs an `Lot` object from a trade event
-    pub fn from_trade_btc(
-        price: Price,
-        size: Quantity,
-        fee: Price,
-        date: time::OffsetDateTime,
-    ) -> Self {
-        debug!(
-            "Lot::from_trade_btc price {} size {} fee {} date {}",
-            price, size, fee, date
-        );
-        let unit_fee = fee / size;
-        let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
-        Lot {
-            id: UnknownBtcId,
-            close_ty: if size.is_nonnegative() {
-                CloseType::BuyBack
-            } else {
-                CloseType::Sell
-            },
-            quantity: size,
-            price: adj_price,
-            date: TaxDate(date),
-        }
-    }
-}
-
-impl Lot<UnknownOptId> {
-    /// Constructs an `Lot` object from a trade event
-    pub fn from_trade_opt(
-        price: Price,
-        size: Quantity,
-        fee: Price,
-        date: time::OffsetDateTime,
-    ) -> Self {
-        debug!(
-            "Lot::from_trade_opt price {} size {} fee {} date {}",
-            price, size, fee, date
-        );
-        let unit_fee = fee / size;
-        let adj_price = price + unit_fee; // nb `unit_fee` is a signed quantity
-        Lot {
-            id: UnknownOptId,
-            close_ty: if size.is_nonnegative() {
-                CloseType::BuyBack
-            } else {
-                CloseType::Sell
-            },
-            quantity: size,
-            price: adj_price,
-            date: TaxDate(date),
-        }
-    }
-}
-
-impl Lot<UnknownOptId> {
-    /// Constructs an `Lot` object from an expiration event
-    pub fn from_expiry(opt: &crate::option::Option, n_expired: Quantity) -> Self {
-        debug!("Lot::from_expiry opt {} n {}", opt, n_expired);
-        // seriously WTF -- the time is always fixed at 22:00 even though this
-        // is 5PM in winter and 6PM in summer, neither of which are 4PM when
-        // these options actually expire.
-        let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
-        Lot {
-            id: UnknownOptId,
-            close_ty: CloseType::Expiry,
-            quantity: n_expired,
-            price: Price::ZERO,
-            date: TaxDate(expiry),
-        }
-    }
-
-    pub fn from_assignment(
-        opt: &crate::option::Option,
-        n_assigned: Quantity,
-        btc_price: Price,
-    ) -> Self {
-        debug!("Lot::from_assignment opt {} n {}", opt, n_assigned);
-        // seriously WTF -- the time is always fixed at 22:00 even though this
-        // is 5PM in winter and 6PM in summer, neither of which are 4PM when
-        // these options actually expire.
-        let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
-        Lot {
-            id: UnknownOptId,
-            close_ty: CloseType::Exercise,
-            quantity: n_assigned,
-            price: opt.intrinsic_value(btc_price),
-            date: TaxDate(expiry),
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Close {
-    ty: CloseType,
-    gain_ty: GainType,
-    open_id: LotId,
-    open_price: Price,
-    open_date: TaxDate,
-    close_price: Price,
-    close_date: TaxDate,
-    quantity: Quantity,
+    pub ty: CloseType,
+    pub gain_ty: GainType,
+    pub open_id: LotId,
+    pub open_price: Price,
+    pub open_date: TaxDate,
+    pub close_price: Price,
+    pub close_date: TaxDate,
+    pub asset: TaxAsset,
+    pub quantity: Quantity,
 }
 
 impl fmt::Display for Close {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
+            "{} {{ {:?}, date: {}, asset: {}, price: {}, qty: {} }}",
             self.open_id,
             self.ty,
             self.close_date.0.lazy_format("%FT%FT"),
+            self.asset,
             self.close_price,
             self.quantity,
         )
@@ -377,157 +220,93 @@ impl Close {
 }
 
 /// A position in a specific asset, represented by a FIFO queue of opening events
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct Position {
-    fifo: crate::TimeMap<Lot<LotId>>,
+    asset: TaxAsset,
+    queue: crate::TimeMap<Lot>,
 }
 
 impl Position {
     /// Creates a new empty position
-    pub fn new() -> Self {
+    pub fn new(asset: TaxAsset) -> Self {
         Position {
-            fifo: Default::default(),
+            asset,
+            queue: Default::default(),
         }
     }
 
-    fn total_size(&self) -> Quantity {
-        self.fifo.values().map(|open| open.quantity).sum()
-    }
-
-    /// Assigns an ID to a lot and adds it to the position tracker
-    fn insert_lot<ID: Into<LotId>>(
-        &mut self,
-        sort_date: time::OffsetDateTime,
-        lot: Lot<ID>,
-    ) -> Lot<LotId> {
-        let new_lot = Lot {
-            id: lot.id.into(),
-            close_ty: lot.close_ty,
-            quantity: lot.quantity,
-            price: lot.price,
-            date: lot.date,
-        };
-        self.fifo.insert(sort_date, new_lot.clone());
-        new_lot
-    }
-
-    /// Modifies the position based on an event.
-    ///
-    /// If this results in closing previously opened positions, return a list of
-    /// `Close`s with their type set to the `close_type` argument. If it results
-    /// in opening a position (which may happen in a "pure" open or may happen
-    /// only after closing), then it also returns a created lot.
-    fn push_event<ID: fmt::Display + Into<LotId>>(
-        &mut self,
-        mut open: Lot<ID>,
-        sort_date: time::OffsetDateTime,
-        is_1256: bool,
-    ) -> (Vec<Close>, Option<Lot<LotId>>) {
-        // If the position is empty, then just push
-        if self.fifo.is_empty() {
-            debug!(
-                "Create new position with open {}; sort date {}",
-                open, sort_date
-            );
-            let lot = self.insert_lot(sort_date, open);
-            return (vec![], Some(lot));
-        }
-        // If there is an open position, in the same direction as the new open,
-        // add the new open to the FIFO.
-        if self
-            .fifo
+    /// Given a quantity, returns whether this position is open in the same direction,
+    /// or is empty (so is "open" in both directions)
+    pub fn has_same_direction(&self, quantity: Quantity) -> bool {
+        let direction = self
+            .queue
             .values()
             .next()
-            .unwrap()
-            .quantity
-            .has_same_sign(open.quantity)
-        {
-            debug!(
-                "Increasing position (total qty {}) with open {}; sort date {}",
-                self.total_size(),
-                open,
-                sort_date,
-            );
-            let lot = self.insert_lot(sort_date, open);
-            return (vec![], Some(lot));
-        }
-        // Otherwise, we must close the position
-        let mut ret = vec![];
-        while open.quantity.is_nonzero() {
-            let pre_pop_total = self.total_size();
-            let to_match = if is_1256 {
-                self.fifo.pop_first()
-            } else {
-                //self.fifo.pop_max(|lot| lot.price)
-                self.fifo.pop_first()
-            };
-            let (front_date, mut front) = match to_match {
-                Some(kv) => kv,
-                None => {
-                    debug!(
-                        "fully closed out position, opening new one: {}; sort date {}",
-                        open, sort_date
-                    );
-                    // If we've closed out everything and still have an open, then
-                    // we're opening a new position in the opposite direction.
-                    let lot = self.insert_lot(sort_date, open);
-                    return (ret, Some(lot));
-                }
-            };
-            debug!(
-                "closing lot {} (total qty {}) with potential-lot {}",
-                front, pre_pop_total, open
-            );
+            .map(Lot::quantity)
+            .unwrap_or(Quantity::Zero);
+        direction.has_same_sign(quantity)
+    }
 
-            // Construct a close object with everything known but the quantity
-            let mut close = Close {
-                ty: open.close_ty,
-                gain_ty: if is_1256 {
-                    GainType::Option1256
-                } else if open.date.0 - front.date.0 <= time::Duration::days(365) {
-                    GainType::ShortTerm
+    /// Sums over everything in the queue
+    fn total_size(&self) -> Quantity {
+        self.queue.values().map(|lot| lot.quantity()).sum()
+    }
+
+    /// Adds a given quantity to the position
+    ///
+    /// If the quantity is in the same direction as the existing position,
+    /// creates a new lot at the back of the FIFO queue. If it is in an
+    /// opposite direction, closes out existing lots. If it runs out of lots
+    /// to close, opens a new position with the remainder.
+    ///
+    /// Returns a vector of close events, if any, and a copy of the new lot,
+    /// if any.
+    fn add(
+        &mut self,
+        mut quantity: Quantity,
+        price: Price,
+        date: TaxDate,
+        close_ty: CloseType,
+    ) -> anyhow::Result<(Vec<Close>, Option<Lot>)> {
+        if self.has_same_direction(quantity) {
+            let new_lot = Lot::new(self.asset, quantity, price, date);
+            self.queue.insert(new_lot.sort_date(), new_lot.clone());
+            Ok((vec![], Some(new_lot)))
+        } else {
+            let mut closes = vec![];
+            // FIXME choose pop strategy intelligently
+            while let Some((existing_date, existing_lot)) = self.queue.pop_first() {
+                let existing_qty = existing_lot.quantity();
+                let (close, partial) = existing_lot
+                    .close(quantity, price, date, close_ty)
+                    .with_context(|| {
+                        format!(
+                            "Closing {} lot, qty {quantity} price {price} date {}",
+                            self.asset, date.0
+                        )
+                    })?;
+                closes.push(close);
+                if let Some(partial_lot) = partial {
+                    // Put back any partial fills
+                    self.queue.insert(existing_date, partial_lot);
+                    return Ok((closes, None));
                 } else {
-                    GainType::LongTerm
-                },
-                open_id: front.id.clone(),
-                open_price: front.price,
-                open_date: front.date,
-                close_price: open.price,
-                close_date: open.date,
-                quantity: Quantity::Zero, // TBD below
-            };
-
-            // ...figure out the quantity
-            assert!(
-                !front.quantity.has_same_sign(open.quantity),
-                "cancelling lot {} should have opposite sign of opened lot {}",
-                open,
-                front,
-            );
-            if front.quantity.abs() > open.quantity.abs() {
-                // Partial close
-                front.quantity += open.quantity;
-                close.quantity = open.quantity;
-                open.quantity = Quantity::Zero;
-                self.fifo.insert(front_date, front); // put incompletely closed position back
-            } else {
-                // Full close
-                close.quantity = -front.quantity;
-                open.quantity += front.quantity;
+                    quantity -= existing_qty;
+                }
             }
-            debug!("push_event: pushing close {} onto ret", close);
-            ret.push(close);
+            // If we get to this point we ran out of things to close, so create
+            // a new lot and return.
+            let new_lot = Lot::new(self.asset, quantity, price, date);
+            self.queue.insert(new_lot.sort_date(), new_lot.clone());
+            Ok((closes, Some(new_lot)))
         }
-
-        // If we made it here we consumed the whole initial lot and only closed things.
-        (ret, None)
     }
 }
 
 /// "anonymous" enum covering an open or a close
 #[derive(Clone, Debug)]
 pub enum OpenClose {
-    Open(Lot<LotId>),
+    Open(Lot),
     Close(Close),
 }
 
@@ -552,58 +331,178 @@ impl PositionTracker {
         Default::default()
     }
 
-    pub fn push_lot1(&mut self, lot: crate::ledgerx::history::lot::Lot) {
-        let new_lot: Lot<LotId> = Lot {
-            id: lot.id().clone(),
-            close_ty: CloseType::Expiry,
-            date: lot.date(),
-            price: lot.price(),
-            quantity: lot.quantity(),
-        };
-
-        // Assert that deposits do not close any positions (since we cannot have
-        // a short BTC position)
-        //
-        // FIXME do this in a sensible way
-        assert_eq!(self.push_lot(lot.asset(), new_lot, lot.sort_date(),), 0);
+    /// Helper function to log a set of closes and opens
+    ///
+    /// Returns the number of loses
+    fn push_events(&mut self, log_str: &str, closes: Vec<Close>, open: Option<Lot>) -> usize {
+        let n_ret = closes.len();
+        // ...then log it
+        for close in closes {
+            debug!("{}: close {}", log_str, close);
+            self.events.push(Event {
+                date: close.close_date,
+                asset: close.asset,
+                open_close: OpenClose::Close(close),
+            });
+        }
+        if let Some(lot) = open {
+            debug!("{}: new lot {}", log_str, lot);
+            self.events.push(Event {
+                date: lot.date(),
+                asset: lot.asset(),
+                open_close: OpenClose::Open(lot),
+            });
+        }
+        // Return the number of closes that happened
+        n_ret
     }
 
-    /// Attempts to add a new lot to the tracker
+    /// Directly insert a lot without attempting any cancelation etc
+    ///
+    /// Panics if there is already an open position in the opposite direction
+    /// of this lot.
+    pub fn push_lot(&mut self, lot: Lot) {
+        debug!("[position-tracker] direct push of lot {}", lot);
+        // Assert that deposits do not close any positions (since we cannot have
+        // a short BTC position)
+        let pos = self
+            .positions
+            .entry(lot.asset())
+            .or_insert(Position::new(TaxAsset::Btc));
+        assert!(
+            pos.has_same_direction(lot.quantity()),
+            "Tried to directly insert {} but had an opposing position open",
+            lot,
+        );
+        pos.queue.insert(lot.sort_date(), lot);
+    }
+
+    /// Expire a bunch of some option
+    pub fn push_expiry(
+        &mut self,
+        option: crate::option::Option,
+        underlying: Underlying,
+        size: Quantity,
+    ) -> anyhow::Result<Vec<Close>> {
+        let asset = TaxAsset::Option { underlying, option };
+        debug!("[position-tracker] expiry of asset {} size {}", asset, size);
+        // Force expiry date to match LX goofiness
+        let expiry = option
+            .expiry
+            .date()
+            .with_time(time::time!(22:00))
+            .assume_utc();
+        let pos = match self.positions.get_mut(&asset) {
+            Some(pos) => pos,
+            None => {
+                return Err(anyhow::Error::msg(format!(
+                    "attempted expiry of asset {} but no position open",
+                    asset
+                )))
+            }
+        };
+
+        // Do the expiry
+        let (closes, open) = pos
+            .add(size, Price::ZERO, expiry.into(), CloseType::Expiry)
+            .with_context(|| format!("Expiring {size} units of {asset}"))?;
+        // Return an error if it wasn't a clean close
+        if let Some(lot) = open {
+            return Err(anyhow::Error::msg(format!(
+                "attempted expiry of {asset} but had fewer; left over {lot}"
+            )));
+        }
+        // If this was a complete expiry delete the asset
+        if pos.queue.is_empty() {
+            self.positions.remove(&asset);
+        }
+        // Return all the closes that happened
+        Ok(closes)
+    }
+
+    /// Assign a bunch of some option
+    pub fn push_assignment(
+        &mut self,
+        option: crate::option::Option,
+        underlying: Underlying,
+        size: Quantity,
+        btc_price: Price,
+    ) -> anyhow::Result<Vec<Close>> {
+        let asset = TaxAsset::Option { underlying, option };
+        debug!(
+            "[position-tracker] assignment of asset {} size {}",
+            asset, size
+        );
+        // Force expiry date to match LX goofiness
+        let expiry = option
+            .expiry
+            .date()
+            .with_time(time::time!(22:00))
+            .assume_utc();
+        let pos = match self.positions.get_mut(&asset) {
+            Some(pos) => pos,
+            None => {
+                return Err(anyhow::Error::msg(format!(
+                    "attempted assignment of asset {} but no position open",
+                    asset
+                )))
+            }
+        };
+        // Do the assignment. Note that the options go away but this is *not* a
+        // "close at price 0" but a "close at intrinsic price". The provided
+        // BTC price should come from the LX price reference.
+        let price = option.intrinsic_value(btc_price);
+        let (closes, open) = pos
+            .add(size, price, expiry.into(), CloseType::Exercise)
+            .with_context(|| format!("Assigned on {size} units of {asset}"))?;
+        // Return an error if it wasn't a clean close
+        if let Some(lot) = open {
+            return Err(anyhow::Error::msg(format!(
+                "attempted assignment of {asset} but had fewer; left over {lot}"
+            )));
+        }
+        // Assignments should happen after expiries, and should be total (i.e. there
+        // should be nothing left over). This is essentially just a sanity check.
+        if !pos.queue.is_empty() {
+            return Err(anyhow::Error::msg(format!(
+                "done assignment of {asset} but position not fully closed; remaining {}",
+                pos.total_size()
+            )));
+        }
+        self.positions.remove(&asset);
+
+        // Return all the closes that happened
+        Ok(closes)
+    }
+
+    /// Adds a trade of some asset to the tracker, adjusting positions as appropriate.
     ///
     /// The lot may add to a position, in which case it is an "open". Or it may shrink one
     /// or more existing lots, in which case it is a "close".
     ///
     /// Returns the number of lots closed.
-    pub fn push_lot<ID: fmt::Display + Into<LotId>>(
+    pub fn push_trade(
         &mut self,
         asset: TaxAsset,
-        lot: Lot<ID>,
-        sort_date: time::OffsetDateTime,
-    ) -> usize {
-        let date = lot.date;
-        // Take the action...
-        let pos = self.positions.entry(asset).or_default();
-        let (closes, open) = pos.push_event(lot, sort_date, asset != TaxAsset::Btc);
-        let n_ret = closes.len();
-        // ...then log it
-        for close in closes {
-            debug!("push_lot: logging close {} at date {}", close, date.0);
-            self.events.push(Event {
-                date,
-                asset,
-                open_close: OpenClose::Close(close),
-            });
-        }
-        if let Some(open) = open {
-            debug!("push_lot: logging open {} at date {}", open, date.0);
-            self.events.push(Event {
-                date,
-                asset,
-                open_close: OpenClose::Open(open),
-            });
-        }
-        // Return the number of closes that happened
-        n_ret
+        quantity: Quantity,
+        price: Price,
+        date: TaxDate,
+    ) -> anyhow::Result<usize> {
+        let close_ty = if quantity.is_nonnegative() {
+            CloseType::BuyBack
+        } else {
+            CloseType::Sell
+        };
+
+        let pos = self.positions.entry(asset).or_insert(Position::new(asset));
+        let (closes, open) = pos.add(quantity, price, date, close_ty).with_context(|| {
+            format!(
+                "adding {quantity} units of {asset} at {price} on {}",
+                date.0
+            )
+        })?;
+
+        Ok(self.push_events("push_trade", closes, open))
     }
 
     /// Sort the tax events to match LX's sort order

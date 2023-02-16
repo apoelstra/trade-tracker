@@ -213,10 +213,13 @@ enum Event {
         size: Quantity,
         fee: Price,
     },
+    Assignment {
+        contract: super::Contract,
+        size: Quantity,
+    },
     Expiry {
         contract: super::Contract,
-        assigned_size: Quantity,
-        expired_size: Quantity,
+        size: Quantity,
     },
 }
 
@@ -507,14 +510,26 @@ impl History {
             // This assertion maybe makes it clearer what we're doing.
             assert_eq!(assigned + expired, -pos.size, "{pos:?}");
 
-            self.events.insert(
-                pos.contract.expiry(),
-                Event::Expiry {
-                    contract: pos.contract.clone(),
-                    assigned_size: UnknownQuantity::from(assigned).with_asset(pos.contract.asset()),
-                    expired_size: UnknownQuantity::from(expired).with_asset(pos.contract.asset()),
-                },
-            );
+            // Insert the expiry event, if any
+            if expired != 0 {
+                self.events.insert(
+                    pos.contract.expiry(),
+                    Event::Expiry {
+                        contract: pos.contract.clone(),
+                        size: UnknownQuantity::from(expired).with_asset(pos.contract.asset()),
+                    },
+                );
+            }
+            // Insert the assignment event, if any
+            if assigned != 0 {
+                self.events.insert(
+                    pos.contract.expiry(),
+                    Event::Assignment {
+                        contract: pos.contract.clone(),
+                        size: UnknownQuantity::from(assigned).with_asset(pos.contract.asset()),
+                    },
+                );
+            }
         }
     }
 
@@ -542,7 +557,7 @@ impl History {
                         (None, *amount),
                         (btc_price, None, None),
                     )),
-                    None,
+                    Some("temp"),
                 ),
                 Event::BtcDeposit { amount, .. } => (
                     Some((
@@ -598,52 +613,34 @@ impl History {
                         unimplemented!("futures trading")
                     }
                 },
-                Event::Expiry {
-                    contract,
-                    assigned_size,
-                    expired_size,
-                } => match contract.ty() {
-                    super::contract::Type::Option { .. } => {
-                        let csv = (
-                            "X",
-                            date_fmt,
-                            contract.budget_asset().unwrap(),
-                            (None, Quantity::Zero),
-                            (btc_price, None, None),
-                        );
-                        let mut expiry_csv = None;
-                        if expired_size.is_nonzero() {
-                            let mut csv_copy = csv;
-                            csv_copy.0 = "Expiry";
-                            csv_copy.3 .1 = *expired_size;
-                            expiry_csv = Some(csv_copy);
+                Event::Expiry { contract, size } | Event::Assignment { contract, size } => {
+                    match contract.ty() {
+                        super::contract::Type::Option { .. } => {
+                            let csv = (
+                                if let Event::Expiry { .. } = event {
+                                    "Expiry"
+                                } else {
+                                    "Assignment"
+                                },
+                                date_fmt,
+                                contract.budget_asset().unwrap(),
+                                (None, *size),
+                                (btc_price, None, None),
+                            );
+                            (Some(csv), None)
                         }
-                        let mut assign_csv = None;
-                        if assigned_size.is_nonzero() {
-                            let mut csv_copy = csv;
-                            csv_copy.0 = "Assignment";
-                            csv_copy.3 .1 = *assigned_size;
-                            assign_csv = Some(csv_copy);
-                        }
-                        (expiry_csv, assign_csv)
+                        // NextDays don't expire, they are "assigned". We don't log this as a distinct
+                        // event because we consider the originating trade to be the actual event.
+                        super::contract::Type::NextDay { .. } => (None, None),
+                        // TBH I don't know what happens with futures
+                        super::contract::Type::Future { .. } => unreachable!(),
                     }
-                    // NextDays don't expire, they are "assigned". We don't log this as a distinct
-                    // event because we consider the originating trade to be the actual event.
-                    super::contract::Type::NextDay { .. } => {
-                        assert!(expired_size.is_zero());
-                        (None, None)
-                    }
-                    // TBH I don't know what happens with futures
-                    super::contract::Type::Future { .. } => unreachable!(),
-                },
+                }
             };
 
             // ...then output it
             if let Some(first) = csv.0 {
                 println!("{}", CsvPrinter(first));
-            }
-            if let Some(second) = csv.1 {
-                println!("{}", CsvPrinter(second));
             }
         }
     }
@@ -770,16 +767,9 @@ impl History {
                         tracker.push_lot(asset, open, date);
                     }
                 }
-                // Both expiries and assignments may be taxable
-                Event::Expiry {
-                    contract,
-                    assigned_size,
-                    expired_size,
-                } => {
-                    debug!(
-                        "[expiry] {} assigned {} expired {}",
-                        contract, assigned_size, expired_size
-                    );
+                // Expiries are a simple tax event (a straight gain)
+                Event::Expiry { contract, size } => {
+                    debug!("[expiry] {} expired {}", contract, size);
                     let asset = contract
                         .tax_asset()
                         .with_context(|| format!("asset of {contract} not supported (taxes)"))?;
@@ -787,52 +777,57 @@ impl History {
                     // also expire, but dayaheads we treat as sales at the time of sale, and
                     // futures we don't support.
                     if let Some(opt) = contract.as_option() {
-                        if expired_size.is_nonzero() {
-                            let open = tax::Lot::from_expiry(&opt, *expired_size);
-                            tracker.push_lot(asset, open, date);
-                        }
+                        let open = tax::Lot::from_expiry(&opt, *size);
+                        tracker.push_lot(asset, open, date);
+                    }
+                }
+                // Assignments are less simple
+                Event::Assignment { contract, size } => {
+                    debug!("[expiry] {} assigned {}", contract, size);
+                    let asset = contract
+                        .tax_asset()
+                        .with_context(|| format!("asset of {contract} not supported (taxes)"))?;
+                    // Only do something if this is an option expiry -- dayaheads and futures
+                    // also expire, but dayaheads we treat as sales at the time of sale, and
+                    // futures we don't support.
+                    if let Some(opt) = contract.as_option() {
+                        // see "seriously WTF" doccomment
+                        let expiry = opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
 
-                        // An assignment is also a trade
-                        if assigned_size.is_nonzero() {
-                            // see "seriously WTF" doccomment
-                            let expiry =
-                                opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
+                        let btc_price = match self.lx_price_ref.get(&expiry) {
+                            Some(price) => *price,
+                            None => {
+                                // We allow this because otherwise we can't possibly produce
+                                // files until LX gives us their shit, which they take
+                                // forever to do. But arguably it should be a hard error
+                                // because the result will not be so easily justifiable to
+                                // the IRS.
+                                let btc_price = price_history.price_at(expiry);
+                                warn!(
+                                    "Do not have LX price reference for {}; using price {}",
+                                    expiry, btc_price
+                                );
+                                btc_price.btc_price
+                            }
+                        };
 
-                            let btc_price = match self.lx_price_ref.get(&expiry) {
-                                Some(price) => *price,
-                                None => {
-                                    // We allow this because otherwise we can't possibly produce
-                                    // files until LX gives us their shit, which they take
-                                    // forever to do. But arguably it should be a hard error
-                                    // because the result will not be so easily justifiable to
-                                    // the IRS.
-                                    let btc_price = price_history.price_at(expiry);
-                                    warn!(
-                                        "Do not have LX price reference for {}; using price {}",
-                                        expiry, btc_price
-                                    );
-                                    btc_price.btc_price
-                                }
-                            };
+                        let open = tax::Lot::from_assignment(&opt, *size, btc_price);
+                        tracker.push_lot(asset, open, date);
 
-                            let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
-                            tracker.push_lot(asset, open, date);
-
-                            debug!("Because of assignment inserting a synthetic BTC trade");
-                            assert_eq!(contract.underlying(), Underlying::Btc);
-                            let contracts_in_btc = Quantity::from(assigned_size.btc_equivalent());
-                            let open = tax::Lot::from_trade_btc(
-                                btc_price, // notice the basis is NOT the strike price but the
-                                // actual market price.
-                                match opt.pc {
-                                    crate::option::Call => -contracts_in_btc,
-                                    crate::option::Put => contracts_in_btc,
-                                },
-                                Price::ZERO,
-                                expiry,
-                            );
-                            tracker.push_lot(TaxAsset::Btc, open, date);
-                        }
+                        debug!("Because of assignment inserting a synthetic BTC trade");
+                        assert_eq!(contract.underlying(), Underlying::Btc);
+                        let contracts_in_btc = Quantity::from(size.btc_equivalent());
+                        let open = tax::Lot::from_trade_btc(
+                            btc_price, // notice the basis is NOT the strike price but the
+                            // actual market price.
+                            match opt.pc {
+                                crate::option::Call => -contracts_in_btc,
+                                crate::option::Put => contracts_in_btc,
+                            },
+                            Price::ZERO,
+                            expiry,
+                        );
+                        tracker.push_lot(TaxAsset::Btc, open, date);
                     }
                 }
             };

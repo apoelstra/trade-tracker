@@ -3,3 +3,4 @@ log/
 *.csv
 *.lock
 *.key
+lx_tax_output_*/

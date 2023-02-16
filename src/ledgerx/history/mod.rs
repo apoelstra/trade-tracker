@@ -19,7 +19,9 @@
 
 use crate::csv::{self, CsvPrinter};
 use crate::file::create_text_file;
-use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying, UnknownQuantity};
+use crate::units::{
+    BudgetAsset, DepositAsset, Price, Quantity, TaxAsset, Underlying, UnknownQuantity,
+};
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
@@ -206,7 +208,7 @@ enum Event {
         asset: DepositAsset,
     },
     Trade {
-        contract: super::Contract,
+        asset: TaxAsset,
         price: Price,
         size: Quantity,
         fee: Price,
@@ -472,7 +474,9 @@ impl History {
             self.events.insert(
                 trade.execution_time,
                 Event::Trade {
-                    contract,
+                    asset: contract
+                        .tax_asset()
+                        .with_context(|| format!("getting tax asset for {contract}"))?,
                     price: trade.filled_price,
                     size: match trade.side {
                         Side::Bid => trade.filled_size.with_asset_trade(asset),
@@ -557,7 +561,10 @@ impl History {
                 self.events.insert(
                     option.expiry,
                     Event::Trade {
-                        contract: pos.contract.clone(),
+                        asset: TaxAsset::NextDay {
+                            underlying: pos.contract.underlying(),
+                            expiry: option.expiry,
+                        },
                         price: option.strike,
                         size: match option.pc {
                             crate::option::Call => -contracts_in_btc,
@@ -611,33 +618,21 @@ impl History {
                 // Ignore synthetic trades for spreadsheeting purposes
                 Event::Trade { synthetic, .. } if *synthetic == true => continue,
                 Event::Trade {
-                    contract,
-                    price,
-                    size,
-                    ..
-                } => match contract.ty() {
-                    super::contract::Type::Option { opt, .. } => (
-                        "Trade",
-                        date_fmt,
-                        contract.budget_asset().unwrap(),
-                        (Some(*price), *size),
-                        (
+                    asset, price, size, ..
+                } => (
+                    "Trade",
+                    date_fmt,
+                    BudgetAsset::from(*asset),
+                    (Some(*price), *size),
+                    match asset {
+                        TaxAsset::Bitcoin | TaxAsset::NextDay { .. } => (btc_price, None, None),
+                        TaxAsset::Option { option, .. } => (
                             btc_price,
-                            Some(csv::Iv(opt.bs_iv(date, btc_price, *price))),
-                            Some(csv::Arr(opt.arr(date, btc_price, *price))),
+                            Some(csv::Iv(option.bs_iv(date, btc_price, *price))),
+                            Some(csv::Arr(option.arr(date, btc_price, *price))),
                         ),
-                    ),
-                    super::contract::Type::NextDay { .. } => (
-                        "Trade",
-                        date_fmt,
-                        contract.budget_asset().unwrap(),
-                        (Some(*price), *size),
-                        (btc_price, None, None),
-                    ),
-                    super::contract::Type::Future { .. } => {
-                        unimplemented!("futures trading")
-                    }
-                },
+                    },
+                ),
                 // FIXME use LX btc price
                 Event::Expiry {
                     option,
@@ -754,7 +749,7 @@ impl History {
                 }
                 // Trades may be
                 Event::Trade {
-                    contract,
+                    asset,
                     price,
                     size,
                     fee,
@@ -762,19 +757,12 @@ impl History {
                 } => {
                     debug!(
                         "[trade] \"{}\" {} @ {}; fee {}; synthetic: {}",
-                        contract, price, size, fee, synthetic
+                        asset, size, price, fee, synthetic
                     );
-                    let asset = contract
-                        .tax_asset()
-                        .with_context(|| format!("asset of {contract} not supported (taxes)"))?;
-                    let tax_date = if let super::contract::Type::NextDay { .. } = contract.ty() {
+                    let tax_date = if let TaxAsset::NextDay { expiry, .. } = asset {
                         // BTC longs don't happen until the following day...also ofc LX fucks
                         // up the date and fixes the time to 21:00
-                        contract
-                            .expiry()
-                            .date()
-                            .with_time(time::time!(21:00))
-                            .assume_utc()
+                        expiry.date().with_time(time::time!(21:00)).assume_utc()
                     } else {
                         date
                     };
@@ -782,7 +770,7 @@ impl History {
                     let unit_fee = *fee / *size;
                     let adj_price = *price + unit_fee; // nb `unit_fee` is a signed quantity
                     tracker
-                        .push_trade(asset, *size, adj_price, tax_date.into())
+                        .push_trade(*asset, *size, adj_price, tax_date.into())
                         .with_context(|| format!("pushing trade of {asset} size {size}"))?;
                 }
                 // Expiries are a simple tax event (a straight gain)

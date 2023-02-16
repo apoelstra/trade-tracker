@@ -22,7 +22,7 @@ use serde::{de, Deserialize, Deserializer};
 use std::convert::TryFrom;
 use time::OffsetDateTime;
 
-pub fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>
+fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -35,17 +35,12 @@ where
     }
 }
 
-pub fn deserialize_timestamp<'de, D>(deser: D) -> Result<OffsetDateTime, D::Error>
+fn deserialize_timestamp<'de, D>(deser: D) -> Result<OffsetDateTime, D::Error>
 where
     D: Deserializer<'de>,
 {
     let s: i64 = Deserialize::deserialize(deser)?;
     Ok(OffsetDateTime::from_unix_timestamp_nanos(s.into()))
-    /*
-        .map_err(|_| {
-        de::Error::invalid_value(de::Unexpected::Signed(s as i64), &"nanoseconds since the epoch")
-    })
-        */
 }
 
 /// The type of the derivative

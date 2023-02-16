@@ -369,13 +369,17 @@ impl PositionTracker {
     /// Panics if there is already an open position in the opposite direction
     /// of this lot.
     pub fn push_lot(&mut self, lot: Lot) {
-        debug!("[position-tracker] direct push of lot {}", lot);
+        debug!(
+            "[position-tracker] direct push of lot {} (sort date {})",
+            lot,
+            lot.sort_date()
+        );
         // Assert that deposits do not close any positions (since we cannot have
         // a short BTC position)
         let pos = self
             .positions
             .entry(lot.asset())
-            .or_insert(Position::new(TaxAsset::Btc));
+            .or_insert(Position::new(TaxAsset::Bitcoin));
         assert!(
             pos.has_same_direction(lot.quantity()),
             "Tried to directly insert {} but had an opposing position open",

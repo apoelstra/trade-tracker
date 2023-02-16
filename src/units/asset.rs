@@ -29,13 +29,18 @@ use std::fmt;
 /// [DepositAsset] or [TaxAsset].
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Asset {
-    /// Bitcoin, or a day-ahead swap (these are treated identically) for
-    /// unit-tracking purposes.
+    /// Bitcoin
     Btc,
     /// Ethereum
     Eth,
     /// US Dollars
     Usd,
+    /// A day-ahead swap (differs from the underlying only in some date-handling
+    /// contexts)
+    NextDay {
+        underlying: Underlying,
+        expiry: time::OffsetDateTime,
+    },
     /// A put or call option
     Option {
         underlying: Underlying,
@@ -75,8 +80,13 @@ impl From<DepositAsset> for Asset {
 /// A kind of asset which is reflected in the end-of-year tax CSVs
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum TaxAsset {
-    /// Bitcoin
-    Btc,
+    /// Actual deposited BTC
+    Bitcoin,
+    /// Next-Day Bitcoin
+    NextDay {
+        underlying: Underlying,
+        expiry: time::OffsetDateTime,
+    },
     /// A put or call option
     Option {
         underlying: Underlying,
@@ -84,10 +94,22 @@ pub enum TaxAsset {
     },
 }
 
+impl TaxAsset {
+    /// Whether this asset gets 1256
+    pub fn is_1256(&self) -> bool {
+        match *self {
+            TaxAsset::Bitcoin => false,
+            TaxAsset::NextDay { .. } => false,
+            TaxAsset::Option { .. } => true,
+        }
+    }
+}
+
 impl From<TaxAsset> for Asset {
     fn from(dep: TaxAsset) -> Asset {
         match dep {
-            TaxAsset::Btc => Asset::Btc,
+            TaxAsset::Bitcoin => Asset::Btc,
+            TaxAsset::NextDay { underlying, expiry } => Asset::NextDay { underlying, expiry },
             TaxAsset::Option { underlying, option } => Asset::Option { underlying, option },
         }
     }
@@ -96,7 +118,8 @@ impl From<TaxAsset> for Asset {
 impl fmt::Display for TaxAsset {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TaxAsset::Btc => f.write_str("BTC"),
+            TaxAsset::Bitcoin => f.write_str("BTC"),
+            TaxAsset::NextDay { .. } => f.write_str("BTC"),
             TaxAsset::Option { underlying, option } => {
                 write!(
                     f,
@@ -125,6 +148,16 @@ pub enum BudgetAsset {
         underlying: Underlying,
         option: crate::option::Option,
     },
+}
+
+impl From<TaxAsset> for BudgetAsset {
+    fn from(tx: TaxAsset) -> BudgetAsset {
+        match tx {
+            TaxAsset::Bitcoin => BudgetAsset::Btc,
+            TaxAsset::NextDay { .. } => BudgetAsset::Btc,
+            TaxAsset::Option { underlying, option } => BudgetAsset::Option { underlying, option },
+        }
+    }
 }
 
 impl From<DepositAsset> for BudgetAsset {

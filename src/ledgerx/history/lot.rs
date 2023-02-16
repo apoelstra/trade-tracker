@@ -75,36 +75,6 @@ impl Id {
     }
 }
 
-/// Marker for "no lot ID"
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct UnknownOptId;
-impl fmt::Display for UnknownOptId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("<lx-option>")
-    }
-}
-
-/// Marker for "no lot ID"
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct UnknownBtcId;
-impl fmt::Display for UnknownBtcId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("<lx-btc>")
-    }
-}
-
-impl From<UnknownOptId> for Id {
-    fn from(_: UnknownOptId) -> Self {
-        Id::next_opt()
-    }
-}
-
-impl From<UnknownBtcId> for Id {
-    fn from(_: UnknownBtcId) -> Self {
-        Id::next_btc()
-    }
-}
-
 /// Tax Lot
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Lot {
@@ -135,7 +105,10 @@ impl Lot {
     pub fn new(asset: TaxAsset, quantity: Quantity, price: Price, date: TaxDate) -> Lot {
         Lot {
             id: match asset {
-                TaxAsset::Btc => Id::next_btc(),
+                TaxAsset::Bitcoin => unreachable!(
+                    "actual bitcoin lots (not dayaheads) should be constructed with Lot::from_deposit"
+                ),
+                TaxAsset::NextDay { .. } => Id::next_btc(),
                 TaxAsset::Option { .. } => Id::next_opt(),
             },
             asset,
@@ -155,7 +128,7 @@ impl Lot {
     ) -> Lot {
         Lot {
             id: Id::from_outpoint(outpoint),
-            asset: TaxAsset::Btc,
+            asset: TaxAsset::Bitcoin,
             quantity: quantity.into(),
             price,
             date: TaxDate(date),
@@ -218,14 +191,12 @@ impl Lot {
             )));
         }
 
-        let gain_ty = if self.asset == TaxAsset::Btc {
-            if date.0 - self.date.0 <= time::Duration::days(365) {
-                GainType::ShortTerm
-            } else {
-                GainType::LongTerm
-            }
-        } else {
+        let gain_ty = if self.asset.is_1256() {
             GainType::Option1256
+        } else if date.0 - self.date.0 <= time::Duration::days(365) {
+            GainType::ShortTerm
+        } else {
+            GainType::LongTerm
         };
 
         let partial;

@@ -19,7 +19,7 @@
 //! smell and should be replaced by one of these.
 //!
 
-use crate::units::{Asset, Price};
+use crate::units::{Asset, Price, Underlying};
 use serde::Deserialize;
 use std::{cmp, fmt, iter, ops};
 
@@ -325,6 +325,10 @@ impl UnknownQuantity {
     pub fn with_asset(&self, asset: Asset) -> Quantity {
         match asset {
             Asset::Btc => Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner)),
+            Asset::NextDay { underlying, .. } => match underlying {
+                Underlying::Btc => Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner)),
+                Underlying::Eth => unimplemented!("ethereum nextday quantity"),
+            },
             Asset::Eth => unimplemented!("ethereum quantity"),
             Asset::Usd => Quantity::Cents(self.inner),
             Asset::Option { .. } => Quantity::Contracts(self.inner),
@@ -339,6 +343,12 @@ impl UnknownQuantity {
             Asset::Btc => {
                 Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner * 1_000_000))
             }
+            Asset::NextDay { underlying, .. } => match underlying {
+                Underlying::Btc => {
+                    Quantity::Bitcoin(bitcoin::SignedAmount::from_sat(self.inner * 1_000_000))
+                }
+                Underlying::Eth => unimplemented!("ethereum nextday quantity"),
+            },
             Asset::Eth => unimplemented!("ethereum quantity"),
             Asset::Usd => Quantity::Cents(self.inner),
             Asset::Option { .. } => Quantity::Contracts(self.inner),

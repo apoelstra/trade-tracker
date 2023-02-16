@@ -137,10 +137,10 @@ impl Contract {
                 underlying: self.underlying,
                 option: opt,
             }),
-            Type::NextDay { .. } => match self.underlying {
-                Underlying::Btc => Some(TaxAsset::Btc),
-                Underlying::Eth => None,
-            },
+            Type::NextDay { expiry } => Some(TaxAsset::NextDay {
+                underlying: self.underlying,
+                expiry,
+            }),
             _ => None,
         }
     }

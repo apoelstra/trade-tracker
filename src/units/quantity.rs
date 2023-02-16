@@ -345,6 +345,11 @@ impl UnknownQuantity {
             Asset::Future { .. } => Quantity::Contracts(self.inner),
         }
     }
+
+    /// Interpret the number as Bitcoins, in satoshis.
+    pub fn as_sats(&self) -> bitcoin::SignedAmount {
+        bitcoin::SignedAmount::from_sat(self.inner)
+    }
 }
 
 impl ops::Add for UnknownQuantity {

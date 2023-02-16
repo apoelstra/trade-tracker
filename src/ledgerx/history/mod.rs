@@ -195,10 +195,13 @@ impl Positions {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Event {
-    Deposit {
+    UsdDeposit {
         amount: Quantity,
-        address: bitcoin::Address,
-        asset: DepositAsset,
+    },
+    BtcDeposit {
+        amount: bitcoin::Amount,
+        outpoint: bitcoin::OutPoint,
+        lot_info: config::LotInfo,
     },
     Withdrawal {
         amount: Quantity,
@@ -286,7 +289,8 @@ impl History {
             let deposits: Deposits = crate::http::get_json(&url, Some(api_key))
                 .context("getting deposits from LX API")?;
 
-            ret.import_deposits(&deposits);
+            ret.import_deposits(&deposits)
+                .context("importing deposits")?;
             next_url = deposits.next_url();
         }
 
@@ -320,22 +324,114 @@ impl History {
     }
 
     /// Import a list of deposits into the history
-    pub fn import_deposits(&mut self, deposits: &Deposits) {
+    pub fn import_deposits(&mut self, deposits: &Deposits) -> anyhow::Result<()> {
         for dep in &deposits.data {
             assert_eq!(
                 dep.asset, dep.deposit_address.asset,
                 "lol lx fucked up here pretty good",
             );
-            self.events.insert(
-                dep.created_at,
-                Event::Deposit {
-                    amount: dep.amount.with_asset(dep.asset.into()),
-                    address: bitcoin::Address::from_str(&dep.deposit_address.address)
-                        .expect("bitcoin address from LX was not a valid BTC address"),
-                    asset: dep.asset,
-                },
-            );
+            let amount = dep.amount.with_asset(dep.asset.into());
+            match dep.asset {
+                // ETH deposits are easy
+                DepositAsset::Eth => unimplemented!("we do not support eth deposits"),
+                // USD deposits almost as easy
+                DepositAsset::Usd => {
+                    self.events
+                        .insert(dep.created_at, Event::UsdDeposit { amount });
+                }
+                // BTC deposits are much more involved, as we need to sort out lots
+                DepositAsset::Btc => {
+                    let total_btc = dep.amount.as_sats().to_unsigned().with_context(|| {
+                        format!("negative deposit amount {}", dep.amount.as_sats())
+                    })?;
+                    let addr = bitcoin::Address::from_str(&dep.deposit_address.address)
+                        .with_context(|| {
+                            format!("parsing BTC address {}", dep.deposit_address.address)
+                        })?;
+
+                    // Look up transaction based on address. If we can't find one, error out.
+                    let (tx, vout) = self
+                        .transaction_db
+                        .find_tx_for_deposit(&addr, total_btc)
+                        .with_context(|| {
+                            format!("no txout matched address/amount {addr}/{total_btc}")
+                        })?;
+
+                    if tx.output.len() == 1 {
+                        debug!(
+                            "Assuming that a single-output deposit is from Andrew's wallet \
+                                and that every input UXTO is a separate lot."
+                        );
+                        let mut total_btc = total_btc;
+                        for outpoint in tx.input.iter().map(|inp| inp.previous_output) {
+                            let txout =
+                                self.transaction_db.find_txout(outpoint).with_context(|| {
+                                    format!("config file did not have tx data for {outpoint}")
+                                })?;
+                            let id = LotId::from_outpoint(outpoint);
+                            let lot_info = self
+                                .lot_db
+                                .get(&id)
+                                .with_context(|| {
+                                    format!("config file did not have info for lot {id}")
+                                })?
+                                .clone();
+                            debug!(
+                                "Lot {}: price {} date {}",
+                                id, lot_info.price, lot_info.date
+                            );
+                            // Take fees away from the last input(s). We consider this a
+                            // partial loss of the lot corresponding to the input
+                            //
+                            // A future iteration may consider this to be a taxable loss but this
+                            // won't affect anything downstream, basically it'll just add an extra
+                            // log line. FIXME implement this.
+                            let mut amount = bitcoin::Amount::from_sat(txout.value);
+                            if amount > total_btc {
+                                amount = total_btc;
+                            };
+                            total_btc -= amount;
+                            self.events.insert(
+                                dep.created_at,
+                                Event::BtcDeposit {
+                                    amount,
+                                    outpoint,
+                                    lot_info,
+                                },
+                            );
+                        }
+                    } else {
+                        debug!("Assuming that a multi-output deposit is constitutes a single lot.");
+                        let outpoint = bitcoin::OutPoint {
+                            txid: tx.txid(),
+                            vout,
+                        };
+                        let id = LotId::from_outpoint(outpoint);
+                        let lot_info = self
+                            .lot_db
+                            .get(&id)
+                            .with_context(|| format!("config file did not have info for lot {id}"))?
+                            .clone();
+                        debug!(
+                            "Lot {}: price {} date {}",
+                            id, lot_info.price, lot_info.date
+                        );
+                        self.events.insert(
+                            dep.created_at,
+                            Event::BtcDeposit {
+                                amount: total_btc,
+                                outpoint: bitcoin::OutPoint {
+                                    txid: tx.txid(),
+                                    vout,
+                                },
+                                lot_info,
+                            },
+                        );
+                    }
+                }
+            }
         }
+        Ok(())
     }
 
     /// Import a list of withdrawals into the history
@@ -438,12 +534,22 @@ impl History {
             // it this way to ensure that every branch outputs the same type of data,
             // which is a basic sanity check.
             let csv = match event {
-                Event::Deposit { asset, amount, .. } => (
+                Event::UsdDeposit { amount, .. } => (
                     Some((
                         "Deposit",
                         date_fmt,
-                        BudgetAsset::from(*asset),
+                        BudgetAsset::Usd,
                         (None, *amount),
+                        (btc_price, None, None),
+                    )),
+                    None,
+                ),
+                Event::BtcDeposit { amount, .. } => (
+                    Some((
+                        "Deposit",
+                        date_fmt,
+                        BudgetAsset::Btc,
+                        (None, (*amount).into()),
                         (btc_price, None, None),
                     )),
                     None,
@@ -604,84 +710,24 @@ impl History {
             }
 
             match event {
-                // Deposits are not taxable events, but deposits of BTC cause lots to be
-                // created (or at least, become accessible to our tax optimizer)
-                Event::Deposit {
+                // USD deposits are not tax-relevant
+                Event::UsdDeposit { .. } => continue,
+                // Deposits of BTC cause lots to be become accessible to our tax optimizer
+                Event::BtcDeposit {
                     amount,
-                    asset,
-                    address,
+                    outpoint,
+                    lot_info,
                 } => {
-                    // sanity check asset
-                    match *asset {
-                        DepositAsset::Btc => {}        // ok
-                        DepositAsset::Usd => continue, // USD deposits are not tax-relevant
-                        DepositAsset::Eth => unimplemented!("we do not support eth deposits"),
-                    }
-                    debug!("[deposit] \"BTC\" {}", amount);
-
-                    // sanity check amount
-                    let mut amount_sat = match amount {
-                        Quantity::Zero => 0,
-                        Quantity::Bitcoin(btc) => btc.to_sat() as u64,
-                        Quantity::Contracts(_) => unreachable!("deposit of so many contracts"),
-                        Quantity::Cents(_) => unreachable!("USD deposits not supported yet"),
-                    };
-
-                    // Look up transaction based on address. If we can't find one, error out.
-                    let (tx, vout) = self
-                        .transaction_db
-                        .find_tx_for_deposit(address, amount_sat)
-                        .with_context(|| {
-                            format!("no txout matched address/amount {address}/{amount_sat}")
-                        })?;
-
-                    let outpoint_iter: Box<dyn Iterator<Item = bitcoin::OutPoint>>;
-                    if tx.output.len() == 1 {
-                        debug!(
-                            "Assuming that a single-output deposit is from Andrew's wallet \
-                                and that every input UXTO is a separate lot."
-                        );
-                        outpoint_iter = Box::new(tx.input.iter().map(|inp| inp.previous_output));
-                    } else {
-                        debug!("Assuming that a multi-output deposit is constitutes a single lot.");
-                        outpoint_iter = Box::new(std::iter::once(bitcoin::OutPoint {
-                            txid: tx.txid(),
-                            vout,
-                        }));
-                    }
-
-                    for op in outpoint_iter {
-                        let id = LotId::from_outpoint(op);
-                        let txout = self.transaction_db.find_txout(op).with_context(|| {
-                            format!("config file did not have tx data for {op}")
-                        })?;
-                        let lot_data = self.lot_db.get(&id).with_context(|| {
-                            format!("config file did not have info for lot {id}")
-                        })?;
-
-                        debug!("Using BTC price {} for lot {}", lot_data.price, id,);
-                        let mut open = tax::Lot::from_deposit_utxo(
-                            op,
-                            lot_data.price,
-                            bitcoin::Amount::from_sat(txout.value),
-                            lot_data.date,
-                        );
-                        // Take fees away from the last input(s). We consider this a
-                        // partial loss of the lot corresponding to the input
-                        //
-                        // A future iteration may consider this to be a taxable loss but this
-                        // won't affect anything downstream, basically it'll just add an extra
-                        // log line. FIXME implement this.
-                        if txout.value > amount_sat {
-                            open.dock_fee(bitcoin::Amount::from_sat(txout.value - amount_sat));
-                            amount_sat = 0;
-                        } else {
-                            amount_sat -= txout.value;
-                        }
-                        // Assert that deposits do not close any positions (since we cannot have
-                        // a short BTC position)
-                        assert_eq!(tracker.push_lot(TaxAsset::Btc, open, lot_data.date), 0);
-                    }
+                    debug!("[deposit] \"BTC\" {} outpoint {}", amount, outpoint);
+                    let open = tax::Lot::from_deposit_utxo(
+                        *outpoint,
+                        lot_info.price,
+                        *amount,
+                        lot_info.date,
+                    );
+                    // Assert that deposits do not close any positions (since we cannot have
+                    // a short BTC position)
+                    assert_eq!(tracker.push_lot(TaxAsset::Btc, open, lot_info.date), 0);
                 }
                 // Withdrawals of any kind are not taxable events.
                 //

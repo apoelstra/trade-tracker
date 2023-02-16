@@ -58,11 +58,11 @@ impl Database {
     pub fn find_tx_for_deposit(
         &self,
         address: &bitcoin::Address,
-        amount_sat: u64,
+        amount: bitcoin::Amount,
     ) -> Option<(&bitcoin::Transaction, u32)> {
         for tx in self.map.values() {
             for (n, out) in tx.output.iter().enumerate() {
-                if out.value == amount_sat && out.script_pubkey == address.script_pubkey() {
+                if out.value == amount.to_sat() && out.script_pubkey == address.script_pubkey() {
                     return Some((tx, n as u32));
                 }
             }

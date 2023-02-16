@@ -552,6 +552,22 @@ impl PositionTracker {
         Default::default()
     }
 
+    pub fn push_lot1(&mut self, lot: crate::ledgerx::history::lot::Lot) {
+        let new_lot: Lot<LotId> = Lot {
+            id: lot.id().clone(),
+            close_ty: CloseType::Expiry,
+            date: lot.date(),
+            price: lot.price(),
+            quantity: lot.quantity(),
+        };
+
+        // Assert that deposits do not close any positions (since we cannot have
+        // a short BTC position)
+        //
+        // FIXME do this in a sensible way
+        assert_eq!(self.push_lot(lot.asset(), new_lot, lot.sort_date(),), 0);
+    }
+
     /// Attempts to add a new lot to the tracker
     ///
     /// The lot may add to a position, in which case it is an "open". Or it may shrink one

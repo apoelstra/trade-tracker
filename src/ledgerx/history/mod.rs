@@ -743,15 +743,9 @@ impl History {
                     lot_info,
                 } => {
                     debug!("[deposit] \"BTC\" {} outpoint {}", amount, outpoint);
-                    let open = tax::Lot::from_deposit_utxo(
-                        *outpoint,
-                        lot_info.price,
-                        *amount,
-                        lot_info.date,
-                    );
-                    // Assert that deposits do not close any positions (since we cannot have
-                    // a short BTC position)
-                    assert_eq!(tracker.push_lot(TaxAsset::Btc, open, lot_info.date), 0);
+                    let lot =
+                        lot::Lot::from_deposit(*outpoint, lot_info.price, *amount, lot_info.date);
+                    tracker.push_lot1(lot);
                 }
                 // Withdrawals of any kind are not taxable events.
                 //

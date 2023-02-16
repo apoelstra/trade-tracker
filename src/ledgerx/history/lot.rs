@@ -18,6 +18,8 @@
 //!
 
 use crate::csv;
+use crate::ledgerx::history::tax::TaxDate;
+use crate::units::{Price, Quantity, TaxAsset};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt, str,
@@ -100,5 +102,75 @@ impl From<UnknownOptId> for Id {
 impl From<UnknownBtcId> for Id {
     fn from(_: UnknownBtcId) -> Self {
         Id::next_btc()
+    }
+}
+
+/// Tax Lot
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Lot {
+    id: Id,
+    asset: TaxAsset,
+    quantity: Quantity,
+    price: Price,
+    date: TaxDate,
+    sort_date: time::OffsetDateTime,
+}
+
+impl Lot {
+    /// Directly constructs a lot from a deposit
+    pub fn from_deposit(
+        outpoint: bitcoin::OutPoint,
+        price: Price,
+        quantity: bitcoin::Amount,
+        date: time::OffsetDateTime,
+    ) -> Lot {
+        Lot {
+            id: Id::from_outpoint(outpoint),
+            asset: TaxAsset::Btc,
+            quantity: quantity.into(),
+            price,
+            date: TaxDate(date),
+            sort_date: date + time::Duration::days(365 * 100),
+        }
+    }
+
+    /// Accessor for the ID
+    pub fn id(&self) -> &Id {
+        &self.id
+    }
+
+    /// Accessor for the date
+    pub fn asset(&self) -> TaxAsset {
+        self.asset
+    }
+
+    /// Accessor for the date
+    pub fn date(&self) -> TaxDate {
+        self.date
+    }
+
+    /// Accessor for the sort date of the lot
+    ///
+    /// This is normally the same as the actual date, but for deposits,
+    /// we bump it 100 years in the future so that the lot won't be used
+    /// by the LX-style "FIFO" until after all other lots are used.
+    ///
+    /// Note that this returns a bare date, not a [TaxDate], which hopefully
+    /// should avoid accidentally using this for anything "real"
+    pub fn sort_date(&self) -> time::OffsetDateTime {
+        self.sort_date
+    }
+
+    /// Accessor for the basis unit price
+    ///
+    /// This is NOT the basis; to get the basis multiply this value by
+    /// the quantity.
+    pub fn price(&self) -> Price {
+        self.price
+    }
+
+    /// Accessor for the quantity
+    pub fn quantity(&self) -> Quantity {
+        self.quantity
     }
 }

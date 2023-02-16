@@ -20,84 +20,13 @@
 
 use crate::{
     csv,
+    ledgerx::history::lot::{UnknownBtcId, UnknownOptId},
+    ledgerx::history::LotId,
     units::{Price, Quantity},
 };
 use log::debug;
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
-use std::{
-    cmp,
-    collections::HashMap,
-    fmt, mem, str,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-
-/// Used to give every lot a unique ID
-static LOT_INDEX: AtomicUsize = AtomicUsize::new(1);
-
-/// Marker for "no lot ID"
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct UnknownOptId;
-impl fmt::Display for UnknownOptId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("<lx-option>")
-    }
-}
-
-/// Marker for "no lot ID"
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct UnknownBtcId;
-impl fmt::Display for UnknownBtcId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("<lx-btc>")
-    }
-}
-
-/// Newtype for unique lot IDs
-#[derive(Clone, PartialEq, Eq, Debug, Hash, Deserialize, Serialize)]
-pub struct LotId(String);
-impl csv::PrintCsv for LotId {
-    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.print(f)
-    }
-}
-
-impl str::FromStr for LotId {
-    type Err = std::convert::Infallible;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(LotId(s.into()))
-    }
-}
-
-impl fmt::Display for LotId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl LotId {
-    /// Constructor for the next LX-generated BTC lot ID
-    fn next_btc() -> LotId {
-        let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-btc-{idx:04}"))
-    }
-
-    /// Constructor for the next LX-generated BTC option ID
-    fn next_opt() -> LotId {
-        let idx = LOT_INDEX.fetch_add(1, Ordering::SeqCst);
-        LotId(format!("lx-opt-{idx:04}"))
-    }
-
-    /// Constructor for a lot ID that comes from a UTXO
-    ///
-    /// This is the only constructor accessible from outside of
-    /// this module, since it's the only stateless one, and we
-    /// want to keep careful track of our state to ensure that
-    /// our records have consistent lot IDs from year to year.
-    pub fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
-        LotId(format!("{:.8}-{:02}", outpoint.txid, outpoint.vout))
-    }
-}
+use std::{cmp, collections::HashMap, fmt, mem};
 
 /// Wrapper around a date that will output time to the nearest second in 3339 format
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -196,18 +125,6 @@ pub struct Lot<ID> {
     quantity: Quantity,
     price: Price,
     date: TaxDate,
-}
-
-impl From<UnknownOptId> for LotId {
-    fn from(_: UnknownOptId) -> Self {
-        LotId::next_opt()
-    }
-}
-
-impl From<UnknownBtcId> for LotId {
-    fn from(_: UnknownBtcId) -> Self {
-        LotId::next_btc()
-    }
 }
 
 impl<ID: fmt::Display> fmt::Display for Lot<ID> {
@@ -382,7 +299,7 @@ impl fmt::Display for Close {
         write!(
             f,
             "{} {{ {:?}, date: {}, price: {}, qty: {} }}",
-            self.open_id.0,
+            self.open_id,
             self.ty,
             self.close_date.0.lazy_format("%FT%FT"),
             self.close_price,
@@ -576,7 +493,8 @@ impl Position {
             let to_match = if is_1256 {
                 self.fifo.pop_first()
             } else {
-                self.fifo.pop_max(|lot| lot.price)
+                //self.fifo.pop_max(|lot| lot.price)
+                self.fifo.pop_first()
             };
             let (front_date, mut front) = match to_match {
                 Some(kv) => kv,

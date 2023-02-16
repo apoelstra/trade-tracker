@@ -29,10 +29,11 @@ use std::str::FromStr;
 use time::OffsetDateTime;
 
 pub mod config;
+pub mod lot;
 pub mod tax;
 
 pub use self::config::Configuration;
-pub use self::tax::LotId;
+pub use self::lot::Id as LotId;
 
 // Note that this is *not* the same as the equivalent function in ledgerx/json.rs
 // For some reason LX returns timestamps in like a dozen different formats.

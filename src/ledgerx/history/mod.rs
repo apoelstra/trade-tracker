@@ -535,13 +535,20 @@ impl History {
             // Insert the assignment event, if any
             if assigned != 0 {
                 let n_assigned = UnknownQuantity::from(assigned).with_asset(pos.contract.asset());
+                // LedgerX's data has the time forced to 22:00 even when DST makes this wrong
+                let price_ref_date = option
+                    .expiry
+                    .date()
+                    .with_time(time::time!(22:00))
+                    .assume_utc();
+
                 self.events.insert(
                     option.expiry,
                     Event::Assignment {
                         option,
                         underlying: pos.contract.underlying(),
                         size: n_assigned,
-                        price_ref: self.lx_price_ref.get(&option.expiry).copied(),
+                        price_ref: self.lx_price_ref.get(&price_ref_date).copied(),
                     },
                 );
 

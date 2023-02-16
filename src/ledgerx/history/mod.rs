@@ -19,7 +19,9 @@
 
 use crate::csv::{self, CsvPrinter};
 use crate::file::create_text_file;
-use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying, UnknownQuantity};
+use crate::units::{
+    BudgetAsset, DepositAsset, Price, Quantity, TaxAsset, Underlying, UnknownQuantity,
+};
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
@@ -582,7 +584,6 @@ impl History {
             .context("extracting transaction database from config file")?;
         let lot_db = config.lot_db();
         // 3. Do the deed
-        let btc_label = tax::Label::btc();
         let mut tracker = tax::PositionTracker::new();
         for (date, event) in &self.events {
             debug!("Processing event {:?}", event);
@@ -671,7 +672,7 @@ impl History {
                         }
                         // Assert that deposits do not close any positions (since we cannot have
                         // a short BTC position)
-                        assert_eq!(tracker.push_lot(&btc_label, open, lot_data.date), 0);
+                        assert_eq!(tracker.push_lot(TaxAsset::Btc, open, lot_data.date), 0);
                     }
                 }
                 // Withdrawals of any kind are not taxable events.
@@ -688,8 +689,10 @@ impl History {
                     size,
                     fee,
                 } => {
-                    let label = tax::Label::from_contract(contract);
-                    debug!("[trade] \"{}\" {} @ {}; fee {}", label, price, size, fee);
+                    debug!("[trade] \"{}\" {} @ {}; fee {}", contract, price, size, fee);
+                    let asset = contract
+                        .tax_asset()
+                        .with_context(|| format!("asset of {contract} not supported (taxes)"))?;
                     let (tax_date, is_btc) =
                         if let super::contract::Type::NextDay { .. } = contract.ty() {
                             // BTC longs don't happen until the following day...also ofc LX fucks
@@ -707,10 +710,10 @@ impl History {
                         };
                     if is_btc {
                         let open = tax::Lot::from_trade_btc(*price, *size, *fee, tax_date);
-                        tracker.push_lot(&label, open, date);
+                        tracker.push_lot(asset, open, date);
                     } else {
                         let open = tax::Lot::from_trade_opt(*price, *size, *fee, tax_date);
-                        tracker.push_lot(&label, open, date);
+                        tracker.push_lot(asset, open, date);
                     }
                 }
                 // Both expiries and assignments may be taxable
@@ -719,18 +722,20 @@ impl History {
                     assigned_size,
                     expired_size,
                 } => {
-                    let label = tax::Label::from_contract(contract);
                     debug!(
                         "[expiry] {} assigned {} expired {}",
-                        label, assigned_size, expired_size
+                        contract, assigned_size, expired_size
                     );
+                    let asset = contract
+                        .tax_asset()
+                        .with_context(|| format!("asset of {contract} not supported (taxes)"))?;
                     // Only do something if this is an option expiry -- dayaheads and futures
                     // also expire, but dayaheads we treat as sales at the time of sale, and
                     // futures we don't support.
                     if let Some(opt) = contract.as_option() {
                         if expired_size.is_nonzero() {
                             let open = tax::Lot::from_expiry(&opt, *expired_size);
-                            tracker.push_lot(&label, open, date);
+                            tracker.push_lot(asset, open, date);
                         }
 
                         // An assignment is also a trade
@@ -757,7 +762,7 @@ impl History {
                             };
 
                             let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
-                            tracker.push_lot(&label, open, date);
+                            tracker.push_lot(asset, open, date);
 
                             debug!("Because of assignment inserting a synthetic BTC trade");
                             assert_eq!(contract.underlying(), Underlying::Btc);
@@ -772,7 +777,7 @@ impl History {
                                 Price::ZERO,
                                 expiry,
                             );
-                            tracker.push_lot(&btc_label, open, date);
+                            tracker.push_lot(TaxAsset::Btc, open, date);
                         }
                     }
                 }
@@ -801,8 +806,8 @@ impl History {
             match event.open_close {
                 tax::OpenClose::Open(..) => {}
                 tax::OpenClose::Close(ref close) => {
-                    let lx = close.csv_printer(&event.label, tax::PrintMode::LedgerX);
-                    let lx_alt = close.csv_printer(&event.label, tax::PrintMode::LedgerXAnnotated);
+                    let lx = close.csv_printer(event.asset, tax::PrintMode::LedgerX);
+                    let lx_alt = close.csv_printer(event.asset, tax::PrintMode::LedgerXAnnotated);
                     writeln!(lx_file, "{}", lx)?;
                     writeln!(lx_alt_file, "{}", lx_alt)?;
                 }

@@ -22,7 +22,7 @@ use crate::{
     csv,
     ledgerx::history::lot::{UnknownBtcId, UnknownOptId},
     ledgerx::history::LotId,
-    units::{Price, Quantity},
+    units::{Price, Quantity, TaxAsset},
 };
 use log::debug;
 use rust_decimal::Decimal;
@@ -40,41 +40,6 @@ impl csv::PrintCsv for TaxDate {
             date_utc += time::Duration::seconds(1);
         }
         write!(f, "{}Z", date_utc.lazy_format("%FT%H:%M:%S"),)
-    }
-}
-
-/// A contract label, as formatted in LX's end-of-year CSV files
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct Label(String);
-impl csv::PrintCsv for Label {
-    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.print(f)
-    }
-}
-
-impl fmt::Display for Label {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl Label {
-    /// Creates the tax label for Bitcoin
-    pub fn btc() -> Label {
-        Label("BTC".into())
-    }
-
-    /// Whether or not this label represents Bitcoin
-    pub fn is_btc(&self) -> bool {
-        self.0 == "BTC"
-    }
-
-    /// Creates a tax label for a contract
-    pub fn from_contract(contract: &crate::ledgerx::Contract) -> Label {
-        let tax_asset = contract
-            .tax_asset()
-            .expect("asset is not something we know how to label for tax purposes");
-        Label(tax_asset.to_string())
     }
 }
 
@@ -332,13 +297,13 @@ pub enum PrintMode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct CloseCsv<'label, 'close> {
-    label: &'label Label,
+pub struct CloseCsv<'close> {
+    asset: TaxAsset,
     close: &'close Close,
     mode: PrintMode,
 }
 
-impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
+impl<'close> csv::PrintCsv for CloseCsv<'close> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.mode == PrintMode::LedgerX || self.mode == PrintMode::LedgerXAnnotated {
             let mut proceeds = self.close.close_price * self.close.quantity;
@@ -362,12 +327,12 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
                     // will only let us trade in 1/100th of a bitcoin, and will let us better match
                     // their output.
                     if real_amount == round_amount {
-                        format!("{}, {}", round_amount.abs(), self.label)
+                        format!("{}, {}", round_amount.abs(), self.asset)
                     } else {
-                        format!("{}, {}", real_amount.abs(), self.label)
+                        format!("{}, {}", real_amount.abs(), self.asset)
                     }
                 }
-                Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.label),
+                Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.asset),
                 Quantity::Cents(_) => panic!("tried to write out a sale of dollars as a tax event"),
                 Quantity::Zero => "0".into(), // maybe we should just panic here
             };
@@ -398,13 +363,13 @@ impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
 
 impl Close {
     /// Constructs a CSV outputter for this close
-    pub fn csv_printer<'label, 'close>(
+    pub fn csv_printer<'close>(
         &'close self,
-        label: &'label Label,
+        asset: TaxAsset,
         mode: PrintMode,
-    ) -> csv::CsvPrinter<CloseCsv<'label, 'close>> {
+    ) -> csv::CsvPrinter<CloseCsv<'close>> {
         csv::CsvPrinter(CloseCsv {
-            label,
+            asset,
             close: self,
             mode,
         })
@@ -570,14 +535,14 @@ pub enum OpenClose {
 #[derive(Clone, Debug)]
 pub struct Event {
     pub date: TaxDate,
-    pub label: Label,
+    pub asset: TaxAsset,
     pub open_close: OpenClose,
 }
 
 /// Tracks positions in multiple assets, recording tax events
 #[derive(Clone, Debug, Default)]
 pub struct PositionTracker {
-    positions: HashMap<Label, Position>,
+    positions: HashMap<TaxAsset, Position>,
     events: Vec<Event>,
 }
 
@@ -595,21 +560,21 @@ impl PositionTracker {
     /// Returns the number of lots closed.
     pub fn push_lot<ID: fmt::Display + Into<LotId>>(
         &mut self,
-        label: &Label,
+        asset: TaxAsset,
         lot: Lot<ID>,
         sort_date: time::OffsetDateTime,
     ) -> usize {
         let date = lot.date;
         // Take the action...
-        let pos = self.positions.entry(label.clone()).or_default();
-        let (closes, open) = pos.push_event(lot, sort_date, !label.is_btc());
+        let pos = self.positions.entry(asset).or_default();
+        let (closes, open) = pos.push_event(lot, sort_date, asset != TaxAsset::Btc);
         let n_ret = closes.len();
         // ...then log it
         for close in closes {
             debug!("push_lot: logging close {} at date {}", close, date.0);
             self.events.push(Event {
                 date,
-                label: label.clone(),
+                asset,
                 open_close: OpenClose::Close(close),
             });
         }
@@ -617,7 +582,7 @@ impl PositionTracker {
             debug!("push_lot: logging open {} at date {}", open, date.0);
             self.events.push(Event {
                 date,
-                label: label.clone(),
+                asset,
                 open_close: OpenClose::Open(open),
             });
         }

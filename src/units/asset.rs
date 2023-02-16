@@ -95,7 +95,16 @@ pub enum TaxAsset {
 }
 
 impl TaxAsset {
-    /// Whether this asset gets 1256
+    /// Whether this asset is functionally identical to bitcoin
+    pub fn is_bitcoin_like(&self) -> bool {
+        match *self {
+            TaxAsset::Bitcoin => true,
+            TaxAsset::NextDay { .. } => true,
+            TaxAsset::Option { .. } => false,
+        }
+    }
+
+    /// Whether this asset gets sec. 1256 tax treatment
     pub fn is_1256(&self) -> bool {
         match *self {
             TaxAsset::Bitcoin => false,

@@ -559,12 +559,9 @@ impl History {
                 debug!("Because of assignment inserting a synthetic BTC trade");
                 let contracts_in_btc = Quantity::from(n_assigned.btc_equivalent());
                 self.events.insert(
-                    option.expiry,
+                    price_ref_date,
                     Event::Trade {
-                        asset: TaxAsset::NextDay {
-                            underlying: pos.contract.underlying(),
-                            expiry: option.expiry,
-                        },
+                        asset: TaxAsset::Bitcoin,
                         price: option.strike,
                         size: match option.pc {
                             crate::option::Call => -contracts_in_btc,
@@ -759,18 +756,11 @@ impl History {
                         "[trade] \"{}\" {} @ {}; fee {}; synthetic: {}",
                         asset, size, price, fee, synthetic
                     );
-                    let tax_date = if let TaxAsset::NextDay { expiry, .. } = asset {
-                        // BTC longs don't happen until the following day...also ofc LX fucks
-                        // up the date and fixes the time to 21:00
-                        expiry.date().with_time(time::time!(21:00)).assume_utc()
-                    } else {
-                        date
-                    };
 
                     let unit_fee = *fee / *size;
                     let adj_price = *price + unit_fee; // nb `unit_fee` is a signed quantity
                     tracker
-                        .push_trade(*asset, *size, adj_price, tax_date.into())
+                        .push_trade(*asset, *size, adj_price, date.into())
                         .with_context(|| format!("pushing trade of {asset} size {size}"))?;
                 }
                 // Expiries are a simple tax event (a straight gain)

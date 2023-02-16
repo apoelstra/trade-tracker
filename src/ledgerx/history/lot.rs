@@ -105,10 +105,10 @@ impl Lot {
     pub fn new(asset: TaxAsset, quantity: Quantity, price: Price, date: TaxDate) -> Lot {
         Lot {
             id: match asset {
-                TaxAsset::Bitcoin => unreachable!(
-                    "actual bitcoin lots (not dayaheads) should be constructed with Lot::from_deposit"
+                TaxAsset::Bitcoin => Id::next_btc(),
+                TaxAsset::NextDay { .. } => unreachable!(
+                    "dayaheads should be converted to their underlying, and are not tracked as lots by themselves",
                 ),
-                TaxAsset::NextDay { .. } => Id::next_btc(),
                 TaxAsset::Option { .. } => Id::next_opt(),
             },
             asset,

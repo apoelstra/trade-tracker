@@ -108,7 +108,7 @@ impl fmt::Display for Close {
             "{} {{ {:?}, date: {}, asset: {}, price: {}, qty: {} }}",
             self.open_id,
             self.ty,
-            self.close_date.0.lazy_format("%FT%FT"),
+            self.close_date.0.lazy_format("%FT%H:%M:%S"),
             self.asset,
             self.close_price,
             self.quantity,
@@ -495,16 +495,39 @@ impl PositionTracker {
     /// Returns the number of lots closed.
     pub fn push_trade(
         &mut self,
-        asset: TaxAsset,
+        mut asset: TaxAsset,
         quantity: Quantity,
         price: Price,
-        date: TaxDate,
+        mut date: TaxDate,
     ) -> anyhow::Result<usize> {
         let close_ty = if quantity.is_nonnegative() {
             CloseType::BuyBack
         } else {
             CloseType::Sell
         };
+
+        // Dayaheads we have to convert to bitcoin to ensure they are tracked correctly.
+        // Furthermore, long positions we bump to the expiry date of the dayahead.
+        if let TaxAsset::NextDay { underlying, expiry } = asset {
+            assert_eq!(underlying, Underlying::Btc);
+            // Lol, not the actual expiry date. The expiry date with its timestamp
+            // munged to be equal to 21:00.
+            //
+            // Furthermore, note that the date is *always* forced, even for short positions,
+            // even though in the LX trading interface, once you sell a next day, you
+            // receive immediate cash.
+            //
+            // I believe the interpretation here is that the nextday trade actually has
+            // zero tax consequence since it's an exchange of cash for a cash contract
+            // of equal value. It is only at expiry, when bitcoin changes hands, that
+            // a taxable event occurs.
+            date = expiry
+                .date()
+                .with_time(time::time!(21:00))
+                .assume_utc()
+                .into();
+            asset = TaxAsset::Bitcoin;
+        }
 
         let pos = self.positions.entry(asset).or_insert(Position::new(asset));
         let (closes, open) = pos.add(quantity, price, date, close_ty).with_context(|| {

@@ -237,7 +237,7 @@ impl Lot {
             partial = true;
         } else {
             // Full close
-            close_quantity = quantity;
+            close_quantity = -self.quantity;
             partial = false;
         }
 

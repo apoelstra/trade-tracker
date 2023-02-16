@@ -291,14 +291,21 @@ impl Position {
                     self.queue.insert(existing_date, partial_lot);
                     return Ok((closes, None));
                 } else {
-                    quantity -= existing_qty;
+                    quantity += existing_qty;
+                    if !quantity.is_nonzero() {
+                        return Ok((closes, None));
+                    }
                 }
             }
             // If we get to this point we ran out of things to close, so create
             // a new lot and return.
-            let new_lot = Lot::new(self.asset, quantity, price, date);
-            self.queue.insert(new_lot.sort_date(), new_lot.clone());
-            Ok((closes, Some(new_lot)))
+            if quantity.is_nonzero() {
+                let new_lot = Lot::new(self.asset, quantity, price, date);
+                self.queue.insert(new_lot.sort_date(), new_lot.clone());
+                Ok((closes, Some(new_lot)))
+            } else {
+                Ok((closes, None))
+            }
         }
     }
 }
@@ -377,13 +384,13 @@ impl PositionTracker {
         pos.queue.insert(lot.sort_date(), lot);
     }
 
-    /// Expire a bunch of some option
+    /// Expire a bunch of some option. Returns the number of lots closed.
     pub fn push_expiry(
         &mut self,
         option: crate::option::Option,
         underlying: Underlying,
         size: Quantity,
-    ) -> anyhow::Result<Vec<Close>> {
+    ) -> anyhow::Result<usize> {
         let asset = TaxAsset::Option { underlying, option };
         debug!("[position-tracker] expiry of asset {} size {}", asset, size);
         // Force expiry date to match LX goofiness
@@ -416,18 +423,19 @@ impl PositionTracker {
         if pos.queue.is_empty() {
             self.positions.remove(&asset);
         }
-        // Return all the closes that happened
-        Ok(closes)
+
+        // Return the number of closes that happened.
+        Ok(self.push_events("push_expiry", closes, None))
     }
 
-    /// Assign a bunch of some option
+    /// Assign a bunch of some option. Returns the number of lots closed.
     pub fn push_assignment(
         &mut self,
         option: crate::option::Option,
         underlying: Underlying,
         size: Quantity,
         btc_price: Price,
-    ) -> anyhow::Result<Vec<Close>> {
+    ) -> anyhow::Result<usize> {
         let asset = TaxAsset::Option { underlying, option };
         debug!(
             "[position-tracker] assignment of asset {} size {}",
@@ -471,8 +479,8 @@ impl PositionTracker {
         }
         self.positions.remove(&asset);
 
-        // Return all the closes that happened
-        Ok(closes)
+        // Return the number of closes that happened.
+        Ok(self.push_events("push_assignment", closes, None))
     }
 
     /// Adds a trade of some asset to the tracker, adjusting positions as appropriate.

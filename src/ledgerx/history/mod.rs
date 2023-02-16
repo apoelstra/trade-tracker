@@ -18,13 +18,13 @@
 //!
 
 use crate::csv::{self, CsvPrinter};
+use crate::file::create_text_file;
 use crate::units::{BudgetAsset, DepositAsset, Price, Quantity, Underlying, UnknownQuantity};
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
@@ -544,16 +544,13 @@ impl History {
         info!("Creating directory {} to hold output.", dir_path);
         // Write out metadata, in part to make sure we can create files before
         // we do too much heavy lifting.
-        let filename = format!("{dir_path}/metadata");
-        info!("Creating file {} with metadata about this run.", filename);
-        let mut metadata =
-            fs::File::create(&filename).with_context(|| format!("Creating file {filename}"))?;
-        writeln!(metadata, "Started on: {now}")
-            .with_context(|| format!("Writing date to {filename}"))?;
-        writeln!(metadata, "Tax year: {}", config.year())
-            .with_context(|| format!("Writing date to {filename}"))?;
-        writeln!(metadata, "Configuration file hash: {}", config_hash)
-            .with_context(|| format!("Writing config hash to {filename}"))?;
+        let mut metadata = create_text_file(
+            format!("{dir_path}/metadata"),
+            "with metadata about this run.",
+        )?;
+        writeln!(metadata, "Started on: {now}")?;
+        writeln!(metadata, "Tax year: {}", config.year())?;
+        writeln!(metadata, "Configuration file hash: {}", config_hash)?;
         writeln!(
             metadata,
             "Events in this year: {}",
@@ -561,10 +558,8 @@ impl History {
                 .iter()
                 .filter(|(d, _)| d.year() == config.year())
                 .count()
-        )
-        .with_context(|| format!("Writing number of events {filename}"))?;
+        )?;
         drop(metadata);
-        drop(filename); // avoid reusing this variable
 
         // 1. Construct price reference from LX CSV
         let mut lx_price_ref = HashMap::new();
@@ -784,15 +779,16 @@ impl History {
         }
         tracker.lx_sort_events();
 
-        let lx_filename = format!("{dir_path}/ledgerx-sim.csv");
-        info!(
-            "Creating file {} which should match the LX-provided CSV.",
-            lx_filename
-        );
-        let mut lx_file = fs::File::create(&lx_filename)
-            .with_context(|| format!("Creating file {lx_filename}"))?;
-        writeln!(lx_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.")
-            .with_context(|| format!("Writing CSV header to {lx_filename}"))?;
+        let mut lx_file = create_text_file(
+            format!("{dir_path}/ledgerx-sim.csv"),
+            "which should match the LX-provided CSV.",
+        )?;
+        let mut lx_alt_file = create_text_file(
+            format!("{dir_path}/ledgerx-sim-annotated.csv"),
+            "which should match the LX-provided CSV, with one extra column for lot IDs",
+        )?;
+        writeln!(lx_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.")?;
+        writeln!(lx_alt_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.,Lot ID")?;
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.
@@ -804,8 +800,10 @@ impl History {
             match event.open_close {
                 tax::OpenClose::Open(..) => {}
                 tax::OpenClose::Close(ref close) => {
-                    writeln!(lx_file, "{}", close.csv_printer(&event.label, false))
-                        .with_context(|| format!("Writing CSV line to {lx_filename}"))?;
+                    let lx = close.csv_printer(&event.label, tax::PrintMode::LedgerX);
+                    let lx_alt = close.csv_printer(&event.label, tax::PrintMode::LedgerXAnnotated);
+                    writeln!(lx_file, "{}", lx)?;
+                    writeln!(lx_alt_file, "{}", lx_alt)?;
                 }
             }
         }

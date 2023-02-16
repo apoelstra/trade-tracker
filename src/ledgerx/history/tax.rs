@@ -391,64 +391,89 @@ impl fmt::Display for Close {
     }
 }
 
+/// Output style
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PrintMode {
+    /// Try to exactly match the LX output, so you can use 'diff' to confirm
+    /// that we're interpreting the same data in the same way
+    LedgerX,
+    /// LedgerX format, but annotated with lot IDs.
+    ///
+    /// The idea here is that we can output LX's view with this format, easily
+    /// check that it matches their CSV output (by importing into excel, deleting
+    /// a column, and diffing), and then see wtf they're thinking.
+    ///
+    /// Then we can output our own view in this format, and by diffing we can see
+    /// that the only changes were due to changes in choice of BTC lots.
+    LedgerXAnnotated,
+    /// A sane format that we could provide as evidence for our history.
+    ///
+    /// Hard to diff this against any of the above formats but at least it will
+    /// end up at the same total number. Will also show where the lots come from,
+    /// data which is conspicuously missing from the other formats.
+    Full,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CloseCsv<'label, 'close> {
     label: &'label Label,
     close: &'close Close,
-    print_lot_id: bool,
+    mode: PrintMode,
 }
 
 impl<'label, 'close> csv::PrintCsv for CloseCsv<'label, 'close> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut proceeds = self.close.close_price * self.close.quantity;
-        let mut basis = self.close.open_price * self.close.quantity;
+        if self.mode == PrintMode::LedgerX || self.mode == PrintMode::LedgerXAnnotated {
+            let mut proceeds = self.close.close_price * self.close.quantity;
+            let mut basis = self.close.open_price * self.close.quantity;
 
-        let mut close_date = self.close.close_date;
-        let mut open_date = self.close.open_date;
-        if !self.close.quantity.is_positive() {
-            // wtf
-            mem::swap(&mut close_date, &mut open_date);
-            mem::swap(&mut basis, &mut proceeds);
-        }
-        proceeds = proceeds.abs();
-        basis = basis.abs();
-
-        let description = match self.close.quantity {
-            Quantity::Bitcoin(btc) => {
-                let real_amount = Decimal::new(btc.to_sat(), 8);
-                let round_amount = real_amount.round_dp(2);
-                // If we can, reduce to 2 decimal points. This will be the common case since LX
-                // will only let us trade in 1/100th of a bitcoin, and will let us better match
-                // their output.
-                if real_amount == round_amount {
-                    format!("{}, {}", round_amount.abs(), self.label)
-                } else {
-                    format!("{}, {}", real_amount.abs(), self.label)
-                }
+            let mut close_date = self.close.close_date;
+            let mut open_date = self.close.open_date;
+            if !self.close.quantity.is_positive() {
+                // wtf
+                mem::swap(&mut close_date, &mut open_date);
+                mem::swap(&mut basis, &mut proceeds);
             }
-            Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.label),
-            Quantity::Cents(_) => panic!("tried to write out a sale of dollars as a tax event"),
-            Quantity::Zero => "0".into(), // maybe we should just panic here
-        };
+            proceeds = proceeds.abs();
+            basis = basis.abs();
 
-        (
-            self.close.ty,
-            description,
-            close_date,
-            open_date,
-            basis,
-            proceeds,
-            basis - proceeds,
-            self.close.gain_ty,
-            "",
-            "",
-            "",
-        )
-            .print(f)?;
+            let description = match self.close.quantity {
+                Quantity::Bitcoin(btc) => {
+                    let real_amount = Decimal::new(btc.to_sat(), 8);
+                    let round_amount = real_amount.round_dp(2);
+                    // If we can, reduce to 2 decimal points. This will be the common case since LX
+                    // will only let us trade in 1/100th of a bitcoin, and will let us better match
+                    // their output.
+                    if real_amount == round_amount {
+                        format!("{}, {}", round_amount.abs(), self.label)
+                    } else {
+                        format!("{}, {}", real_amount.abs(), self.label)
+                    }
+                }
+                Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.label),
+                Quantity::Cents(_) => panic!("tried to write out a sale of dollars as a tax event"),
+                Quantity::Zero => "0".into(), // maybe we should just panic here
+            };
 
-        if self.print_lot_id {
-            f.write_str(",")?;
-            self.close.open_id.print(f)?;
+            (
+                self.close.ty,
+                description,
+                close_date,
+                open_date,
+                basis,
+                proceeds,
+                basis - proceeds,
+                self.close.gain_ty,
+                "",
+                "",
+                "",
+            )
+                .print(f)?;
+
+            if self.mode == PrintMode::LedgerXAnnotated {
+                f.write_str(",")?;
+                self.close.open_id.print(f)?;
+            }
         }
         Ok(())
     }
@@ -459,12 +484,12 @@ impl Close {
     pub fn csv_printer<'label, 'close>(
         &'close self,
         label: &'label Label,
-        print_lot_id: bool,
+        mode: PrintMode,
     ) -> csv::CsvPrinter<CloseCsv<'label, 'close>> {
         csv::CsvPrinter(CloseCsv {
             label,
             close: self,
-            print_lot_id,
+            mode,
         })
     }
 }

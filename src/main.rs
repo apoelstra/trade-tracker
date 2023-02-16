@@ -18,6 +18,7 @@
 //!
 
 pub mod csv;
+pub mod file;
 pub mod http;
 pub mod ledgerx;
 pub mod local_bs;

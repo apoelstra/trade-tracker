@@ -26,7 +26,11 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
+pub mod config;
 pub mod tax;
+
+pub use self::config::Configuration;
+pub use self::tax::LotId;
 
 // Note that this is *not* the same as the equivalent function in ledgerx/json.rs
 // For some reason LX returns timestamps in like a dozen different formats.
@@ -521,150 +525,116 @@ impl History {
     /// summer in new york. The assignment timestamps are always UTC 21:00.
     pub fn print_tax_csv(
         &self,
-        year: i32,
-        mode: crate::TaxHistoryMode,
+        config: &Configuration,
         price_history: &crate::price::Historic,
-        transaction_db: &crate::transaction::Database,
-        lot_db: Option<&crate::lot::Database>,
-        lx_price_ref: &HashMap<OffsetDateTime, Price>,
-    ) {
+    ) -> anyhow::Result<()> {
+        // 1. Construct price reference from LX CSV
+        let mut lx_price_ref = HashMap::new();
+        for line in config.lx_csv() {
+            let data = crate::ledgerx::csv::CsvLine::from_str(line).map_err(anyhow::Error::msg)?;
+            for (time, price) in data.price_references() {
+                info!(
+                    "At {} inferred price {} (reference price {})",
+                    time,
+                    price,
+                    price_history.price_at(time)
+                );
+                lx_price_ref.insert(time, price);
+            }
+        }
+        // 2. Parse the transaction map as a transaction database
+        let transaction_db = config
+            .transaction_db()
+            .context("extracting transaction database from config file")?;
+        let lot_db = config.lot_db();
+        // 3. Do the deed
         let btc_label = tax::Label::btc();
         let mut tracker = tax::PositionTracker::new();
         for (date, event) in &self.events {
             debug!("Processing event {:?}", event);
             match event {
-                // Deposits and withdrawals are not taxable events
+                // Deposits are not taxable events, but deposits of BTC cause lots to be
+                // created (or at least, become accessible to our tax optimizer)
                 Event::Deposit {
                     amount,
                     asset,
                     address,
                 } => {
-                    let btc_price = price_history.price_at(date);
-                    debug!(
-                        "Looked up BTC price for deposit at {}, got {} ({})",
-                        date, btc_price.btc_price, btc_price.timestamp,
-                    );
-                    let btc_price = btc_price.btc_price;
                     // sanity check asset
                     match *asset {
                         DepositAsset::Btc => {}        // ok
                         DepositAsset::Usd => continue, // USD deposits are not tax-relevant
                         DepositAsset::Eth => unimplemented!("we do not support eth deposits"),
                     }
-                    debug!("[deposit] \"BTC\" {} @ {}", btc_price, amount);
+                    debug!("[deposit] \"BTC\" {}", amount);
 
+                    // sanity check amount
                     let mut amount_sat = match amount {
                         Quantity::Zero => 0,
                         Quantity::Bitcoin(btc) => btc.to_sat() as u64,
                         Quantity::Contracts(_) => unreachable!("deposit of so many contracts"),
                         Quantity::Cents(_) => unreachable!("USD deposits not supported yet"),
                     };
-                    let mut just_make_something_up = false;
-                    let mut deposit_outpoint = bitcoin::OutPoint::default();
-                    if let Some((tx, vout)) =
-                        transaction_db.find_tx_for_deposit(address, amount_sat)
-                    {
-                        deposit_outpoint = bitcoin::OutPoint {
+
+                    // Look up transaction based on address. If we can't find one, error out.
+                    let (tx, vout) = transaction_db
+                        .find_tx_for_deposit(address, amount_sat)
+                        .with_context(|| {
+                            format!("no txout matched address/amount {address}/{amount_sat}")
+                        })?;
+
+                    let outpoint_iter: Box<dyn Iterator<Item = bitcoin::OutPoint>>;
+                    if tx.output.len() == 1 {
+                        debug!(
+                            "Assuming that a single-output deposit is from Andrew's wallet \
+                                and that every input UXTO is a separate lot."
+                        );
+                        outpoint_iter = Box::new(tx.input.iter().map(|inp| inp.previous_output));
+                    } else {
+                        debug!("Assuming that a multi-output deposit is constitutes a single lot.");
+                        outpoint_iter = Box::new(std::iter::once(bitcoin::OutPoint {
                             txid: tx.txid(),
                             vout,
-                        };
-                        if tx.output.len() == 1 {
-                            debug!(
-                                "Assuming that a single-output deposit is from Andrew's wallet \
-                                    and that every input UXTO is a separate lot."
-                            );
-                            for input in &tx.input {
-                                let op = input.previous_output;
-                                if let Some((txout, txout_date)) =
-                                    transaction_db.find_txout(op.txid, op.vout)
-                                {
-                                    let price = price_history.price_at(txout_date);
-                                    debug!(
-                                        "Looked up BTC price for input {}:{} at {}, got {} ({})",
-                                        op.txid,
-                                        op.vout,
-                                        txout_date,
-                                        price.btc_price,
-                                        price.timestamp,
-                                    );
-                                    let mut open = tax::Lot::from_deposit_utxo(
-                                        op,
-                                        price.btc_price,
-                                        bitcoin::Amount::from_sat(txout.value),
-                                        txout_date,
-                                    );
-                                    let lot_date = if let Some(lot_date) =
-                                        lot_db.and_then(|db| db.find_lot(open.id()))
-                                    {
-                                        debug!(
-                                            "Using date {} from database for lot {}",
-                                            lot_date,
-                                            open.id()
-                                        );
-                                        lot_date
-                                    } else {
-                                        debug!("Using date {} from deposit date (no entry in db) for lot {}", date, open.id());
-                                        date
-                                    };
-                                    // Take fees away from the last input(s). We consider this a
-                                    // partial loss of the lot corresponding to the input
-                                    if txout.value > amount_sat {
-                                        open.dock_fee(bitcoin::Amount::from_sat(
-                                            txout.value - amount_sat,
-                                        ));
-                                        // FiXME record these explicitly
-                                        /*
-                                        let open = tax::Lot::from_tx_fee(
-                                            txout.value - amount_sat,
-                                            date, // date is now, not txout_date
-                                        );
-                                        assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 1);
-                                        */
-                                        amount_sat = 0;
-                                    } else {
-                                        amount_sat -= txout.value;
-                                    }
-                                    assert_eq!(tracker.push_lot(&btc_label, open, lot_date), 0);
-                                } else {
-                                    warn!(
-                                        "Please import txdata for {}. For now assuming CB of {}",
-                                        op.txid, btc_price,
-                                    );
-                                    just_make_something_up = true;
-                                }
-                            }
-                        } else {
-                            debug!(
-                                "Assuming that a multi-output deposit came from some shared \
-                                    exchange or something; treating the deposit as a single lot \
-                                    and ignoring the inputs."
-                            );
-                            just_make_something_up = true;
-                        }
-                    } else {
-                        warn!(
-                            "No transaction found for deposit of size {} to {} on {}. Assuming CB of {}.",
-                            amount,
-                            address,
-                            date.lazy_format("%F %T.%N"),
-                            btc_price,
-                        );
-                        just_make_something_up = true;
+                        }));
                     }
 
-                    // "Just make something up" is a little strong. What it means is that we treat
-                    // the deposit as a lot in the deposit amount on the deposit date, at the
-                    // prevailing BTC price.
-                    if just_make_something_up {
-                        let open = tax::Lot::from_deposit_utxo(
-                            deposit_outpoint,
-                            btc_price,
-                            bitcoin::Amount::from_sat(amount_sat),
-                            date,
+                    for op in outpoint_iter {
+                        let id = LotId::from_outpoint(op);
+                        let txout = transaction_db.find_txout(op).with_context(|| {
+                            format!("config file did not have tx data for {op}")
+                        })?;
+                        let lot_data = lot_db.get(&id).with_context(|| {
+                            format!("config file did not have info for lot {id}")
+                        })?;
+
+                        debug!("Using BTC price {} for lot {}", lot_data.price, id,);
+                        let mut open = tax::Lot::from_deposit_utxo(
+                            op,
+                            lot_data.price,
+                            bitcoin::Amount::from_sat(txout.value),
+                            lot_data.date,
                         );
-                        assert_eq!(tracker.push_lot(&btc_label, open, date), 0);
+                        // Take fees away from the last input(s). We consider this a
+                        // partial loss of the lot corresponding to the input
+                        //
+                        // A future iteration may consider this to be a taxable loss but this
+                        // won't affect anything downstream, basically it'll just add an extra
+                        // log line. FIXME implement this.
+                        if txout.value > amount_sat {
+                            open.dock_fee(bitcoin::Amount::from_sat(txout.value - amount_sat));
+                            amount_sat = 0;
+                        } else {
+                            amount_sat -= txout.value;
+                        }
+                        // Assert that deposits do not close any positions (since we cannot have
+                        // a short BTC position)
+                        assert_eq!(tracker.push_lot(&btc_label, open, lot_data.date), 0);
                     }
                 }
+                // Withdrawals of any kind are not taxable events.
+                //
+                // FIXME BTC withdrawals should take lots out of commission. Not sure how to
+                // choose this. Probably should make the user decide in config file.
                 Event::Withdrawal { .. } => {
                     debug!("Ignore withdrawal");
                 }
@@ -726,23 +696,21 @@ impl History {
                             let expiry =
                                 opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
 
-                            let btc_price = price_history.price_at(expiry);
-                            debug!(
-                                "Looked up BTC price at {}, got {} ({})",
-                                expiry, btc_price.btc_price, btc_price.timestamp,
-                            );
-                            let btc_price = if let Some(price) = lx_price_ref.get(&expiry) {
-                                debug!(
-                                    "Have LX price reference; overriding price {} with {}",
-                                    btc_price.btc_price, price
-                                );
-                                *price
-                            } else {
-                                warn!(
-                                    "Do not have LX price reference for {}; using  price {}",
-                                    expiry, btc_price.btc_price
-                                );
-                                btc_price.btc_price
+                            let btc_price = match lx_price_ref.get(&expiry) {
+                                Some(price) => *price,
+                                None => {
+                                    // We allow this because otherwise we can't possibly produce
+                                    // files until LX gives us their shit, which they take
+                                    // forever to do. But arguably it should be a hard error
+                                    // because the result will not be so easily justifiable to
+                                    // the IRS.
+                                    let btc_price = price_history.price_at(expiry);
+                                    warn!(
+                                        "Do not have LX price reference for {}; using price {}",
+                                        expiry, btc_price
+                                    );
+                                    btc_price.btc_price
+                                }
                             };
 
                             let open = tax::Lot::from_assignment(&opt, *assigned_size, btc_price);
@@ -767,35 +735,24 @@ impl History {
                 }
             };
         }
-
         tracker.lx_sort_events();
 
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.
-            if year != event.date.0.year() {
+            if config.year() != event.date.0.year() {
                 continue;
             }
-            let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
+            //let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
 
+            // FIXME output data to multiple files rather than info logs
             match event.open_close {
-                tax::OpenClose::Open(ref open) => {
-                    if let crate::TaxHistoryMode::JustLotIds = mode {
-                        println!("{:35}: {}:  open lot {}", event.label, date, open);
-                    }
+                tax::OpenClose::Open(..) => {}
+                tax::OpenClose::Close(ref close) => {
+                    info!("{}", close.csv_printer(&event.label, false));
                 }
-                tax::OpenClose::Close(ref close) => match mode {
-                    crate::TaxHistoryMode::JustLxData => {
-                        info!("{}", close.csv_printer(&event.label, false));
-                    }
-                    crate::TaxHistoryMode::JustLotIds => {
-                        println!("{:35}: {}: close lot {}", event.label, date, close);
-                    }
-                    crate::TaxHistoryMode::Both => {
-                        info!("{}", close.csv_printer(&event.label, true));
-                    }
-                },
             }
         }
+        Ok(())
     }
 }

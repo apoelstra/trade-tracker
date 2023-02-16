@@ -89,7 +89,12 @@ impl LotId {
     }
 
     /// Constructor for a lot ID that comes from a UTXO
-    fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
+    ///
+    /// This is the only constructor accessible from outside of
+    /// this module, since it's the only stateless one, and we
+    /// want to keep careful track of our state to ensure that
+    /// our records have consistent lot IDs from year to year.
+    pub fn from_outpoint(outpoint: bitcoin::OutPoint) -> LotId {
         LotId(format!("{:.8}-{:02}", outpoint.txid, outpoint.vout))
     }
 }

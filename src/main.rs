@@ -22,7 +22,6 @@ pub mod http;
 pub mod ledgerx;
 pub mod local_bs;
 pub mod logger;
-pub mod lot;
 pub mod option;
 pub mod price;
 pub mod terminal;
@@ -30,16 +29,13 @@ pub mod timemap;
 pub mod transaction;
 pub mod units;
 
-use crate::ledgerx::LotId;
 pub use crate::timemap::TimeMap;
 use crate::units::{Price, Underlying};
 use anyhow::Context;
 use clap::Clap;
 use log::{info, warn};
 use std::{
-    collections::HashMap,
-    fs,
-    io::{self, BufRead},
+    fs, io,
     path::PathBuf,
     str::FromStr,
     sync::mpsc::{channel, Receiver, Sender},
@@ -91,26 +87,6 @@ enum Command {
     },
     /// Return the latest stored price. Mainly useful as a test.
     LatestPrice {},
-    /// Record a hex transaction that may be interesting to the software
-    RecordTx {
-        #[clap(name = "rawtx", about = "The hex-encoded raw transaction to record")]
-        rawtx: String,
-        #[clap(
-            name = "timestamp",
-            about = "Please provide the timestamp from the block header in which the transaction was confirmed"
-        )]
-        timestamp: i64,
-    },
-    /// Record a hex transaction that may be interesting to the software
-    RecordLot {
-        #[clap(name = "lot-id", about = "The lot ID to specify the timestamp for")]
-        lot_id: LotId,
-        #[clap(
-            name = "timestamp",
-            about = "Please provide the timestamp that you would like this lot to be sorted into the FIFO queue on"
-        )]
-        timestamp: i64,
-    },
     /// Print a list of potential orders for a given option near a given volatility, at various
     /// prices
     Price {
@@ -145,12 +121,8 @@ enum Command {
     TaxHistory {
         #[clap(name = "token")]
         api_key: String,
-        #[clap(name = "year")]
-        year: i32,
-        #[clap(name = "mode", default_value = "both")]
-        mode: TaxHistoryMode,
-        #[clap(name = "lx_csv_file", parse(from_os_str))]
-        lx_csv: Option<PathBuf>,
+        #[clap(name = "config_file", parse(from_os_str))]
+        config_file: PathBuf,
     },
 }
 
@@ -196,8 +168,6 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
         Command::InitializePriceData { .. }
         | Command::UpdatePriceData { .. }
         | Command::LatestPrice {}
-        | Command::RecordLot { .. }
-        | Command::RecordTx { .. }
         | Command::Price { .. }
         | Command::Iv { .. } => {
             logger::Logger::init_stdout_only().context("initializing stdout logger")?;
@@ -270,88 +240,6 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::LatestPrice {} => {
             info!("{}", history.price_at(now));
-        }
-        Command::RecordLot { lot_id, timestamp } => {
-            // Basic sanity checks on the timestamp.
-            if timestamp < 1231006505 {
-                return Err(anyhow::Error::msg(
-                    "Timestamp appears to be invalid (predates the genesis block)",
-                ));
-            } else if timestamp > 4102444800 {
-                return Err(anyhow::Error::msg(
-                    "Timestamp appears to be invalid (or you are in the year 2100, \
-                     a time so far in the future that the earth men of 2023 could \
-                     not imagine it.",
-                ));
-            }
-
-            data_path.push("lots.json");
-            let mut db = match lot::Database::load(&data_path) {
-                Ok(db) => {
-                    info!("Loaded lot database from disk.");
-                    db
-                }
-                Err(e) => {
-                    info!("Failed to load lot database: {}. Creating a new one.", e);
-                    lot::Database::new()
-                }
-            };
-
-            if let Some(existing) = db.insert_lot(lot_id, timestamp) {
-                if time::OffsetDateTime::from_unix_timestamp(timestamp) == existing {
-                    info!("Already had lot.");
-                } else {
-                    info!("Overwriting timestamp {} with {}.", existing, timestamp);
-                }
-            }
-            db.save(&data_path).context("saving lot database")?;
-            data_path.pop(); // "lots.json"
-            info!("Success.");
-        }
-        Command::RecordTx { rawtx, timestamp } => {
-            let bytes: Vec<u8> = hex::decode(rawtx).context("decoding rawtx as hex")?;
-            let tx: bitcoin::Transaction =
-                bitcoin::consensus::deserialize(&bytes).context("decoding rawtx as transaction")?;
-
-            // Basic sanity checks on the timestamp.
-            if timestamp < 1231006505 {
-                return Err(anyhow::Error::msg(
-                    "Timestamp appears to be invalid (predates the genesis block)",
-                ));
-            } else if timestamp > 4102444800 {
-                return Err(anyhow::Error::msg(
-                    "Timestamp appears to be invalid (or you are in the year 2100, \
-                     a time so far in the future that the earth men of 2023 could \
-                     not imagine it.",
-                ));
-            }
-
-            data_path.push("transactions.json");
-            let mut db = match transaction::Database::load(&data_path) {
-                Ok(db) => {
-                    info!("Loaded transaction database from disk.");
-                    db
-                }
-                Err(e) => {
-                    info!(
-                        "Failed to load transaction database: {}. Creating a new one.",
-                        e
-                    );
-                    transaction::Database::new()
-                }
-            };
-
-            info!("Saving transaction with txid {}", tx.txid());
-            if let Some(existing) = db.insert_tx(tx, timestamp) {
-                if timestamp == existing {
-                    info!("Already had transaction.");
-                } else {
-                    info!("Overwriting timestamp {} with {}.", existing, timestamp);
-                }
-            }
-            db.save(&data_path).context("saving transaction database")?;
-            data_path.pop(); // "transactions.json"
-            info!("Success.");
         }
         Command::Price { option, volatility } => {
             let yte = option.years_to_expiry(now);
@@ -478,44 +366,21 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Command::TaxHistory {
             api_key,
-            year,
-            mode,
-            lx_csv,
+            config_file,
         } => {
-            let mut lx_price_ref = HashMap::new();
-            if let Some(csv) = lx_csv {
-                let csv_name = csv.to_string_lossy();
-                let input =
-                    fs::File::open(&csv).with_context(|| format!("opening tax data {csv_name}"))?;
-                let bufread = io::BufReader::new(input);
-                for line in bufread.lines().skip(1) {
-                    let line = line.with_context(|| format!("parsing line from csv {csv_name}"))?;
-                    let data =
-                        ledgerx::csv::CsvLine::from_str(&line).map_err(anyhow::Error::msg)?;
-                    for (time, price) in data.price_references() {
-                        info!(
-                            "At {} inferred price {} (reference price {})",
-                            time,
-                            price,
-                            history.price_at(time)
-                        );
-                        lx_price_ref.insert(time, price);
-                    }
-                }
-            }
-
-            data_path.push("transactions.json");
-            let db = transaction::Database::load(&data_path).context(
-                "loading transaction database -- create one with the record-tx command. \
-                          You will need to record every deposit transaction and its inputs. If \
-                          you have made no BTC deposits, just record some random transaction.",
-            )?;
-            data_path.pop();
-            data_path.push("lots.json");
-            let lot_db = lot::Database::load(&data_path).ok();
+            // Parse config file
+            let config_name = config_file.to_string_lossy();
+            let input = fs::File::open(&config_file)
+                .with_context(|| format!("opening config file {config_name}"))?;
+            let bufread = io::BufReader::new(input);
+            let config: ledgerx::history::Configuration = serde_json::from_reader(bufread)
+                .with_context(|| format!("parsing config file {config_name}"))?;
+            // Query LX to get all historic trade data
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
-            hist.print_tax_csv(year, mode, &history, &db, lot_db.as_ref(), &lx_price_ref);
+            // ...and output
+            hist.print_tax_csv(&config, &history)
+                .context("printing tax CSV")?;
         }
     }
 

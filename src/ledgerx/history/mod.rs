@@ -23,6 +23,8 @@ use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
@@ -526,15 +528,51 @@ impl History {
     pub fn print_tax_csv(
         &self,
         config: &Configuration,
+        config_hash: bitcoin::hashes::sha256::Hash,
         price_history: &crate::price::Historic,
     ) -> anyhow::Result<()> {
+        // 0. Attempt to create output directory
+        let now = time::OffsetDateTime::now_utc();
+        let dir_path = format!("lx_tax_output_{}", now.lazy_format("%F-%H%M"));
+        if fs::metadata(&dir_path).is_ok() {
+            return Err(anyhow::Error::msg(format!(
+                "Output directory {dir_path} exists. Refusing to run."
+            )));
+        }
+        fs::create_dir(&dir_path)
+            .with_context(|| format!("Creating directory {dir_path} to put tax output into"))?;
+        info!("Creating directory {} to hold output.", dir_path);
+        // Write out metadata, in part to make sure we can create files before
+        // we do too much heavy lifting.
+        let filename = format!("{dir_path}/metadata");
+        info!("Creating file {} with metadata about this run.", filename);
+        let mut metadata =
+            fs::File::create(&filename).with_context(|| format!("Creating file {filename}"))?;
+        writeln!(metadata, "Started on: {now}")
+            .with_context(|| format!("Writing date to {filename}"))?;
+        writeln!(metadata, "Tax year: {}", config.year())
+            .with_context(|| format!("Writing date to {filename}"))?;
+        writeln!(metadata, "Configuration file hash: {}", config_hash)
+            .with_context(|| format!("Writing config hash to {filename}"))?;
+        writeln!(
+            metadata,
+            "Events in this year: {}",
+            self.events
+                .iter()
+                .filter(|(d, _)| d.year() == config.year())
+                .count()
+        )
+        .with_context(|| format!("Writing number of events {filename}"))?;
+        drop(metadata);
+        drop(filename); // avoid reusing this variable
+
         // 1. Construct price reference from LX CSV
         let mut lx_price_ref = HashMap::new();
         for line in config.lx_csv() {
             let data = crate::ledgerx::csv::CsvLine::from_str(line).map_err(anyhow::Error::msg)?;
             for (time, price) in data.price_references() {
-                info!(
-                    "At {} inferred price {} (reference price {})",
+                debug!(
+                    "At {} using LX-inferred price {} (our price feed gives {})",
                     time,
                     price,
                     price_history.price_at(time)
@@ -552,6 +590,15 @@ impl History {
         let mut tracker = tax::PositionTracker::new();
         for (date, event) in &self.events {
             debug!("Processing event {:?}", event);
+            if date.year() > config.year() {
+                debug!(
+                    "Encountered event with date {}, stopping as our tax year is {}",
+                    date,
+                    config.year()
+                );
+                break;
+            }
+
             match event {
                 // Deposits are not taxable events, but deposits of BTC cause lots to be
                 // created (or at least, become accessible to our tax optimizer)
@@ -737,6 +784,15 @@ impl History {
         }
         tracker.lx_sort_events();
 
+        let lx_filename = format!("{dir_path}/ledgerx-sim.csv");
+        info!(
+            "Creating file {} which should match the LX-provided CSV.",
+            lx_filename
+        );
+        let mut lx_file = fs::File::create(&lx_filename)
+            .with_context(|| format!("Creating file {lx_filename}"))?;
+        writeln!(lx_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.")
+            .with_context(|| format!("Writing CSV header to {lx_filename}"))?;
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.
@@ -745,11 +801,11 @@ impl History {
             }
             //let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
 
-            // FIXME output data to multiple files rather than info logs
             match event.open_close {
                 tax::OpenClose::Open(..) => {}
                 tax::OpenClose::Close(ref close) => {
-                    info!("{}", close.csv_printer(&event.label, false));
+                    writeln!(lx_file, "{}", close.csv_printer(&event.label, false))
+                        .with_context(|| format!("Writing CSV line to {lx_filename}"))?;
                 }
             }
         }

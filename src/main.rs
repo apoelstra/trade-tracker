@@ -32,6 +32,7 @@ pub mod units;
 pub use crate::timemap::TimeMap;
 use crate::units::{Price, Underlying};
 use anyhow::Context;
+use bitcoin::hashes::{sha256, Hash};
 use clap::Clap;
 use log::{info, warn};
 use std::{
@@ -375,11 +376,19 @@ fn main() -> Result<(), anyhow::Error> {
             let bufread = io::BufReader::new(input);
             let config: ledgerx::history::Configuration = serde_json::from_reader(bufread)
                 .with_context(|| format!("parsing config file {config_name}"))?;
+            // Read it again to get its hash
+            let input = fs::File::open(&config_file)
+                .with_context(|| format!("opening config file {config_name}"))?;
+            let mut bufread = io::BufReader::new(input);
+            let mut hash_eng = sha256::Hash::engine();
+            io::copy(&mut bufread, &mut hash_eng)
+                .with_context(|| format!("copying {config_name} into hash engine"))?;
+            drop(bufread);
             // Query LX to get all historic trade data
             let hist = ledgerx::history::History::from_api(&api_key)
                 .context("getting history from LX API")?;
             // ...and output
-            hist.print_tax_csv(&config, &history)
+            hist.print_tax_csv(&config, sha256::Hash::from_engine(hash_eng), &history)
                 .context("printing tax CSV")?;
         }
     }

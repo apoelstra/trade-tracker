@@ -48,7 +48,7 @@ use ledgerx::{datafeed, LedgerX};
 use price::Historic;
 
 /// Don't bother loading historical price data from before this date
-const MIN_PRICE_DATE: &str = "2023";
+const TAX_PRICE_MIN_YEAR: &str = "2021";
 
 /// Mode indicating how much/what data to output from the tax-history command
 pub enum TaxHistoryMode {
@@ -116,8 +116,8 @@ enum Command {
     History {
         #[clap(name = "token")]
         api_key: String,
-        #[clap(name = "year")]
-        year: Option<i32>,
+        #[clap(name = "config_file", parse(from_os_str))]
+        config_file: PathBuf,
     },
     /// Connect to LedgerX API and attempt to recreate its tax CSV file for a given year
     TaxHistory {
@@ -194,11 +194,15 @@ fn main() -> Result<(), anyhow::Error> {
     let history = match command {
         // unused when initializing price data, just pick something
         Command::InitializePriceData { .. } => Ok(Historic::default()),
-        Command::History { year, .. } => {
-            Historic::read_json_from(&data_path, &year.unwrap_or(2020).to_string())
+        // For tax stuff we have to load historic data going back a bit
+        Command::History { .. } | Command::TaxHistory { .. } => {
+            Historic::read_json_from(&data_path, TAX_PRICE_MIN_YEAR)
         }
-        Command::TaxHistory { .. } => Historic::read_json_from(&data_path, "2017"),
-        _ => Historic::read_json_from(&data_path, MIN_PRICE_DATE),
+        // For most everything else we can just use the current year
+        _ => Historic::read_json_from(
+            &data_path,
+            &time::OffsetDateTime::now_utc().year().to_string(),
+        ),
     }
     .context("reading price history")?;
 
@@ -361,12 +365,11 @@ fn main() -> Result<(), anyhow::Error> {
                 } // while let
             } // loop
         }
-        Command::History { api_key, year } => {
-            let hist = ledgerx::history::History::from_api(&api_key)
-                .context("getting history from LX API")?;
-            hist.print_csv(year, &history);
+        Command::History {
+            api_key,
+            config_file,
         }
-        Command::TaxHistory {
+        | Command::TaxHistory {
             api_key,
             config_file,
         } => {
@@ -386,11 +389,18 @@ fn main() -> Result<(), anyhow::Error> {
                 .with_context(|| format!("copying {config_name} into hash engine"))?;
             drop(bufread);
             // Query LX to get all historic trade data
-            let hist = ledgerx::history::History::from_api(&api_key)
-                .context("getting history from LX API")?;
+            let hist = ledgerx::history::History::from_api(
+                &api_key,
+                &config,
+                sha256::Hash::from_engine(hash_eng),
+            )
+            .context("getting history from LX API")?;
             // ...and output
-            hist.print_tax_csv(&config, sha256::Hash::from_engine(hash_eng), &history)
-                .context("printing tax CSV")?;
+            if let Command::History { .. } = command {
+                hist.print_csv(&history);
+            } else {
+                hist.print_tax_csv(&history).context("printing tax CSV")?;
+            }
         }
     }
 

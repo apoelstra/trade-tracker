@@ -217,20 +217,53 @@ enum Event {
     },
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct History {
+    year: i32,
+    lot_db: HashMap<LotId, config::LotInfo>,
+    transaction_db: crate::transaction::Database,
+    lx_price_ref: HashMap<OffsetDateTime, Price>,
+    config_hash: bitcoin::hashes::sha256::Hash,
     events: crate::TimeMap<Event>,
 }
 
 impl History {
     /// Construct a new empty history
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(
+        config: &Configuration,
+        config_hash: bitcoin::hashes::sha256::Hash,
+    ) -> anyhow::Result<Self> {
+        // Extract price reference from LX CSV lines
+        let mut lx_price_ref = HashMap::new();
+        for line in config.lx_csv() {
+            let data = crate::ledgerx::csv::CsvLine::from_str(line).map_err(anyhow::Error::msg)?;
+            for (time, price) in data.price_references() {
+                debug!("At {} using LX-inferred price {}", time, price,);
+                lx_price_ref.insert(time, price);
+            }
+        }
+        // Extract transaction database from list of raw transactions
+        let transaction_db = config
+            .transaction_db()
+            .context("extracting transaction database from config file")?;
+        // Return
+        Ok(History {
+            year: config.year(),
+            lot_db: config.lot_db().clone(),
+            transaction_db,
+            lx_price_ref,
+            config_hash,
+            events: Default::default(),
+        })
     }
 
     /// Construct a new history by calling the LX API
-    pub fn from_api(api_key: &str) -> anyhow::Result<Self> {
-        let mut ret = History::new();
+    pub fn from_api(
+        api_key: &str,
+        config: &Configuration,
+        config_hash: bitcoin::hashes::sha256::Hash,
+    ) -> anyhow::Result<Self> {
+        let mut ret = History::new(config, config_hash)?;
         let mut contracts = HashMap::new();
 
         let mut next_url = Some("https://api.ledgerx.com/trading/positions?limit=200".to_string());
@@ -390,10 +423,10 @@ impl History {
     }
 
     /// Dump the contents of the history in CSV format
-    pub fn print_csv(&self, year: Option<i32>, price_history: &crate::price::Historic) {
+    pub fn print_csv(&self, price_history: &crate::price::Historic) {
         for (date, event) in &self.events {
             // lol we could be smarter about this, e.g. not even fetching old data
-            if year.is_some() && year != Some(date.year()) {
+            if self.year != date.year() {
                 continue;
             }
 
@@ -528,14 +561,9 @@ impl History {
     ///
     /// The expiry timestamps are always UTC 22:00, which is 5PM in the winter but 6PM in the
     /// summer in new york. The assignment timestamps are always UTC 21:00.
-    pub fn print_tax_csv(
-        &self,
-        config: &Configuration,
-        config_hash: bitcoin::hashes::sha256::Hash,
-        price_history: &crate::price::Historic,
-    ) -> anyhow::Result<()> {
+    pub fn print_tax_csv(&self, price_history: &crate::price::Historic) -> anyhow::Result<()> {
         // 0. Attempt to create output directory
-        let now = time::OffsetDateTime::now_utc();
+        let now = OffsetDateTime::now_utc();
         let dir_path = format!("lx_tax_output_{}", now.lazy_format("%F-%H%M"));
         if fs::metadata(&dir_path).is_ok() {
             return Err(anyhow::Error::msg(format!(
@@ -552,46 +580,25 @@ impl History {
             "with metadata about this run.",
         )?;
         writeln!(metadata, "Started on: {now}")?;
-        writeln!(metadata, "Tax year: {}", config.year())?;
-        writeln!(metadata, "Configuration file hash: {}", config_hash)?;
+        writeln!(metadata, "Tax year: {}", self.year)?;
+        writeln!(metadata, "Configuration file hash: {}", self.config_hash)?;
         writeln!(
             metadata,
             "Events in this year: {}",
             self.events
                 .iter()
-                .filter(|(d, _)| d.year() == config.year())
+                .filter(|(d, _)| d.year() == self.year)
                 .count()
         )?;
         drop(metadata);
 
-        // 1. Construct price reference from LX CSV
-        let mut lx_price_ref = HashMap::new();
-        for line in config.lx_csv() {
-            let data = crate::ledgerx::csv::CsvLine::from_str(line).map_err(anyhow::Error::msg)?;
-            for (time, price) in data.price_references() {
-                debug!(
-                    "At {} using LX-inferred price {} (our price feed gives {})",
-                    time,
-                    price,
-                    price_history.price_at(time)
-                );
-                lx_price_ref.insert(time, price);
-            }
-        }
-        // 2. Parse the transaction map as a transaction database
-        let transaction_db = config
-            .transaction_db()
-            .context("extracting transaction database from config file")?;
-        let lot_db = config.lot_db();
-        // 3. Do the deed
         let mut tracker = tax::PositionTracker::new();
         for (date, event) in &self.events {
             debug!("Processing event {:?}", event);
-            if date.year() > config.year() {
+            if date.year() > self.year {
                 debug!(
                     "Encountered event with date {}, stopping as our tax year is {}",
-                    date,
-                    config.year()
+                    date, self.year
                 );
                 break;
             }
@@ -621,7 +628,8 @@ impl History {
                     };
 
                     // Look up transaction based on address. If we can't find one, error out.
-                    let (tx, vout) = transaction_db
+                    let (tx, vout) = self
+                        .transaction_db
                         .find_tx_for_deposit(address, amount_sat)
                         .with_context(|| {
                             format!("no txout matched address/amount {address}/{amount_sat}")
@@ -644,10 +652,10 @@ impl History {
 
                     for op in outpoint_iter {
                         let id = LotId::from_outpoint(op);
-                        let txout = transaction_db.find_txout(op).with_context(|| {
+                        let txout = self.transaction_db.find_txout(op).with_context(|| {
                             format!("config file did not have tx data for {op}")
                         })?;
-                        let lot_data = lot_db.get(&id).with_context(|| {
+                        let lot_data = self.lot_db.get(&id).with_context(|| {
                             format!("config file did not have info for lot {id}")
                         })?;
 
@@ -744,7 +752,7 @@ impl History {
                             let expiry =
                                 opt.expiry.date().with_time(time::time!(22:00)).assume_utc();
 
-                            let btc_price = match lx_price_ref.get(&expiry) {
+                            let btc_price = match self.lx_price_ref.get(&expiry) {
                                 Some(price) => *price,
                                 None => {
                                     // We allow this because otherwise we can't possibly produce
@@ -798,7 +806,7 @@ impl History {
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.
-            if config.year() != event.date.0.year() {
+            if self.year != event.date.0.year() {
                 continue;
             }
             //let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");

@@ -25,6 +25,7 @@ use crate::{
 };
 use anyhow::Context;
 use log::debug;
+use serde::Deserialize;
 use std::{cmp, collections::HashMap, fmt, ops};
 
 /// Strategy used to choose Bitcoin lots
@@ -33,12 +34,14 @@ use std::{cmp, collections::HashMap, fmt, ops};
 /// I'm not sure about this, but it wouldn't make any difference in practice since
 /// all our option positions are closed completely in the same year they are opened.
 /// So better to just be consistent.)
-#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug, Deserialize)]
 pub enum LotSelectionStrategy {
     /// "LedgerX FIFO" which is first-in-first-out except that deposits are sorted
     /// after everything else
+    #[serde(rename = "ledgerx-fifo")]
     LedgerXFifo,
     /// Choose the highest basis first, which minimizes tax impact
+    #[serde(rename = "highest-first")]
     HighestFirst,
 }
 
@@ -46,6 +49,15 @@ impl Default for LotSelectionStrategy {
     /// Default to using LX's strategy
     fn default() -> Self {
         LotSelectionStrategy::LedgerXFifo
+    }
+}
+
+impl fmt::Display for LotSelectionStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            LotSelectionStrategy::LedgerXFifo => f.write_str("ledgerx-fifo"),
+            LotSelectionStrategy::HighestFirst => f.write_str("highest-first"),
+        }
     }
 }
 

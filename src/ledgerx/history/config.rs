@@ -27,10 +27,10 @@
 //!        Be sure to delete the header line from the LX CSV.
 //!
 
-use crate::ledgerx::history::LotId;
+use crate::ledgerx::history::{tax::LotSelectionStrategy, LotId};
 use crate::units::Price;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// The main configuration structure
 ///
@@ -40,7 +40,7 @@ use std::collections::HashMap;
 #[derive(Clone, PartialEq, Eq, Deserialize, Debug)]
 pub struct Configuration {
     /// The tax year under question
-    year: i32,
+    years: BTreeMap<i32, LotSelectionStrategy>,
     /// The LX-provided CSV file, crammed into a JSON string array
     lx_csv: Vec<String>,
     /// Date and bitcoin price data about every UTXO-based lot
@@ -56,9 +56,13 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    /// Accessor for the tax year
-    pub fn year(&self) -> i32 {
-        self.year
+    /// Map of years to what tax strategy is used for that year.
+    ///
+    /// If a year is missing, it means the user did not configure a strategy.
+    /// Without a strategy we cannot do tax reporting for that year or any
+    /// year folliwing it.
+    pub fn years(&self) -> &BTreeMap<i32, LotSelectionStrategy> {
+        &self.years
     }
 
     /// Accessor for the lines of the LX csv file

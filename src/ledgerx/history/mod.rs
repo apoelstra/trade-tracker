@@ -25,7 +25,7 @@ use crate::units::{
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::str::FromStr;
 use time::OffsetDateTime;
@@ -229,7 +229,7 @@ enum Event {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct History {
-    year: i32,
+    years: BTreeMap<i32, tax::LotSelectionStrategy>,
     lot_db: HashMap<LotId, config::LotInfo>,
     transaction_db: crate::transaction::Database,
     lx_price_ref: HashMap<OffsetDateTime, Price>,
@@ -258,7 +258,7 @@ impl History {
             .context("extracting transaction database from config file")?;
         // Return
         Ok(History {
-            year: config.year(),
+            years: config.years().clone(),
             lot_db: config.lot_db().clone(),
             transaction_db,
             lx_price_ref,
@@ -503,10 +503,6 @@ impl History {
                 Some(opt) => opt,
                 None => continue,
             };
-            // Positions that expired after this year can be ignored
-            if option.expiry.year() > self.year {
-                continue;
-            }
 
             // We do a bit of goofy sign-mangling here; the idea is that the assigned
             // and expipred "sizes" represent the net change in number of contracts
@@ -610,8 +606,8 @@ impl History {
     /// Dump the contents of the history in CSV format
     pub fn print_csv(&self, price_history: &crate::price::Historic) {
         for (date, event) in &self.events {
-            // lol we could be smarter about this, e.g. not even fetching old data
-            if self.year != date.year() {
+            // Skip years that we haven't set a tax strategy for
+            if !self.years.contains_key(&date.year()) {
                 continue;
             }
 
@@ -728,29 +724,21 @@ impl History {
         // Write out metadata, in part to make sure we can create files before
         // we do too much heavy lifting.
         let mut metadata = create_text_file(
-            format!("{dir_path}/metadata"),
+            format!("{dir_path}/metadata.txt"),
             "with metadata about this run.",
         )?;
         writeln!(metadata, "Started on: {now}")?;
-        writeln!(metadata, "Tax year: {}", self.year)?;
         writeln!(metadata, "Configuration file hash: {}", self.config_hash)?;
-        writeln!(
-            metadata,
-            "Events in this year: {}",
-            self.events
-                .iter()
-                .filter(|(d, _)| d.year() == self.year)
-                .count()
-        )?;
-        drop(metadata);
 
         let mut tracker = tax::PositionTracker::new();
         for (date, event) in &self.events {
             debug!("Processing event {:?}", event);
-            if date.year() > self.year {
-                debug!(
-                    "Encountered event with date {}, stopping as our tax year is {}",
-                    date, self.year
+            if let Some(strat) = self.years.get(&date.year()) {
+                tracker.set_bitcoin_lot_strategy(*strat);
+            } else {
+                warn!(
+                    "Have no tax strategy for year {}. Stopping here.",
+                    date.year()
                 );
                 break;
             }
@@ -847,40 +835,74 @@ impl History {
         }
         tracker.lx_sort_events();
 
-        let mut lx_file = create_text_file(
-            format!("{dir_path}/ledgerx-sim.csv"),
-            "which should match the LX-provided CSV.",
-        )?;
-        let mut lx_alt_file = create_text_file(
-            format!("{dir_path}/ledgerx-sim-annotated.csv"),
-            "which should match the LX-provided CSV, with one extra column for lot IDs",
-        )?;
-        let mut lx_full_file = create_text_file(
-            format!("{dir_path}/ledgerx-full.csv"),
-            "which should provide a full tax accounting, matching LX's totals",
-        )?;
-        writeln!(lx_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.")?;
-        writeln!(lx_alt_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.,Lot ID")?;
-        writeln!(lx_full_file, "Event,Date,Quantity,Asset,Price,Lot ID,Old Lot Size,Old Lot Basis,New Lot Size,New Lot Basis,Basis,Proceeds,Gain/Loss,Gain/Loss Type")?;
-        for event in tracker.events() {
-            // Unlike with the Excel reports, we actually need to generate data for every
-            // year, and we only dismiss non-current data now, when we're logging.
-            if self.year != event.date.year() {
-                continue;
+        for (year, strat) in &self.years {
+            writeln!(metadata)?;
+            writeln!(metadata, "Year: {year}")?;
+            writeln!(metadata, "    Lot selection strategy: {strat}")?;
+            let mut n_events = 0;
+            let mut total_1256 = Price::ZERO;
+            let mut total_st = Price::ZERO;
+            let mut total_lt = Price::ZERO;
+            for ev in tracker.events().iter().filter(|ev| ev.date.year() == *year) {
+                n_events += 1;
+                if let tax::OpenClose::Close(ref close) = ev.open_close {
+                    match close.gain_loss_type() {
+                        tax::GainType::Option1256 => total_1256 += close.gain_loss(),
+                        tax::GainType::ShortTerm => total_st += close.gain_loss(),
+                        tax::GainType::LongTerm => total_lt += close.gain_loss(),
+                    }
+                }
             }
-            //let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
+            writeln!(metadata, "    Number of events: {n_events}")?;
+            writeln!(metadata, "    Total LT gain/loss: {total_lt}")?;
+            writeln!(metadata, "    Total ST gain/loss: {total_st}")?;
+            writeln!(metadata, "    Total 1256 gain/loss: {total_1256}")?;
+        }
+
+        let mut reports_lx = HashMap::new();
+        let mut reports_full = HashMap::new();
+        for event in tracker.events() {
+            let year = event.date.year();
+            // Open LX file for this year
+            if !reports_lx.contains_key(&year) {
+                let mut new_lx = create_text_file(
+                    format!("{dir_path}/{year}-ledgerx.csv"),
+                    "which should match the LX-provided CSV.",
+                )?;
+                writeln!(
+                    new_lx,
+                    "Reference,Description,Date Acquired,Date Sold or Disposed of,\
+                     Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,\
+                     Note that column C and column F reflect * where cost basis could not be obtained."
+                )?;
+                reports_lx.insert(year, new_lx);
+            }
+            let report_lx = reports_lx.get_mut(&year).unwrap();
+            // Open full report file for this year
+            if !reports_full.contains_key(&year) {
+                let mut new_full = create_text_file(
+                    format!("{dir_path}/{year}-full.csv"),
+                    "which should provide a full tax accounting, matching LX's totals",
+                )?;
+                writeln!(
+                    new_full,
+                    "Event,Date,Quantity,Asset,Price,Lot ID,Old Lot Size,Old Lot Basis,\
+                     New Lot Size,New Lot Basis,Basis,Proceeds,Gain/Loss,Gain/Loss Type"
+                )?;
+                reports_full.insert(year, new_full);
+            }
+            let report_full = reports_full.get_mut(&year).unwrap();
 
             match event.open_close {
                 tax::OpenClose::Open(ref lot) => {
-                    writeln!(lx_full_file, "{}", lot.csv_printer())?;
+                    writeln!(report_full, "{}", lot.csv_printer())?;
                 }
                 tax::OpenClose::Close(ref close) => {
                     let lx = close.csv_printer(event.asset, lot::PrintMode::LedgerX);
-                    let lx_alt = close.csv_printer(event.asset, lot::PrintMode::LedgerXAnnotated);
-                    let lx_full = close.csv_printer(event.asset, lot::PrintMode::Full);
-                    writeln!(lx_file, "{lx}")?;
-                    writeln!(lx_alt_file, "{lx_alt}")?;
-                    writeln!(lx_full_file, "{lx_full}")?;
+                    //let lx_alt = close.csv_printer(event.asset, lot::PrintMode::LedgerXAnnotated);
+                    let full = close.csv_printer(event.asset, lot::PrintMode::Full);
+                    writeln!(report_lx, "{lx}")?;
+                    writeln!(report_full, "{full}")?;
                 }
             }
         }

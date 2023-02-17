@@ -18,7 +18,7 @@
 //!
 
 use crate::csv;
-use crate::ledgerx::history::tax::{Close, CloseType, GainType, TaxDate};
+use crate::ledgerx::history::tax::{Close, CloseType, GainType, OpenType, TaxDate};
 use crate::units::{Price, Quantity, TaxAsset};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -83,6 +83,7 @@ pub struct Lot {
     quantity: Quantity,
     price: Price,
     date: TaxDate,
+    open_ty: OpenType,
     sort_date: time::OffsetDateTime,
 }
 
@@ -90,8 +91,8 @@ impl fmt::Display for Lot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{}: {} {} at {}; date {}",
-            self.id, self.quantity, self.asset, self.price, self.date.0,
+            "{} ({}): {} {} at {}; date {}",
+            self.id, self.open_ty, self.quantity, self.asset, self.price, self.date.0,
         )
     }
 }
@@ -102,7 +103,13 @@ impl Lot {
     /// Will assign the lot a fresh ID. Don't use this for deposits!
     /// Instead use [Lot::from_deposit] which will assign an ID based
     /// on the outpoint of the deposit.
-    pub fn new(asset: TaxAsset, quantity: Quantity, price: Price, date: TaxDate) -> Lot {
+    pub fn new(
+        asset: TaxAsset,
+        quantity: Quantity,
+        price: Price,
+        date: TaxDate,
+        open_ty: OpenType,
+    ) -> Lot {
         Lot {
             id: match asset {
                 TaxAsset::Bitcoin => Id::next_btc(),
@@ -115,6 +122,7 @@ impl Lot {
             quantity,
             price,
             date,
+            open_ty,
             sort_date: date.0,
         }
     }
@@ -132,6 +140,7 @@ impl Lot {
             quantity: quantity.into(),
             price,
             date: TaxDate(date),
+            open_ty: OpenType::Deposit,
             sort_date: date + time::Duration::days(365 * 100),
         }
     }
@@ -199,6 +208,8 @@ impl Lot {
             GainType::LongTerm
         };
 
+        let open_original_quantity = self.quantity; // record for tax records
+
         let partial;
         let close_quantity;
         if self.quantity.abs() > quantity.abs() {
@@ -217,6 +228,7 @@ impl Lot {
                 ty,
                 gain_ty,
                 open_id: self.id.clone(),
+                open_original_quantity,
                 open_price: self.price,
                 open_date: self.date,
                 close_price: price,
@@ -226,5 +238,32 @@ impl Lot {
             },
             if partial { Some(self) } else { None },
         ))
+    }
+
+    pub fn csv_printer<'lot>(&'lot self) -> csv::CsvPrinter<LotCsv<'lot>> {
+        csv::CsvPrinter(LotCsv { lot: self })
+    }
+}
+
+pub struct LotCsv<'lot> {
+    lot: &'lot Lot,
+}
+
+impl<'lot> csv::PrintCsv for LotCsv<'lot> {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let csv = (
+            self.lot.open_ty,
+            self.lot.quantity,
+            self.lot.asset,
+            self.lot.price,
+            &self.lot.id,
+            "", // old lot size
+            "", // old lot basis
+            self.lot.quantity,
+            self.lot.price * self.lot.quantity,
+            "", // gain/loss
+            "", // gain/loss type
+        );
+        csv.print(f)
     }
 }

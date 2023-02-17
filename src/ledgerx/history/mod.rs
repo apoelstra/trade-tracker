@@ -503,6 +503,10 @@ impl History {
                 Some(opt) => opt,
                 None => continue,
             };
+            // Positions that expired after this year can be ignored
+            if option.expiry.year() > self.year {
+                continue;
+            }
 
             // We do a bit of goofy sign-mangling here; the idea is that the assigned
             // and expipred "sizes" represent the net change in number of contracts
@@ -571,12 +575,12 @@ impl History {
                     None => {
                         warn!(
                             "Do not have a LX price reference for {price_ref_date}. \
-                             An option assignment occured at this date. For tax purposes \
+                             An option assignment occured at this date ({} of {}). For tax purposes \
                              the consequential trade needs to happen at market prices. \
                              We do not have this, so we are using the strike price of \
                              {} which is NOT CORRECT and implies a BETTER TAX OUTCOME \
                              for you than the IRS will perceive.",
-                            option.strike,
+                            n_assigned, option, option.strike,
                         );
                         option.strike
                     }
@@ -851,8 +855,13 @@ impl History {
             format!("{dir_path}/ledgerx-sim-annotated.csv"),
             "which should match the LX-provided CSV, with one extra column for lot IDs",
         )?;
+        let mut lx_full_file = create_text_file(
+            format!("{dir_path}/ledgerx-full.csv"),
+            "which should provide a full tax accounting, matching LX's totals",
+        )?;
         writeln!(lx_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.")?;
         writeln!(lx_alt_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.,Lot ID")?;
+        writeln!(lx_full_file, "Event,Quantity,Asset,Price,Lot ID,Old Lot Size,Old Lot Basis,New Lot Size,New Lot Basis,Gain/Loss,Gain/Loss Type")?;
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.
@@ -862,12 +871,16 @@ impl History {
             //let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
 
             match event.open_close {
-                tax::OpenClose::Open(..) => {}
+                tax::OpenClose::Open(ref lot) => {
+                    writeln!(lx_full_file, "{}", lot.csv_printer())?;
+                }
                 tax::OpenClose::Close(ref close) => {
                     let lx = close.csv_printer(event.asset, tax::PrintMode::LedgerX);
                     let lx_alt = close.csv_printer(event.asset, tax::PrintMode::LedgerXAnnotated);
+                    let lx_full = close.csv_printer(event.asset, tax::PrintMode::Full);
                     writeln!(lx_file, "{}", lx)?;
                     writeln!(lx_alt_file, "{}", lx_alt)?;
+                    writeln!(lx_full_file, "{}", lx_full)?;
                 }
             }
         }

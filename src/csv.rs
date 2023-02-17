@@ -120,6 +120,14 @@ impl PrintCsv for crate::units::Quantity {
     }
 }
 
+impl PrintCsv for crate::units::TaxAsset {
+    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("\"")?;
+        fmt::Display::fmt(self, f)?;
+        f.write_str("\"")
+    }
+}
+
 macro_rules! impl_display {
     ($ty:ty) => {
         impl PrintCsv for $ty {

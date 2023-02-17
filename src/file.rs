@@ -55,3 +55,15 @@ pub fn create_text_file(name: String, reason: &str) -> anyhow::Result<TextFile> 
         inner: io::BufWriter::new(file),
     })
 }
+
+/// Helper function to copy a file with reasonable safety checks and logging
+pub fn copy_file(source: &str, dest: &str) -> anyhow::Result<()> {
+    info!("Copying {} to {}", source, dest);
+    if fs::metadata(dest).is_ok() {
+        return Err(anyhow::Error::msg(format!(
+            "File {dest} already exists. Refusing to overwrite."
+        )));
+    }
+    fs::copy(source, dest).with_context(|| format!("Copying {source} to {dest}"))?;
+    Ok(())
+}

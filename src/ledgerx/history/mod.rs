@@ -26,7 +26,6 @@ use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
@@ -709,25 +708,22 @@ impl History {
     ///
     /// The expiry timestamps are always UTC 22:00, which is 5PM in the winter but 6PM in the
     /// summer in new york. The assignment timestamps are always UTC 21:00.
-    pub fn print_tax_csv(&self, price_history: &crate::price::Historic) -> anyhow::Result<()> {
-        // 0. Attempt to create output directory
-        let now = OffsetDateTime::now_utc();
-        let dir_path = format!("lx_tax_output_{}", now.lazy_format("%F-%H%M"));
-        if fs::metadata(&dir_path).is_ok() {
-            return Err(anyhow::Error::msg(format!(
-                "Output directory {dir_path} exists. Refusing to run."
-            )));
-        }
-        fs::create_dir(&dir_path)
-            .with_context(|| format!("Creating directory {dir_path} to put tax output into"))?;
-        info!("Creating directory {} to hold output.", dir_path);
+    pub fn print_tax_csv(
+        &self,
+        dir_path: &str,
+        price_history: &crate::price::Historic,
+    ) -> anyhow::Result<()> {
         // Write out metadata, in part to make sure we can create files before
         // we do too much heavy lifting.
         let mut metadata = create_text_file(
             format!("{dir_path}/metadata.txt"),
             "with metadata about this run.",
         )?;
-        writeln!(metadata, "Started on: {now}")?;
+        writeln!(
+            metadata,
+            "Started on: {}",
+            OffsetDateTime::now_utc().lazy_format("%F %H:%M:%S UTC")
+        )?;
         writeln!(metadata, "Configuration file hash: {}", self.config_hash)?;
 
         let mut tracker = tax::PositionTracker::new();

@@ -137,8 +137,11 @@ fn newline() {
     println!();
 }
 
-fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<(), anyhow::Error> {
-    match command {
+fn initialize_logging(
+    now: time::OffsetDateTime,
+    command: &Command,
+) -> Result<Option<logger::LogFilenames>, anyhow::Error> {
+    let ret = match command {
         // Commands that interact with the LX API should have full logging, including
         // debug logs and sending all json replies to log files.
         Command::Connect { .. } | Command::History { .. } | Command::TaxHistory { .. } => {
@@ -165,6 +168,7 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
                     filenames.datafeed_log, filenames.debug_log, filenames.http_get_log,
                 )
             })?;
+            Some(filenames)
         }
         // "One-off" commands just dump everything to stdout
         Command::InitializePriceData { .. }
@@ -173,13 +177,14 @@ fn initialize_logging(now: time::OffsetDateTime, command: &Command) -> Result<()
         | Command::Price { .. }
         | Command::Iv { .. } => {
             logger::Logger::init_stdout_only().context("initializing stdout logger")?;
+            None
         }
-    }
+    };
 
     info!("Trade tracker version {}", env!("CARGO_PKG_VERSION"));
     info!("Price data pulled from http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD -- call `update-price-data` to update");
     newline();
-    Ok(())
+    Ok(ret)
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -210,7 +215,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     // Turn on logging
     let now = time::OffsetDateTime::now_utc();
-    initialize_logging(now, &command).context("initializing logging")?;
+    let log_filenames = initialize_logging(now, &command).context("initializing logging")?;
 
     // Go
     match Command::parse() {
@@ -373,6 +378,9 @@ fn main() -> Result<(), anyhow::Error> {
             api_key,
             config_file,
         } => {
+            // Assert we have the log filenames before doing anything complex
+            // If this unwrap fails it's a bug.
+            let log_filenames = log_filenames.unwrap();
             // Parse config file
             let config_name = config_file.to_string_lossy();
             let input = fs::File::open(&config_file)
@@ -399,7 +407,24 @@ fn main() -> Result<(), anyhow::Error> {
             if let Command::History { .. } = command {
                 hist.print_csv(&history);
             } else {
-                hist.print_tax_csv(&history).context("printing tax CSV")?;
+                let dir_path = format!("lx_tax_output_{}", now.lazy_format("%F-%H%M"));
+                if fs::metadata(&dir_path).is_ok() {
+                    return Err(anyhow::Error::msg(format!(
+                        "Output directory {dir_path} exists. Refusing to run."
+                    )));
+                }
+                fs::create_dir(&dir_path).with_context(|| {
+                    format!("Creating directory {dir_path} to put tax output into")
+                })?;
+                info!("Creating directory {} to hold output.", dir_path);
+                file::copy_file(&config_name, &format!("{dir_path}/configuration.json"))?;
+                hist.print_tax_csv(&dir_path, &history)
+                    .context("printing tax CSV")?;
+                file::copy_file(&log_filenames.debug_log, &format!("{dir_path}/debug.log"))?;
+                file::copy_file(
+                    &log_filenames.http_get_log,
+                    &format!("{dir_path}/http_get.log"),
+                )?;
             }
         }
     }

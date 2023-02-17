@@ -344,6 +344,11 @@ impl fmt::Display for Close {
 }
 
 impl Close {
+    /// Type of the close (sell, buy, expiry, assignment)
+    pub fn ty(&self) -> CloseType {
+        self.ty
+    }
+
     /// The size of the lot prior to this close
     pub fn old_lot_size(&self) -> Quantity {
         self.open_original_quantity

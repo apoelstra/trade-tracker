@@ -129,16 +129,14 @@ impl csv::PrintCsv for GainType {
 #[derive(Clone, Debug)]
 pub struct Position {
     asset: TaxAsset,
-    strat: LotSelectionStrategy,
     queue: crate::TimeMap<Lot>,
 }
 
 impl Position {
     /// Creates a new empty position
-    pub fn new(asset: TaxAsset, strat: LotSelectionStrategy) -> Self {
+    pub fn new(asset: TaxAsset) -> Self {
         Position {
             asset,
-            strat,
             queue: Default::default(),
         }
     }
@@ -176,6 +174,7 @@ impl Position {
         date: TaxDate,
         open_ty: OpenType,
         close_ty: CloseType,
+        lot_selection_strat: LotSelectionStrategy,
     ) -> anyhow::Result<(Vec<Close>, Option<Lot>)> {
         if self.has_same_direction(quantity) {
             let new_lot = Lot::new(self.asset, quantity, price, date, open_ty);
@@ -183,7 +182,7 @@ impl Position {
             Ok((vec![], Some(new_lot)))
         } else {
             let mut closes = vec![];
-            while let Some((existing_date, existing_lot)) = match self.strat {
+            while let Some((existing_date, existing_lot)) = match lot_selection_strat {
                 LotSelectionStrategy::HighestFirst => self.queue.pop_max(|lot| lot.price()),
                 LotSelectionStrategy::LedgerXFifo => self.queue.pop_first(),
             } {
@@ -257,6 +256,7 @@ impl PositionTracker {
     /// through the tax events, i.e. calling [Self::events], then all the
     /// lot decisions have been made and it's too late.
     pub fn set_bitcoin_lot_strategy(&mut self, strat: LotSelectionStrategy) {
+        debug!("Setting bitcoin lot selection strategy to {}", strat);
         self.bitcoin_strat = strat;
     }
 
@@ -301,7 +301,7 @@ impl PositionTracker {
         let pos = self
             .positions
             .entry(lot.asset())
-            .or_insert(Position::new(TaxAsset::Bitcoin, self.bitcoin_strat));
+            .or_insert(Position::new(TaxAsset::Bitcoin));
         assert!(
             pos.has_same_direction(lot.quantity()),
             "Tried to directly insert {} but had an opposing position open",
@@ -349,6 +349,7 @@ impl PositionTracker {
                 expiry.into(),
                 OpenType::Unknown,
                 CloseType::Expiry,
+                LotSelectionStrategy::LedgerXFifo, // expiries are always options so always FIFO
             )
             .with_context(|| format!("Expiring {size} units of {asset}"))?;
         // Return an error if it wasn't a clean close
@@ -405,6 +406,7 @@ impl PositionTracker {
                 expiry.into(),
                 OpenType::Unknown,
                 CloseType::Exercise,
+                LotSelectionStrategy::LedgerXFifo, // expiries are always options so always FIFO
             )
             .with_context(|| format!("Assigned on {size} units of {asset}"))?;
         // Return an error if it wasn't a clean close
@@ -474,12 +476,9 @@ impl PositionTracker {
         } else {
             LotSelectionStrategy::LedgerXFifo
         };
-        let pos = self
-            .positions
-            .entry(asset)
-            .or_insert(Position::new(asset, strat));
+        let pos = self.positions.entry(asset).or_insert(Position::new(asset));
         let (closes, open) = pos
-            .add(quantity, price, date, open_ty, close_ty)
+            .add(quantity, price, date, open_ty, close_ty, strat)
             .with_context(|| format!("adding {quantity} units of {asset} at {price} on {date}",))?;
 
         Ok(self.push_events("push_trade", closes, open))
@@ -487,9 +486,18 @@ impl PositionTracker {
 
     /// Sort the tax events to match LX's sort order
     ///
-    /// We sort entries by their occurence -- which matches LX, but when things expire,
-    /// many expiries may happen simultaneously. In this case we sort by the date of
-    /// the expired position being *opened*
+    /// Events tend to happen at the same time -- at 21:00 or 22:00 typically. LedgerX sorts
+    /// these events by lot open time. This is what you might expect to happen, given that
+    /// they are sorting lots FIFO, so naturally the oldest lots will come first....except
+    /// that this sorting seems to override the "natural" sorting by asset you'd expect at
+    /// expiry time.
+    ///
+    /// In other words, if contracts A and B both expire at the same time, rather than
+    /// having all the open A lots go away in order, followed by all the B ones, instead
+    /// you see them interspersed.
+    ///
+    /// I don't know how they managed to implement this, but the only way I can think of
+    /// is to sort things after the fact.
     pub fn lx_sort_events(&mut self) {
         // This is a stable sort, so to avoid reordering things we just return "equal"
         self.events.sort_by(|x, y| {
@@ -498,7 +506,11 @@ impl PositionTracker {
                 return cmp::Ordering::Equal;
             }
             if let (C(cx), C(cy)) = (&x.open_close, &y.open_close) {
-                cx.open_date().cmp(&cy.open_date())
+                if cx.ty() == CloseType::Expiry && cy.ty() == CloseType::Expiry {
+                    cx.open_date().cmp(&cy.open_date())
+                } else {
+                    cmp::Ordering::Equal
+                }
             } else {
                 cmp::Ordering::Equal
             }

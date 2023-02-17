@@ -767,7 +767,7 @@ impl History {
                     debug!("[deposit] \"BTC\" {} outpoint {}", amount, outpoint);
                     let lot =
                         lot::Lot::from_deposit(*outpoint, lot_info.price, *amount, lot_info.date);
-                    tracker.push_lot(lot);
+                    tracker.push_lot(date.into(), lot);
                 }
                 // Withdrawals of any kind are not taxable events.
                 //
@@ -861,7 +861,7 @@ impl History {
         )?;
         writeln!(lx_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.")?;
         writeln!(lx_alt_file, "Reference,Description,Date Acquired,Date Sold or Disposed of,Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,Note that column C and column F reflect * where cost basis could not be obtained.,Lot ID")?;
-        writeln!(lx_full_file, "Event,Quantity,Asset,Price,Lot ID,Old Lot Size,Old Lot Basis,New Lot Size,New Lot Basis,Basis,Proceeds,Gain/Loss,Gain/Loss Type")?;
+        writeln!(lx_full_file, "Event,Date,Quantity,Asset,Price,Lot ID,Old Lot Size,Old Lot Basis,New Lot Size,New Lot Basis,Basis,Proceeds,Gain/Loss,Gain/Loss Type")?;
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.

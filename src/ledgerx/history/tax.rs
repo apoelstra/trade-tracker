@@ -241,7 +241,7 @@ impl PositionTracker {
     ///
     /// Panics if there is already an open position in the opposite direction
     /// of this lot.
-    pub fn push_lot(&mut self, lot: Lot) {
+    pub fn push_lot(&mut self, event_date: TaxDate, lot: Lot) {
         debug!(
             "[position-tracker] direct push of lot {} (sort date {})",
             lot,
@@ -258,6 +258,12 @@ impl PositionTracker {
             "Tried to directly insert {} but had an opposing position open",
             lot,
         );
+        // Record the deposit as a tax event and store the lot
+        self.events.push(Event {
+            date: event_date,
+            asset: lot.asset(),
+            open_close: OpenClose::Open(lot.clone()),
+        });
         pos.queue.insert(lot.sort_date(), lot);
     }
 

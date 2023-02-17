@@ -248,6 +248,7 @@ impl<'lot> csv::PrintCsv for LotCsv<'lot> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let csv = (
             self.lot.open_ty,
+            self.lot.date,
             self.lot.quantity,
             self.lot.asset,
             self.lot.price,
@@ -508,6 +509,7 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
             PrintMode::Full => {
                 let csv = (
                     self.close.ty,
+                    self.close.close_date,
                     self.close.quantity,
                     self.asset,
                     self.close.close_price,

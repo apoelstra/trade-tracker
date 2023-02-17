@@ -20,18 +20,42 @@
 
 use crate::{
     csv,
-    ledgerx::history::lot::Lot,
-    ledgerx::history::LotId,
+    ledgerx::history::lot::{Close, CloseType, Lot, OpenType},
     units::{Price, Quantity, TaxAsset, Underlying},
 };
 use anyhow::Context;
 use log::debug;
-use rust_decimal::Decimal;
-use std::{cmp, collections::HashMap, fmt, mem};
+use std::{cmp, collections::HashMap, fmt, ops};
 
 /// Wrapper around a date that will output time to the nearest second in 3339 format
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct TaxDate(pub time::OffsetDateTime);
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug)]
+pub struct TaxDate(time::OffsetDateTime);
+
+impl TaxDate {
+    /// Accessor for the internal timestamp
+    pub fn bare_time(&self) -> time::OffsetDateTime {
+        self.0
+    }
+
+    /// Year of this tax date
+    pub fn year(&self) -> i32 {
+        self.0.year()
+    }
+}
+
+impl ops::Sub for TaxDate {
+    type Output = time::Duration;
+    fn sub(self, other: TaxDate) -> Self::Output {
+        self.0 - other.0
+    }
+}
+
+impl fmt::Display for TaxDate {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        csv::PrintCsv::print(self, f)
+    }
+}
+
 impl csv::PrintCsv for TaxDate {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut date_utc = self.0.to_offset(time::UtcOffset::UTC);
@@ -64,212 +88,6 @@ impl csv::PrintCsv for GainType {
             GainType::LongTerm => f.write_str("Long-term"),
             GainType::Option1256 => f.write_str("-1256-"),
         }
-    }
-}
-
-/// The nature of a taxable "open position" event
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum OpenType {
-    BuyToOpen,
-    SellToOpen,
-    Deposit,
-    /// Only used for expiries and assignments which are events
-    /// that can't produce new lots, but our functions require
-    /// an `OpenType` nonetheless.
-    Unknown,
-}
-impl fmt::Display for OpenType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        csv::PrintCsv::print(self, f)
-    }
-}
-impl csv::PrintCsv for OpenType {
-    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            OpenType::BuyToOpen => f.write_str("Buy To Open"),
-            OpenType::SellToOpen => f.write_str("Sell To Open"),
-            OpenType::Deposit => f.write_str("Deposit"),
-            OpenType::Unknown => f.write_str("UNKNOWN THIS IS A BUG"),
-        }
-    }
-}
-
-/// The nature of a taxable "close position" event
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum CloseType {
-    BuyBack,
-    Sell,
-    Expiry,
-    Exercise,
-    TxFee,
-}
-impl fmt::Display for CloseType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        csv::PrintCsv::print(self, f)
-    }
-}
-impl csv::PrintCsv for CloseType {
-    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CloseType::BuyBack => f.write_str("Buy Back"),
-            CloseType::Sell => f.write_str("Sell"),
-            CloseType::Expiry => f.write_str("Expired"),
-            CloseType::Exercise => f.write_str("Exercised"),
-            CloseType::TxFee => f.write_str("Transaction Fee"),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Close {
-    pub ty: CloseType,
-    pub gain_ty: GainType,
-    pub open_id: LotId,
-    pub open_original_quantity: Quantity,
-    pub open_price: Price,
-    pub open_date: TaxDate,
-    pub close_price: Price,
-    pub close_date: TaxDate,
-    pub asset: TaxAsset,
-    pub quantity: Quantity,
-}
-
-impl fmt::Display for Close {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{} {{ {:?}, date: {}, asset: {}, price: {}, qty: {} }}",
-            self.open_id,
-            self.ty,
-            self.close_date.0.lazy_format("%FT%H:%M:%S"),
-            self.asset,
-            self.close_price,
-            self.quantity,
-        )
-    }
-}
-
-/// Output style
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum PrintMode {
-    /// Try to exactly match the LX output, so you can use 'diff' to confirm
-    /// that we're interpreting the same data in the same way
-    LedgerX,
-    /// LedgerX format, but annotated with lot IDs.
-    ///
-    /// The idea here is that we can output LX's view with this format, easily
-    /// check that it matches their CSV output (by importing into excel, deleting
-    /// a column, and diffing), and then see wtf they're thinking.
-    ///
-    /// Then we can output our own view in this format, and by diffing we can see
-    /// that the only changes were due to changes in choice of BTC lots.
-    LedgerXAnnotated,
-    /// A sane format that we could provide as evidence for our history.
-    ///
-    /// Hard to diff this against any of the above formats but at least it will
-    /// end up at the same total number. Will also show where the lots come from,
-    /// data which is conspicuously missing from the other formats.
-    Full,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct CloseCsv<'close> {
-    asset: TaxAsset,
-    close: &'close Close,
-    mode: PrintMode,
-}
-
-impl<'close> csv::PrintCsv for CloseCsv<'close> {
-    fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.mode {
-            PrintMode::LedgerX | PrintMode::LedgerXAnnotated => {
-                let mut proceeds = self.close.close_price * self.close.quantity;
-                let mut basis = self.close.open_price * self.close.quantity;
-
-                let mut close_date = self.close.close_date;
-                let mut open_date = self.close.open_date;
-                if !self.close.quantity.is_positive() {
-                    // wtf
-                    mem::swap(&mut close_date, &mut open_date);
-                    mem::swap(&mut basis, &mut proceeds);
-                }
-                proceeds = proceeds.abs();
-                basis = basis.abs();
-
-                let description = match self.close.quantity {
-                    Quantity::Bitcoin(btc) => {
-                        let real_amount = Decimal::new(btc.to_sat(), 8);
-                        let round_amount = real_amount.round_dp(2);
-                        // If we can, reduce to 2 decimal points. This will be the common case since LX
-                        // will only let us trade in 1/100th of a bitcoin, and will let us better match
-                        // their output.
-                        if real_amount == round_amount {
-                            format!("{}, {}", round_amount.abs(), self.asset)
-                        } else {
-                            format!("{}, {}", real_amount.abs(), self.asset)
-                        }
-                    }
-                    Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.asset),
-                    Quantity::Cents(_) => {
-                        panic!("tried to write out a sale of dollars as a tax event")
-                    }
-                    Quantity::Zero => "0".into(), // maybe we should just panic here
-                };
-
-                (
-                    self.close.ty,
-                    description,
-                    close_date,
-                    open_date,
-                    basis,
-                    proceeds,
-                    basis - proceeds,
-                    self.close.gain_ty,
-                    "",
-                    "",
-                    "",
-                )
-                    .print(f)?;
-
-                if self.mode == PrintMode::LedgerXAnnotated {
-                    f.write_str(",")?;
-                    self.close.open_id.print(f)?;
-                }
-            }
-            PrintMode::Full => {
-                let old_basis = self.close.open_price * self.close.open_original_quantity;
-                let new_basis = self.close.open_price
-                    * (self.close.open_original_quantity + self.close.quantity);
-                let basis_delta = new_basis - old_basis;
-                let proceeds = self.close.close_price * self.close.quantity;
-                let csv = (
-                    self.close.ty,
-                    self.close.quantity,
-                    self.asset,
-                    self.close.close_price,
-                    &self.close.open_id,
-                    self.close.open_original_quantity,
-                    old_basis,
-                    self.close.open_original_quantity + self.close.quantity,
-                    new_basis,
-                    basis_delta - proceeds,
-                    self.close.gain_ty,
-                );
-                csv.print(f)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Close {
-    /// Constructs a CSV outputter for this close
-    pub fn csv_printer(&self, asset: TaxAsset, mode: PrintMode) -> csv::CsvPrinter<CloseCsv> {
-        csv::CsvPrinter(CloseCsv {
-            asset,
-            close: self,
-            mode,
-        })
     }
 }
 
@@ -336,8 +154,8 @@ impl Position {
                     .close(quantity, price, date, close_ty)
                     .with_context(|| {
                         format!(
-                            "Closing {} lot, qty {quantity} price {price} date {}",
-                            self.asset, date.0
+                            "Closing {} lot, qty {quantity} price {price} date {date}",
+                            self.asset,
                         )
                     })?;
                 closes.push(close);
@@ -402,8 +220,8 @@ impl PositionTracker {
         for close in closes {
             debug!("{}: close {}", log_str, close);
             self.events.push(Event {
-                date: close.close_date,
-                asset: close.asset,
+                date: close.close_date(),
+                asset: close.asset(),
                 open_close: OpenClose::Close(close),
             });
         }
@@ -599,12 +417,7 @@ impl PositionTracker {
         let pos = self.positions.entry(asset).or_insert(Position::new(asset));
         let (closes, open) = pos
             .add(quantity, price, date, open_ty, close_ty)
-            .with_context(|| {
-                format!(
-                    "adding {quantity} units of {asset} at {price} on {}",
-                    date.0
-                )
-            })?;
+            .with_context(|| format!("adding {quantity} units of {asset} at {price} on {date}",))?;
 
         Ok(self.push_events("push_trade", closes, open))
     }
@@ -622,7 +435,7 @@ impl PositionTracker {
                 return cmp::Ordering::Equal;
             }
             if let (C(cx), C(cy)) = (&x.open_close, &y.open_close) {
-                cx.open_date.0.cmp(&cy.open_date.0)
+                cx.open_date().cmp(&cy.open_date())
             } else {
                 cmp::Ordering::Equal
             }

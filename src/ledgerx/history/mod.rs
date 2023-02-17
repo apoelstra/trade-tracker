@@ -865,7 +865,7 @@ impl History {
         for event in tracker.events() {
             // Unlike with the Excel reports, we actually need to generate data for every
             // year, and we only dismiss non-current data now, when we're logging.
-            if self.year != event.date.0.year() {
+            if self.year != event.date.year() {
                 continue;
             }
             //let date = event.date.0.lazy_format("%F %H:%M:%S.%NZ");
@@ -875,9 +875,9 @@ impl History {
                     writeln!(lx_full_file, "{}", lot.csv_printer())?;
                 }
                 tax::OpenClose::Close(ref close) => {
-                    let lx = close.csv_printer(event.asset, tax::PrintMode::LedgerX);
-                    let lx_alt = close.csv_printer(event.asset, tax::PrintMode::LedgerXAnnotated);
-                    let lx_full = close.csv_printer(event.asset, tax::PrintMode::Full);
+                    let lx = close.csv_printer(event.asset, lot::PrintMode::LedgerX);
+                    let lx_alt = close.csv_printer(event.asset, lot::PrintMode::LedgerXAnnotated);
+                    let lx_full = close.csv_printer(event.asset, lot::PrintMode::Full);
                     writeln!(lx_file, "{lx}")?;
                     writeln!(lx_alt_file, "{lx_alt}")?;
                     writeln!(lx_full_file, "{lx_full}")?;

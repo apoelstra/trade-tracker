@@ -27,6 +27,28 @@ use anyhow::Context;
 use log::debug;
 use std::{cmp, collections::HashMap, fmt, ops};
 
+/// Strategy used to choose Bitcoin lots
+///
+/// Note that we can only choose lots for Bitcoin; options must use FIFO. (Actually,
+/// I'm not sure about this, but it wouldn't make any difference in practice since
+/// all our option positions are closed completely in the same year they are opened.
+/// So better to just be consistent.)
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug)]
+pub enum LotSelectionStrategy {
+    /// "LedgerX FIFO" which is first-in-first-out except that deposits are sorted
+    /// after everything else
+    LedgerXFifo,
+    /// Choose the highest basis first, which minimizes tax impact
+    HighestFirst,
+}
+
+impl Default for LotSelectionStrategy {
+    /// Default to using LX's strategy
+    fn default() -> Self {
+        LotSelectionStrategy::LedgerXFifo
+    }
+}
+
 /// Wrapper around a date that will output time to the nearest second in 3339 format
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug)]
 pub struct TaxDate(time::OffsetDateTime);
@@ -95,14 +117,16 @@ impl csv::PrintCsv for GainType {
 #[derive(Clone, Debug)]
 pub struct Position {
     asset: TaxAsset,
+    strat: LotSelectionStrategy,
     queue: crate::TimeMap<Lot>,
 }
 
 impl Position {
     /// Creates a new empty position
-    pub fn new(asset: TaxAsset) -> Self {
+    pub fn new(asset: TaxAsset, strat: LotSelectionStrategy) -> Self {
         Position {
             asset,
+            strat,
             queue: Default::default(),
         }
     }
@@ -147,8 +171,10 @@ impl Position {
             Ok((vec![], Some(new_lot)))
         } else {
             let mut closes = vec![];
-            // FIXME choose pop strategy intelligently
-            while let Some((existing_date, existing_lot)) = self.queue.pop_first() {
+            while let Some((existing_date, existing_lot)) = match self.strat {
+                LotSelectionStrategy::HighestFirst => self.queue.pop_max(|lot| lot.price()),
+                LotSelectionStrategy::LedgerXFifo => self.queue.pop_first(),
+            } {
                 let existing_qty = existing_lot.quantity();
                 let (close, partial) = existing_lot
                     .close(quantity, price, date, close_ty)
@@ -202,6 +228,7 @@ pub struct Event {
 #[derive(Clone, Debug, Default)]
 pub struct PositionTracker {
     positions: HashMap<TaxAsset, Position>,
+    bitcoin_strat: LotSelectionStrategy,
     events: Vec<Event>,
 }
 
@@ -209,6 +236,16 @@ impl PositionTracker {
     /// Constructs a new empty position tracker
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Update the lot-selection strategy for Bitcoin.
+    ///
+    /// Note that this must be called *during creation of the tracker*, i.e.
+    /// when you are calling the `push_*` functions. Once you are iterating
+    /// through the tax events, i.e. calling [Self::events], then all the
+    /// lot decisions have been made and it's too late.
+    pub fn set_bitcoin_lot_strategy(&mut self, strat: LotSelectionStrategy) {
+        self.bitcoin_strat = strat;
     }
 
     /// Helper function to log a set of closes and opens
@@ -252,7 +289,7 @@ impl PositionTracker {
         let pos = self
             .positions
             .entry(lot.asset())
-            .or_insert(Position::new(TaxAsset::Bitcoin));
+            .or_insert(Position::new(TaxAsset::Bitcoin, self.bitcoin_strat));
         assert!(
             pos.has_same_direction(lot.quantity()),
             "Tried to directly insert {} but had an opposing position open",
@@ -420,7 +457,15 @@ impl PositionTracker {
             asset = TaxAsset::Bitcoin;
         }
 
-        let pos = self.positions.entry(asset).or_insert(Position::new(asset));
+        let strat = if asset == TaxAsset::Bitcoin {
+            self.bitcoin_strat
+        } else {
+            LotSelectionStrategy::LedgerXFifo
+        };
+        let pos = self
+            .positions
+            .entry(asset)
+            .or_insert(Position::new(asset, strat));
         let (closes, open) = pos
             .add(quantity, price, date, open_ty, close_ty)
             .with_context(|| format!("adding {quantity} units of {asset} at {price} on {date}",))?;

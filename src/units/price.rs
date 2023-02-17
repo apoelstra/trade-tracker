@@ -136,6 +136,13 @@ super::impl_ops_0!(Price, Sub, sub);
 super::impl_assign_ops_0!(Price, AddAssign, add_assign);
 super::impl_assign_ops_0!(Price, SubAssign, sub_assign);
 
+impl ops::Neg for Price {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Price(-self.0)
+    }
+}
+
 // Dividing two prices gets you a unitless floating-point ratio
 impl ops::Div<Price> for Price {
     type Output = f64;

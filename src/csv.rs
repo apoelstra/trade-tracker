@@ -193,6 +193,8 @@ impl_tuple!(A 0 B 1 C 2 D 3 E 4 F 5 G 6 H 7);
 impl_tuple!(A 0 B 1 C 2 D 3 E 4 F 5 G 6 H 7 I 8);
 impl_tuple!(A 0 B 1 C 2 D 3 E 4 F 5 G 6 H 7 I 8 J 9);
 impl_tuple!(A 0 B 1 C 2 D 3 E 4 F 5 G 6 H 7 I 8 J 9 K 10);
+impl_tuple!(A 0 B 1 C 2 D 3 E 4 F 5 G 6 H 7 I 8 J 9 K 10 L 11);
+impl_tuple!(A 0 B 1 C 2 D 3 E 4 F 5 G 6 H 7 I 8 J 9 K 10 L 11 M 12);
 
 impl<P: PrintCsv> PrintCsv for Option<P> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {

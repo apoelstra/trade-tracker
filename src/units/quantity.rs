@@ -93,6 +93,16 @@ impl Quantity {
         }
     }
 
+    /// Whether this is a negative number
+    pub fn is_negative(&self) -> bool {
+        match *self {
+            Quantity::Bitcoin(btc) => btc.is_negative(),
+            Quantity::Contracts(n) => n < 0,
+            Quantity::Cents(n) => n < 0,
+            Quantity::Zero => false,
+        }
+    }
+
     /// Whether this is a positive number
     pub fn is_positive(&self) -> bool {
         match *self {

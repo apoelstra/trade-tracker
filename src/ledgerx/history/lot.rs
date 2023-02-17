@@ -201,14 +201,6 @@ impl Lot {
             )));
         }
 
-        let gain_ty = if self.asset.is_1256() {
-            GainType::Option1256
-        } else if date - self.date <= time::Duration::days(365) {
-            GainType::ShortTerm
-        } else {
-            GainType::LongTerm
-        };
-
         let open_original_quantity = self.quantity; // record for tax records
 
         let partial;
@@ -227,7 +219,6 @@ impl Lot {
         Ok((
             Close {
                 ty,
-                gain_ty,
                 open_id: self.id.clone(),
                 open_original_quantity,
                 open_price: self.price,
@@ -265,6 +256,8 @@ impl<'lot> csv::PrintCsv for LotCsv<'lot> {
             "", // old lot basis
             self.lot.quantity,
             self.lot.price * self.lot.quantity,
+            "", // basis
+            "", // proceeds
             "", // gain/loss
             "", // gain/loss type
         );
@@ -329,7 +322,6 @@ impl csv::PrintCsv for CloseType {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Close {
     ty: CloseType,
-    gain_ty: GainType,
     open_id: Id,
     open_original_quantity: Quantity,
     open_price: Price,
@@ -351,6 +343,55 @@ impl fmt::Display for Close {
 }
 
 impl Close {
+    /// The size of the lot prior to this close
+    pub fn old_lot_size(&self) -> Quantity {
+        self.open_original_quantity
+    }
+
+    /// The basis of the lot at its size prior to this close
+    pub fn old_lot_basis(&self) -> Price {
+        self.open_price * self.open_original_quantity
+    }
+
+    /// The size of the lot *after* this close
+    pub fn new_lot_size(&self) -> Quantity {
+        self.open_original_quantity + self.quantity
+    }
+
+    /// The basis of the lot at its size *after* this close
+    pub fn new_lot_basis(&self) -> Price {
+        self.old_lot_basis() + self.basis()
+    }
+
+    /// The basis of the closed quantity of the original lot
+    ///
+    /// In other words, the difference between [Self::new_lot_basis] and
+    /// [Self::old_lot_basis].
+    pub fn basis(&self) -> Price {
+        self.open_price * -self.quantity
+    }
+
+    /// The amount the closed quantity actually closed for
+    pub fn proceeds(&self) -> Price {
+        self.close_price * -self.quantity
+    }
+
+    /// The gain/loss caused by this closure
+    pub fn gain_loss(&self) -> Price {
+        self.proceeds() - self.basis()
+    }
+
+    /// The gain/loss caused by this closure
+    pub fn gain_loss_type(&self) -> GainType {
+        if self.asset.is_1256() {
+            GainType::Option1256
+        } else if self.close_date - self.open_date <= time::Duration::days(365) {
+            GainType::ShortTerm
+        } else {
+            GainType::LongTerm
+        }
+    }
+
     /// The date the closed lot was created
     pub fn open_date(&self) -> TaxDate {
         self.open_date
@@ -410,16 +451,17 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.mode {
             PrintMode::LedgerX | PrintMode::LedgerXAnnotated => {
-                let mut proceeds = self.close.close_price * self.close.quantity;
-                let mut basis = self.close.open_price * self.close.quantity;
+                let mut proceeds = self.close.proceeds();
+                let mut basis = self.close.basis();
 
                 let mut close_date = self.close.close_date;
                 let mut open_date = self.close.open_date;
-                if !self.close.quantity.is_positive() {
+                if self.close.quantity.is_negative() {
                     // wtf
                     mem::swap(&mut close_date, &mut open_date);
                     mem::swap(&mut basis, &mut proceeds);
                 }
+                // also wtf
                 proceeds = proceeds.abs();
                 basis = basis.abs();
 
@@ -451,7 +493,7 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                     basis,
                     proceeds,
                     basis - proceeds,
-                    self.close.gain_ty,
+                    self.close.gain_loss_type(),
                     "",
                     "",
                     "",
@@ -464,23 +506,20 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                 }
             }
             PrintMode::Full => {
-                let old_basis = self.close.open_price * self.close.open_original_quantity;
-                let new_basis = self.close.open_price
-                    * (self.close.open_original_quantity + self.close.quantity);
-                let basis_delta = new_basis - old_basis;
-                let proceeds = self.close.close_price * self.close.quantity;
                 let csv = (
                     self.close.ty,
                     self.close.quantity,
                     self.asset,
                     self.close.close_price,
                     &self.close.open_id,
-                    self.close.open_original_quantity,
-                    old_basis,
-                    self.close.open_original_quantity + self.close.quantity,
-                    new_basis,
-                    basis_delta - proceeds,
-                    self.close.gain_ty,
+                    self.close.old_lot_size(),
+                    self.close.old_lot_basis(),
+                    self.close.new_lot_size(),
+                    self.close.new_lot_basis(),
+                    self.close.basis(),
+                    self.close.proceeds(),
+                    self.close.gain_loss(),
+                    self.close.gain_loss_type(),
                 );
                 csv.print(f)?;
             }

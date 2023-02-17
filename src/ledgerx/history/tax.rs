@@ -264,11 +264,7 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
 
 impl Close {
     /// Constructs a CSV outputter for this close
-    pub fn csv_printer<'close>(
-        &'close self,
-        asset: TaxAsset,
-        mode: PrintMode,
-    ) -> csv::CsvPrinter<CloseCsv<'close>> {
+    pub fn csv_printer(&self, asset: TaxAsset, mode: PrintMode) -> csv::CsvPrinter<CloseCsv> {
         csv::CsvPrinter(CloseCsv {
             asset,
             close: self,

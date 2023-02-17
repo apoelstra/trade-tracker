@@ -132,6 +132,7 @@ impl Quantity {
     /// Whether this quantity has the same units as some other quantity
     ///
     /// Considers zero to have the same units as any quantity
+    #[allow(clippy::match_like_matches_macro)]
     pub fn has_same_unit(&self, other: Quantity) -> bool {
         match (*self, other) {
             (Quantity::Zero, _) | (_, Quantity::Zero) => true,
@@ -222,9 +223,9 @@ impl From<bitcoin::Amount> for Quantity {
 impl cmp::PartialOrd for Quantity {
     fn partial_cmp(&self, other: &Quantity) -> Option<cmp::Ordering> {
         match (self, other) {
-            (Quantity::Bitcoin(amt), Quantity::Bitcoin(other)) => amt.partial_cmp(&other),
-            (Quantity::Contracts(n), Quantity::Contracts(other)) => n.partial_cmp(&other),
-            (Quantity::Cents(n), Quantity::Cents(other)) => n.partial_cmp(&other),
+            (Quantity::Bitcoin(amt), Quantity::Bitcoin(other)) => amt.partial_cmp(other),
+            (Quantity::Contracts(n), Quantity::Contracts(other)) => n.partial_cmp(other),
+            (Quantity::Cents(n), Quantity::Cents(other)) => n.partial_cmp(other),
             (Quantity::Bitcoin(amt), Quantity::Zero) => amt.to_sat().partial_cmp(&0),
             (Quantity::Zero, Quantity::Bitcoin(amt)) => 0.partial_cmp(&amt.to_sat()),
             (Quantity::Contracts(n), Quantity::Zero) => n.partial_cmp(&0),

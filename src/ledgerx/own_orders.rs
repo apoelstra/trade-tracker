@@ -115,7 +115,7 @@ impl Tracker {
         };
 
         // Log it
-        if msg != "" {
+        if !msg.is_empty() {
             match contract.ty() {
                 contract::Type::Option { opt, .. } => {
                     info!("{}order {}", msg, mid);

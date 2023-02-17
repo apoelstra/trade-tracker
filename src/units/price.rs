@@ -169,7 +169,7 @@ impl ops::Div<Quantity> for Price {
         assert!(
             other.is_nonzero(),
             "Trying to divide a price {} by a zero quantity",
-            self
+            self,
         );
         match other {
             Quantity::Bitcoin(btc) => Price(self.0 / Decimal::new(btc.to_sat(), 8)),

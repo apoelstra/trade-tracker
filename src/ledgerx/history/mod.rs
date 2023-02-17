@@ -645,7 +645,7 @@ impl History {
                     (btc_price, None, None),
                 ),
                 // Ignore synthetic trades for spreadsheeting purposes
-                Event::Trade { synthetic, .. } if *synthetic == true => continue,
+                Event::Trade { synthetic, .. } if *synthetic => continue,
                 Event::Trade {
                     asset, price, size, ..
                 } => (
@@ -878,9 +878,9 @@ impl History {
                     let lx = close.csv_printer(event.asset, tax::PrintMode::LedgerX);
                     let lx_alt = close.csv_printer(event.asset, tax::PrintMode::LedgerXAnnotated);
                     let lx_full = close.csv_printer(event.asset, tax::PrintMode::Full);
-                    writeln!(lx_file, "{}", lx)?;
-                    writeln!(lx_alt_file, "{}", lx_alt)?;
-                    writeln!(lx_full_file, "{}", lx_full)?;
+                    writeln!(lx_file, "{lx}")?;
+                    writeln!(lx_alt_file, "{lx_alt}")?;
+                    writeln!(lx_full_file, "{lx_full}")?;
                 }
             }
         }

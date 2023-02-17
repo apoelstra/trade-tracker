@@ -100,5 +100,5 @@ where
     D: serde::Deserializer<'de>,
 {
     let s: i64 = Deserialize::deserialize(deser)?;
-    Ok(time::OffsetDateTime::from_unix_timestamp(s.into()))
+    Ok(time::OffsetDateTime::from_unix_timestamp(s))
 }

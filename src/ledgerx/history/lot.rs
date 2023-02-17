@@ -240,7 +240,7 @@ impl Lot {
         ))
     }
 
-    pub fn csv_printer<'lot>(&'lot self) -> csv::CsvPrinter<LotCsv<'lot>> {
+    pub fn csv_printer(&self) -> csv::CsvPrinter<LotCsv> {
         csv::CsvPrinter(LotCsv { lot: self })
     }
 }

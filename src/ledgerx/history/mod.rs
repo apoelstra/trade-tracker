@@ -857,6 +857,19 @@ impl History {
             writeln!(metadata, "    Total LT gain/loss: {total_lt}")?;
             writeln!(metadata, "    Total ST gain/loss: {total_st}")?;
             writeln!(metadata, "    Total 1256 gain/loss: {total_1256}")?;
+            let lt = total_lt + total_1256.sixty();
+            let st = total_st + total_1256.forty();
+            writeln!(metadata, "    After 60/40 splitting {lt} LT {st} ST")?;
+            if st < Price::ZERO {
+                let total = lt + st;
+                if total >= Price::ZERO {
+                    // ST losses can cancel LT gains
+                    writeln!(metadata, "    Cancelling, total liability is {total} LT")?;
+                } else {
+                    // ...though once all the LT gains are cancelled, what's left is a ST loss
+                    writeln!(metadata, "    Cancelling, total liability is {total} ST")?;
+                }
+            }
         }
 
         let mut reports_lx = HashMap::new();

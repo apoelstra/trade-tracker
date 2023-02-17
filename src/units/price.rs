@@ -85,6 +85,16 @@ impl Price {
     pub fn half(&self) -> Price {
         Price(self.0 / Decimal::from(2))
     }
+
+    /// Given a price, return 40% of the price (used for 1256 tax calculations)
+    pub fn forty(&self) -> Price {
+        Price(self.0 * Decimal::from(2) / Decimal::from(5))
+    }
+
+    /// Given a price, return 60% of the price (used for 1256 tax calculations)
+    pub fn sixty(&self) -> Price {
+        Price(self.0 * Decimal::from(3) / Decimal::from(5))
+    }
 }
 
 impl From<Decimal> for Price {

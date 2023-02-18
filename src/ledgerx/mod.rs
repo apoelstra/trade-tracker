@@ -341,7 +341,7 @@ impl LedgerX {
         // previous best order has its size reduced to 0 and is dropped from the book.
         let old_bb = book_state.best_bid();
         let old_ba = book_state.best_ask();
-        debug!("Inserting into contract {}: {:?}", contract.id(), order);
+        debug!("Inserting into contract {}: {}", contract.id(), order);
         book_state.insert_order(order);
         let new_bb = book_state.best_bid();
         let new_ba = book_state.best_ask();

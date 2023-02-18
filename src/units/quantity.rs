@@ -320,6 +320,12 @@ pub struct UnknownQuantity {
     inner: i64,
 }
 
+impl fmt::Display for UnknownQuantity {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} ???", self.inner)
+    }
+}
+
 impl From<i64> for UnknownQuantity {
     fn from(n: i64) -> UnknownQuantity {
         UnknownQuantity { inner: n }
@@ -330,6 +336,11 @@ impl UnknownQuantity {
     /// Consruct a unknown quantity from an integer number of base units
     pub fn from_i64(n: i64) -> Self {
         From::from(n)
+    }
+
+    /// Whether this quantity is nonzero
+    pub fn is_nonzero(&self) -> bool {
+        self.inner != 0
     }
 
     /// Define the quantity based on a given asset

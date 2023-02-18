@@ -65,6 +65,31 @@ pub struct Order {
     pub updated_timestamp: OffsetDateTime,
 }
 
+impl fmt::Display for Order {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "order {} (contract {}",
+            self.message_id, self.contract_id,
+        )?;
+        if self.size.is_nonzero() {
+            write!(f, ", size {} @ {}", self.size, self.price,)?;
+        }
+        if self.filled_size.is_nonzero() {
+            write!(f, ", filled {} @ {}", self.filled_size, self.filled_price,)?;
+        }
+        if let Some(cid) = self.customer_id {
+            write!(f, ", {cid}")?;
+        }
+        write!(
+            f,
+            ", timestamp {} updated {})",
+            self.timestamp.lazy_format("%FT%H:%M:%S.%N%z"),
+            self.updated_timestamp.lazy_format("%FT%H:%M:%S.%N%%z"),
+        )
+    }
+}
+
 impl From<(json::BookState, OffsetDateTime)> for Order {
     fn from(data: (json::BookState, OffsetDateTime)) -> Self {
         let ba_mult = if data.0.is_ask { -1 } else { 1 };

@@ -25,7 +25,7 @@ use crate::units::{
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{de, Deserialize, Deserializer};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map, BTreeMap, HashMap};
 use std::str::FromStr;
 use time::OffsetDateTime;
 
@@ -873,7 +873,7 @@ impl History {
         for event in tracker.events() {
             let year = event.date.year();
             // Open LX file for this year
-            if !reports_lx.contains_key(&year) {
+            if let hash_map::Entry::Vacant(e) = reports_lx.entry(year) {
                 let mut new_lx = create_text_file(
                     format!("{dir_path}/{year}-ledgerx.csv"),
                     "which should match the LX-provided CSV.",
@@ -884,11 +884,11 @@ impl History {
                      Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,\
                      Note that column C and column F reflect * where cost basis could not be obtained."
                 )?;
-                reports_lx.insert(year, new_lx);
+                e.insert(new_lx);
             }
             let report_lx = reports_lx.get_mut(&year).unwrap();
             // Open full report file for this year
-            if !reports_full.contains_key(&year) {
+            if let hash_map::Entry::Vacant(e) = reports_full.entry(year) {
                 let mut new_full = create_text_file(
                     format!("{dir_path}/{year}-full.csv"),
                     "which should provide a full tax accounting, matching LX's totals",
@@ -898,7 +898,7 @@ impl History {
                     "Event,Date,Quantity,Asset,Price,Lot ID,Old Lot Size,Old Lot Basis,\
                      New Lot Size,New Lot Basis,Basis,Proceeds,Gain/Loss,Gain/Loss Type"
                 )?;
-                reports_full.insert(year, new_full);
+                e.insert(new_full);
             }
             let report_full = reports_full.get_mut(&year).unwrap();
 

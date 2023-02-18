@@ -34,7 +34,7 @@ pub use crate::timemap::TimeMap;
 use crate::units::{Price, Underlying};
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
-use clap::Clap;
+use clap::Parser;
 use log::{info, warn};
 use std::{
     fs, io,
@@ -71,20 +71,14 @@ impl FromStr for TaxHistoryMode {
     }
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 enum Command {
     /// Read a CSV file downloaded from Bitcoincharts, storing all its price data (at
     /// a ten-minute resolution rather than all of it)
-    InitializePriceData {
-        #[clap(name = "csv_file", parse(from_os_str))]
-        csv: PathBuf,
-    },
+    InitializePriceData { csv: PathBuf },
     /// Ping bitcoincharts in real time to get recent price data
     UpdatePriceData {
-        #[clap(
-            name = "url",
-            default_value = "http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD"
-        )]
+        #[arg(default_value = "http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD")]
         url: String,
     },
     /// Return the latest stored price. Mainly useful as a test.
@@ -92,38 +86,28 @@ enum Command {
     /// Print a list of potential orders for a given option near a given volatility, at various
     /// prices
     Price {
-        #[clap(name = "option")]
         option: option::Option,
         /// Specific volatility, if provided
-        #[clap(long, short)]
         volatility: Option<f64>,
     },
     /// Print a list of potential orders for a given option near a given price
     Iv {
-        #[clap(name = "option")]
         option: option::Option,
         /// Specific price, if provided
         #[clap(long, short)]
         price: Option<Price>,
     },
     /// Connect to LedgerX API and monitor activity in real-time
-    Connect {
-        #[clap(name = "token")]
-        api_key: String,
-    },
+    Connect { api_key: String },
     /// Connect to LedgerX API and download complete transaction history, for a given year if
     /// supplied. Outputs in CSV.
     History {
-        #[clap(name = "token")]
         api_key: String,
-        #[clap(name = "config_file", parse(from_os_str))]
         config_file: PathBuf,
     },
     /// Connect to LedgerX API and attempt to recreate its tax CSV file for a given year
     TaxHistory {
-        #[clap(name = "token")]
         api_key: String,
-        #[clap(name = "config_file", parse(from_os_str))]
         config_file: PathBuf,
     },
 }

@@ -128,6 +128,22 @@ enum Command {
     },
 }
 
+impl Command {
+    /// The name to prefix log files with
+    fn log_name(&self) -> &'static str {
+        match *self {
+            Command::InitializePriceData { .. } => "init-price-data",
+            Command::UpdatePriceData { .. } => "update-price-data",
+            Command::LatestPrice { .. } => "latest-price",
+            Command::Price { .. } => "price",
+            Command::Iv { .. } => "iv",
+            Command::Connect { .. } => "connect",
+            Command::History { .. } => "history",
+            Command::TaxHistory { .. } => "tax-history",
+        }
+    }
+}
+
 /// Outputs a newline to stdout.
 ///
 /// This is in its own function so I can easily grep for println! calls (there
@@ -157,10 +173,12 @@ fn initialize_logging(
                     .with_context(|| format!("creating log directory {log_dir}"))?;
             }
 
+            let log_name = command.log_name();
+            let log_time = now.lazy_format("%F_%H-%M-%S");
             let filenames = logger::LogFilenames {
-                debug_log: format!("{}/debug_{}.log", log_dir, now.lazy_format("%F_%H%M%S")),
-                datafeed_log: format!("{}/datafeed_{}.log", log_dir, now.lazy_format("%F_%H%M%S")),
-                http_get_log: format!("{}/http_get_{}.log", log_dir, now.lazy_format("%F_%H%M%S")),
+                debug_log: format!("{log_dir}/{log_name}_{log_time}_debug.log"),
+                datafeed_log: format!("{log_dir}/{log_name}_{log_time}_datafeed.log"),
+                http_get_log: format!("{log_dir}/{log_name}_{log_time}_http.log"),
             };
             logger::Logger::init(&filenames).with_context(|| {
                 format!(

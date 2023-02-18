@@ -17,6 +17,7 @@
 //! Personal-use barely-maintained tool for keeping track of trades
 //!
 
+pub mod cli;
 pub mod csv;
 pub mod file;
 pub mod http;
@@ -30,15 +31,14 @@ pub mod timemap;
 pub mod transaction;
 pub mod units;
 
+use crate::cli::Command;
 pub use crate::timemap::TimeMap;
-use crate::units::{Price, Underlying};
+use crate::units::Underlying;
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
-use clap::Parser;
 use log::{info, warn};
 use std::{
     fs, io,
-    path::PathBuf,
     str::FromStr,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
@@ -67,63 +67,6 @@ impl FromStr for TaxHistoryMode {
             x => Err(format!(
                 "Invalid tax history mode {x}; allowed values: just-lx-data, just-lot-ids, both",
             )),
-        }
-    }
-}
-
-#[derive(Parser)]
-enum Command {
-    /// Read a CSV file downloaded from Bitcoincharts, storing all its price data (at
-    /// a ten-minute resolution rather than all of it)
-    InitializePriceData { csv: PathBuf },
-    /// Ping bitcoincharts in real time to get recent price data
-    UpdatePriceData {
-        #[arg(default_value = "http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD")]
-        url: String,
-    },
-    /// Return the latest stored price. Mainly useful as a test.
-    LatestPrice {},
-    /// Print a list of potential orders for a given option near a given volatility, at various
-    /// prices
-    Price {
-        option: option::Option,
-        /// Specific volatility, if provided
-        volatility: Option<f64>,
-    },
-    /// Print a list of potential orders for a given option near a given price
-    Iv {
-        option: option::Option,
-        /// Specific price, if provided
-        #[clap(long, short)]
-        price: Option<Price>,
-    },
-    /// Connect to LedgerX API and monitor activity in real-time
-    Connect { api_key: String },
-    /// Connect to LedgerX API and download complete transaction history, for a given year if
-    /// supplied. Outputs in CSV.
-    History {
-        api_key: String,
-        config_file: PathBuf,
-    },
-    /// Connect to LedgerX API and attempt to recreate its tax CSV file for a given year
-    TaxHistory {
-        api_key: String,
-        config_file: PathBuf,
-    },
-}
-
-impl Command {
-    /// The name to prefix log files with
-    fn log_name(&self) -> &'static str {
-        match *self {
-            Command::InitializePriceData { .. } => "init-price-data",
-            Command::UpdatePriceData { .. } => "update-price-data",
-            Command::LatestPrice { .. } => "latest-price",
-            Command::Price { .. } => "price",
-            Command::Iv { .. } => "iv",
-            Command::Connect { .. } => "connect",
-            Command::History { .. } => "history",
-            Command::TaxHistory { .. } => "tax-history",
         }
     }
 }
@@ -191,7 +134,7 @@ fn initialize_logging(
 
 fn main() -> Result<(), anyhow::Error> {
     // Parse command-line args
-    let command = Command::parse();
+    let command = Command::from_args();
     // Get data path
     let mut data_path = dirs::data_dir().context("getting XDG config directory")?;
     data_path.push("trade-tracker");
@@ -220,7 +163,7 @@ fn main() -> Result<(), anyhow::Error> {
     let log_filenames = initialize_logging(now, &command).context("initializing logging")?;
 
     // Go
-    match Command::parse() {
+    match command {
         Command::InitializePriceData { csv } => {
             let mut history = Historic::default();
             let csv_name = csv.to_string_lossy();
@@ -373,25 +316,25 @@ fn main() -> Result<(), anyhow::Error> {
             } // loop
         }
         Command::History {
-            api_key,
-            config_file,
+            ref api_key,
+            ref config_file,
         }
         | Command::TaxHistory {
-            api_key,
-            config_file,
+            ref api_key,
+            ref config_file,
         } => {
             // Assert we have the log filenames before doing anything complex
             // If this unwrap fails it's a bug.
             let log_filenames = log_filenames.unwrap();
             // Parse config file
             let config_name = config_file.to_string_lossy();
-            let input = fs::File::open(&config_file)
+            let input = fs::File::open(config_file)
                 .with_context(|| format!("opening config file {config_name}"))?;
             let bufread = io::BufReader::new(input);
             let config: ledgerx::history::Configuration = serde_json::from_reader(bufread)
                 .with_context(|| format!("parsing config file {config_name}"))?;
             // Read it again to get its hash
-            let input = fs::File::open(&config_file)
+            let input = fs::File::open(config_file)
                 .with_context(|| format!("opening config file {config_name}"))?;
             let mut bufread = io::BufReader::new(input);
             let mut hash_eng = sha256::Hash::engine();
@@ -400,7 +343,7 @@ fn main() -> Result<(), anyhow::Error> {
             drop(bufread);
             // Query LX to get all historic trade data
             let hist = ledgerx::history::History::from_api(
-                &api_key,
+                api_key,
                 &config,
                 sha256::Hash::from_engine(hash_eng),
             )

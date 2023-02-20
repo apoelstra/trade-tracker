@@ -330,7 +330,7 @@ impl History {
     }
 
     /// Import a list of deposits into the history
-    pub fn import_deposits(&mut self, deposits: &Deposits) -> anyhow::Result<()> {
+    fn import_deposits(&mut self, deposits: &Deposits) -> anyhow::Result<()> {
         for dep in &deposits.data {
             assert_eq!(
                 dep.asset, dep.deposit_address.asset,
@@ -441,7 +441,7 @@ impl History {
     }
 
     /// Import a list of withdrawals into the history
-    pub fn import_withdrawals(&mut self, withdrawals: &Withdrawals) {
+    fn import_withdrawals(&mut self, withdrawals: &Withdrawals) {
         for withd in &withdrawals.data {
             self.events.insert(
                 withd.created_at,
@@ -454,7 +454,7 @@ impl History {
     }
 
     /// Import a list of trades into the history
-    pub fn import_trades(
+    fn import_trades(
         &mut self,
         trades: &Trades,
         contracts: &HashMap<String, super::Contract>,
@@ -490,7 +490,7 @@ impl History {
     }
 
     /// Import a list of positions into the history
-    pub fn import_positions(&mut self, positions: &Positions) {
+    fn import_positions(&mut self, positions: &Positions) {
         for pos in &positions.data {
             // Unsettled positions don't have any trade logs associated with them
             if !pos.has_settled {
@@ -572,10 +572,10 @@ impl History {
                             "Do not have a LX price reference for {price_ref_date}. \
                              An option assignment occured at this date ({} of {}). For tax purposes \
                              the consequential trade needs to happen at market prices. \
-                             We do not have this, so we are using the strike price of \
-                             {} which is NOT CORRECT and implies a BETTER TAX OUTCOME \
-                             for you than the IRS will perceive.",
-                            n_assigned, option, option.strike,
+                             We do not have this, so we will replace it with a non-official \
+                             price reference later. This is NOT CORRECT and data for this \
+                             year {} SHOULD NOT BE SUBMITTED TO THE IRS.",
+                            n_assigned, option, price_ref_date.year(),
                         );
                         option.strike
                     }
@@ -773,8 +773,26 @@ impl History {
                         asset, size, price, fee, synthetic
                     );
 
-                    let unit_fee = *fee / *size;
-                    let adj_price = *price + unit_fee; // nb `unit_fee` is a signed quantity
+                    let adj_price = if *synthetic && !self.lx_price_ref.contains_key(&date) {
+                        assert_eq!(*asset, TaxAsset::Bitcoin);
+                        let btc_price = price_history.price_at(date).btc_price;
+                        warn!(
+                            "Using price {} for synthetic trade (assignment) at {}. See \
+                             above warning.",
+                            btc_price, date,
+                        );
+                        writeln!(
+                            metadata,
+                            "WARNING: used non-official price reference of {} on {} for synthetic trade \
+                             (strike {} size {})",
+                            btc_price, date, price, size,
+                        )?;
+                        btc_price
+                    } else {
+                        let unit_fee = *fee / *size;
+                        *price + unit_fee // nb `unit_fee` is a signed quantity
+                    };
+
                     tracker
                         .push_trade(*asset, *size, adj_price, date.into())
                         .with_context(|| format!("pushing trade of {asset} size {size}"))?;
@@ -819,6 +837,12 @@ impl History {
                                 "Do not have LX price reference for {}; using price {}",
                                 expiry, btc_price
                             );
+                            writeln!(
+                                metadata,
+                                "WARNING: used non-official price reference of {} on {} for calculating \
+                                 assignment loss (strike {} size {})",
+                                btc_price.btc_price, date, option.strike, size,
+                            )?;
                             btc_price.btc_price
                         }
                     };

@@ -591,8 +591,8 @@ impl History {
                         asset: TaxAsset::Bitcoin,
                         price: trade_price,
                         size: match option.pc {
-                            crate::option::Call => -contracts_in_btc,
-                            crate::option::Put => contracts_in_btc,
+                            crate::option::Call => contracts_in_btc,
+                            crate::option::Put => -contracts_in_btc,
                         },
                         fee: Price::ZERO,
                         synthetic: true,

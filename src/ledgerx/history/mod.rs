@@ -601,8 +601,8 @@ impl History {
                         asset: TaxAsset::Bitcoin,
                         price: trade_price,
                         size: match option.pc {
-                            crate::option::Call => contracts_in_btc,
-                            crate::option::Put => -contracts_in_btc,
+                            crate::option::Call => -contracts_in_btc,
+                            crate::option::Put => contracts_in_btc,
                         },
                         fee: Price::ZERO,
                         synthetic: Some(option.pc),
@@ -922,6 +922,7 @@ impl History {
         let mut reports_full = HashMap::new();
         for event in tracker.events() {
             let year = event.date.year();
+            debug!("WRITING OUT date {} event: {:?}", event.date, event);
             // Open LX file for this year
             if let hash_map::Entry::Vacant(e) = reports_lx.entry(year) {
                 let mut new_lx = create_text_file(
@@ -960,6 +961,8 @@ impl History {
                     let lx = close.csv_printer(event.asset, self.user_id, lot::PrintMode::LedgerX);
                     //let lx_alt = close.csv_printer(event.asset, lot::PrintMode::LedgerXAnnotated);
                     let full = close.csv_printer(event.asset, self.user_id, lot::PrintMode::Full);
+                    debug!("report_lx: {}", lx);
+                    debug!("report_full: {}", full);
                     writeln!(report_lx, "{lx}")?;
                     writeln!(report_full, "{full}")?;
                 }

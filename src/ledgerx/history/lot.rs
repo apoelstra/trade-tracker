@@ -483,7 +483,7 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                 proceeds = proceeds.abs();
                 basis = basis.abs();
 
-                if close_date.year() == 2021 {
+                if self.close.close_date.year() == 2021 {
                     let description = match self.close.quantity {
                         Quantity::Bitcoin(btc) => {
                             let real_amount = Decimal::new(btc.to_sat(), 8);

@@ -122,15 +122,18 @@ impl str::FromStr for Price {
 
 impl fmt::Display for Price {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Alternate display prepends the $, adds a 000s separator, etc
+        // Alternate display adds a 000s separator
         if f.alternate() {
-            f.write_str("$")?;
-            if self.0 > Decimal::new(1_000_000_000, 0) {
+            if self.0 < Decimal::ZERO {
+                f.write_str("-")?;
+            }
+            let val = self.0.abs();
+            if val > Decimal::new(1_000_000_000, 0) {
                 unimplemented!("have not written display logic for billion-dollar amounts")
             } else {
                 let (trunc, fract) = (
-                    self.0.trunc().to_i64().unwrap(),
-                    (self.0.fract() * Decimal::ONE_HUNDRED).to_i64().unwrap(),
+                    val.trunc().to_i64().unwrap(),
+                    (val.fract() * Decimal::ONE_HUNDRED).to_i64().unwrap(),
                 );
                 if trunc >= 1_000_000 {
                     write!(f, "{},", trunc / 1_000_000)?;

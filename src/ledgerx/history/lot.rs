@@ -588,9 +588,9 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                         close_date,
                         open_date,
                         // for prices, we use the alt format except we strip off the $
-                        &format!("{:#}", basis)[1..],
-                        &format!("{:#}", proceeds)[1..],
-                        &format!("{:#}", basis - proceeds)[1..],
+                        format!("{:#}", basis),
+                        format!("{:#}", proceeds),
+                        format!("{:#}", basis - proceeds),
                         match self.close.gain_loss_type() {
                             GainType::LongTerm => "Long-Term",
                             GainType::ShortTerm => "Short-Term",

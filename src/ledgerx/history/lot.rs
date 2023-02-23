@@ -19,7 +19,8 @@
 
 use crate::csv;
 use crate::ledgerx::history::tax::{GainType, TaxDate};
-use crate::units::{Price, Quantity, TaxAsset};
+use crate::option::{Call, Put};
+use crate::units::{Price, Quantity, TaxAsset, TaxAsset2022};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -194,6 +195,7 @@ impl Lot {
         price: Price,
         date: TaxDate,
         ty: CloseType,
+        synthetic: Option<crate::option::PutCall>,
     ) -> anyhow::Result<(Close, Option<Self>)> {
         if self.quantity.has_same_sign(quantity) {
             return Err(anyhow::Error::msg(format!(
@@ -219,6 +221,7 @@ impl Lot {
         Ok((
             Close {
                 ty,
+                synthetic,
                 open_id: self.id.clone(),
                 open_original_quantity,
                 open_price: self.price,
@@ -323,6 +326,7 @@ impl csv::PrintCsv for CloseType {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Close {
     ty: CloseType,
+    synthetic: Option<crate::option::PutCall>,
     open_id: Id,
     open_original_quantity: Quantity,
     open_price: Price,
@@ -414,8 +418,14 @@ impl Close {
     }
 
     /// Constructs a CSV outputter for this close
-    pub fn csv_printer(&self, asset: TaxAsset, mode: PrintMode) -> csv::CsvPrinter<CloseCsv> {
+    pub fn csv_printer(
+        &self,
+        asset: TaxAsset,
+        user_id: usize,
+        mode: PrintMode,
+    ) -> csv::CsvPrinter<CloseCsv> {
         csv::CsvPrinter(CloseCsv {
+            user_id,
             asset,
             close: self,
             mode,
@@ -448,6 +458,7 @@ pub enum PrintMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CloseCsv<'close> {
+    user_id: usize,
     asset: TaxAsset,
     close: &'close Close,
     mode: PrintMode,
@@ -462,6 +473,7 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
 
                 let mut close_date = self.close.close_date;
                 let mut open_date = self.close.open_date;
+
                 if self.close.quantity.is_negative() {
                     // wtf
                     mem::swap(&mut close_date, &mut open_date);
@@ -471,40 +483,122 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                 proceeds = proceeds.abs();
                 basis = basis.abs();
 
-                let description = match self.close.quantity {
-                    Quantity::Bitcoin(btc) => {
-                        let real_amount = Decimal::new(btc.to_sat(), 8);
-                        let round_amount = real_amount.round_dp(2);
-                        // If we can, reduce to 2 decimal points. This will be the common case since LX
-                        // will only let us trade in 1/100th of a bitcoin, and will let us better match
-                        // their output.
-                        if real_amount == round_amount {
-                            format!("{}, {}", round_amount.abs(), self.asset)
-                        } else {
-                            format!("{}, {}", real_amount.abs(), self.asset)
+                if close_date.year() == 2021 {
+                    let description = match self.close.quantity {
+                        Quantity::Bitcoin(btc) => {
+                            let real_amount = Decimal::new(btc.to_sat(), 8);
+                            let round_amount = real_amount.round_dp(2);
+                            // If we can, reduce to 2 decimal points. This will be the common case since LX
+                            // will only let us trade in 1/100th of a bitcoin, and will let us better match
+                            // their output.
+                            if real_amount == round_amount {
+                                format!("{}, {}", round_amount.abs(), self.asset)
+                            } else {
+                                format!("{}, {}", real_amount.abs(), self.asset)
+                            }
                         }
-                    }
-                    Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.asset),
-                    Quantity::Cents(_) => {
-                        panic!("tried to write out a sale of dollars as a tax event")
-                    }
-                    Quantity::Zero => "0".into(), // maybe we should just panic here
-                };
+                        Quantity::Contracts(n) => format!("{}, {}", n.abs(), self.asset),
+                        Quantity::Cents(_) => {
+                            panic!("tried to write out a sale of dollars as a tax event")
+                        }
+                        Quantity::Zero => "0".into(), // maybe we should just panic here
+                    };
 
-                (
-                    self.close.ty,
-                    description,
-                    close_date,
-                    open_date,
-                    basis,
-                    proceeds,
-                    basis - proceeds,
-                    self.close.gain_loss_type(),
-                    "",
-                    "",
-                    "",
-                )
-                    .print(f)?;
+                    (
+                        self.close.ty,
+                        description,
+                        close_date,
+                        open_date,
+                        basis,
+                        proceeds,
+                        basis - proceeds,
+                        self.close.gain_loss_type(),
+                        "",
+                        "",
+                        "",
+                    )
+                        .print(f)?;
+                } else {
+                    // Tax years not 2021
+                    let ref_1 = if self.close.asset == TaxAsset::Bitcoin {
+                        "Exercise"
+                    } else {
+                        match self.close.ty {
+                            CloseType::BuyBack => "Buy to Close",
+                            CloseType::Sell => "Sell to Close",
+                            CloseType::Expiry => "Expire",
+                            CloseType::Exercise => "Exercise",
+                            CloseType::TxFee => "TX Fee",
+                        }
+                    };
+                    let ref_2 = match self.close.synthetic {
+                        Some(Call) => "1256 Option - Call",
+                        Some(Put) => "1256 Option - Put",
+                        None => match self.close.asset {
+                            TaxAsset::Bitcoin => "Non-1256 - Future",
+                            TaxAsset::NextDay { .. } => "Non-1256 - Future",
+                            TaxAsset::Option { option, .. } => {
+                                if self.close.ty == CloseType::Expiry
+                                    || self.close.ty == CloseType::Exercise
+                                {
+                                    match option.pc {
+                                        Call => "1256 Option - Call",
+                                        Put => "1256 Option - Put",
+                                    }
+                                } else {
+                                    "1256 Option"
+                                }
+                            }
+                        },
+                    };
+                    let reference = format!("{ref_1} - {ref_2}");
+
+                    let quantity = match self.close.quantity {
+                        Quantity::Bitcoin(btc) => {
+                            let real_amount = Decimal::new(btc.to_sat(), 8).abs();
+                            let round_amount = real_amount.round_dp(2);
+                            if real_amount == round_amount {
+                                round_amount
+                            } else {
+                                real_amount
+                            }
+                        }
+                        Quantity::Contracts(n) => Decimal::new(n.abs() * 100, 2),
+                        Quantity::Cents(_) => {
+                            panic!("tried to write out a sale of dollars as a tax event")
+                        }
+                        Quantity::Zero => Decimal::new(0, 2),
+                    };
+
+                    let close_date = format!(
+                        "{}.{:03}Z",
+                        close_date.bare_time().format("%FT%H:%M:%S"),
+                        close_date.bare_time().millisecond(),
+                    );
+                    let open_date = format!(
+                        "{}.{:03}Z",
+                        open_date.bare_time().format("%FT%H:%M:%S"),
+                        open_date.bare_time().millisecond(),
+                    );
+                    (
+                        self.user_id,
+                        reference,
+                        quantity,
+                        TaxAsset2022(self.asset),
+                        close_date,
+                        open_date,
+                        // for prices, we use the alt format except we strip off the $
+                        &format!("{:#}", basis)[1..],
+                        &format!("{:#}", proceeds)[1..],
+                        &format!("{:#}", basis - proceeds)[1..],
+                        match self.close.gain_loss_type() {
+                            GainType::LongTerm => "Long-Term",
+                            GainType::ShortTerm => "Short-Term",
+                            GainType::Option1256 => "- 1256 - ", // notice trailing space
+                        },
+                    )
+                        .print(f)?
+                }
 
                 if self.mode == PrintMode::LedgerXAnnotated {
                     f.write_str(",")?;

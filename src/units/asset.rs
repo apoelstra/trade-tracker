@@ -143,6 +143,44 @@ impl fmt::Display for TaxAsset {
     }
 }
 
+/// Wrapper around a tax asset to format it in the 2022 format
+pub struct TaxAsset2022(pub TaxAsset);
+
+impl fmt::Display for TaxAsset2022 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            TaxAsset::Bitcoin => f.write_str("BTC"),
+            TaxAsset::NextDay { .. } => f.write_str("BTC"),
+            TaxAsset::Option { underlying, option } => {
+                write!(
+                    f,
+                    "{}-Mini-{:02}{}{}-{}-{}",
+                    underlying,
+                    option.expiry.day(),
+                    match option.expiry.month() {
+                        1 => "JAN",
+                        2 => "FEB",
+                        3 => "MAR",
+                        4 => "APR",
+                        5 => "MAY",
+                        6 => "JUN",
+                        7 => "JUL",
+                        8 => "AUG",
+                        9 => "SEP",
+                        10 => "OCT",
+                        11 => "NOV",
+                        12 => "DEC",
+                        x => panic!("invalid month {}", x),
+                    },
+                    option.expiry.year(),
+                    option.strike.to_int(),
+                    option.pc.as_str(),
+                )
+            }
+        }
+    }
+}
+
 /// A kind of asset which is reflected in my budget spreadsheet
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum BudgetAsset {

@@ -95,6 +95,11 @@ impl Price {
     pub fn sixty(&self) -> Price {
         Price(self.0 * Decimal::from(3) / Decimal::from(5))
     }
+
+    /// Convert the value to an integer, truncating any fractional part
+    pub fn to_int(&self) -> i64 {
+        self.0.to_i64().unwrap()
+    }
 }
 
 impl From<Decimal> for Price {
@@ -106,7 +111,12 @@ impl From<Decimal> for Price {
 impl str::FromStr for Price {
     type Err = rust_decimal::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        str::FromStr::from_str(s).map(Price)
+        // Parse the LX-style "1,123.00" strings in their CSV
+        let compressed: String = s
+            .chars()
+            .filter(|c| *c != '"' && *c != ',' && *c != '$')
+            .collect();
+        str::FromStr::from_str(&compressed).map(Price)
     }
 }
 
@@ -119,8 +129,8 @@ impl fmt::Display for Price {
                 unimplemented!("have not written display logic for billion-dollar amounts")
             } else {
                 let (trunc, fract) = (
-                    self.0.trunc().to_u64().unwrap(),
-                    (self.0.fract() * Decimal::ONE_HUNDRED).to_u64().unwrap(),
+                    self.0.trunc().to_i64().unwrap(),
+                    (self.0.fract() * Decimal::ONE_HUNDRED).to_i64().unwrap(),
                 );
                 if trunc >= 1_000_000 {
                     write!(f, "{},", trunc / 1_000_000)?;
@@ -251,10 +261,10 @@ mod tests {
     fn price_from_str() {
         assert_eq!("123".parse(), Ok(Price(Decimal::new(123, 0))));
         assert_eq!("123.45".parse(), Ok(Price(Decimal::new(12345, 2))));
+        assert_eq!("$1000".parse::<Price>(), Ok(Price(Decimal::new(1000, 0))));
+        assert_eq!("$1,000".parse::<Price>(), Ok(Price(Decimal::new(1000, 0))));
+        assert_eq!("1,000".parse::<Price>(), Ok(Price(Decimal::new(1000, 0))));
         assert!("123xy".parse::<Price>().is_err());
-        assert!("$1000".parse::<Price>().is_err());
-        assert!("$1,000".parse::<Price>().is_err());
-        assert!("1,000".parse::<Price>().is_err());
     }
 
     #[test]

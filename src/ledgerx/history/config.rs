@@ -39,6 +39,8 @@ use std::collections::{BTreeMap, HashMap};
 /// undermine our ability to produce audit-safe documentation.
 #[derive(Clone, PartialEq, Eq, Deserialize, Debug)]
 pub struct Configuration {
+    /// User ID (provided in tax year 2022's CSV file)
+    pub user: usize,
     /// The tax year under question
     years: BTreeMap<i32, LotSelectionStrategy>,
     /// The LX-provided CSV file, crammed into a JSON string array

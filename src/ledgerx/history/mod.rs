@@ -211,7 +211,7 @@ enum Event {
         price: Price,
         size: Quantity,
         fee: Price,
-        synthetic: bool,
+        synthetic: Option<crate::option::PutCall>,
     },
     Assignment {
         option: crate::option::Option,
@@ -228,6 +228,7 @@ enum Event {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct History {
+    user_id: usize,
     years: BTreeMap<i32, tax::LotSelectionStrategy>,
     lot_db: HashMap<LotId, config::LotInfo>,
     transaction_db: crate::transaction::Database,
@@ -245,10 +246,14 @@ impl History {
         // Extract price reference from LX CSV lines
         let mut lx_price_ref = HashMap::new();
         for line in config.lx_csv() {
-            let data = crate::ledgerx::csv::CsvLine::from_str(line).map_err(anyhow::Error::msg)?;
-            for (time, price) in data.price_references() {
-                debug!("At {} using LX-inferred price {}", time, price,);
-                lx_price_ref.insert(time, price);
+            match crate::ledgerx::csv::price_ref(line) {
+                Err(e) => Err(anyhow::Error::msg(e))
+                    .with_context(|| format!("Parsing CSV line {line}"))?,
+                Ok(Some((date, price))) => {
+                    debug!("At {} using LX-inferred price {}", date, price,);
+                    lx_price_ref.insert(date, price);
+                }
+                Ok(None) => {} // no price ref
             }
         }
         // Extract transaction database from list of raw transactions
@@ -257,6 +262,7 @@ impl History {
             .context("extracting transaction database from config file")?;
         // Return
         Ok(History {
+            user_id: config.user,
             years: config.years().clone(),
             lot_db: config.lot_db().clone(),
             transaction_db,
@@ -482,7 +488,7 @@ impl History {
                         Side::Ask => -trade.filled_size.with_asset_trade(asset),
                     },
                     fee: trade.fee,
-                    synthetic: false,
+                    synthetic: None,
                 },
             );
         }
@@ -522,8 +528,8 @@ impl History {
             // This assertion maybe makes it clearer what we're doing.
             assert_eq!(assigned + expired, -pos.size, "{pos:?}");
 
-            // Insert the expiry event, if any
-            if expired != 0 {
+            // Insert the expiry event, if any (in 2021 this is BEFORE assignment, in 2022 AFTER)
+            if option.expiry.year() == 2021 && expired != 0 {
                 self.events.insert(
                     option.expiry,
                     Event::Expiry {
@@ -537,11 +543,15 @@ impl History {
             if assigned != 0 {
                 let n_assigned = UnknownQuantity::from(assigned).with_asset(pos.contract.asset());
                 // LedgerX's data has the time forced to 22:00 even when DST makes this wrong
-                let price_ref_date = option
-                    .expiry
-                    .date()
-                    .with_time(time::time!(22:00))
-                    .assume_utc();
+                let price_ref_date = if option.expiry.year() == 2021 {
+                    option
+                        .expiry
+                        .date()
+                        .with_time(time::time!(22:00))
+                        .assume_utc()
+                } else {
+                    option.expiry + time::Duration::hours(1)
+                };
 
                 self.events.insert(
                     option.expiry,
@@ -595,7 +605,18 @@ impl History {
                             crate::option::Put => -contracts_in_btc,
                         },
                         fee: Price::ZERO,
-                        synthetic: true,
+                        synthetic: Some(option.pc),
+                    },
+                );
+            }
+            // Insert the expiry event, if any (in 2021 this is BEFORE assignment, in 2022 AFTER)
+            if option.expiry.year() > 2021 && expired != 0 {
+                self.events.insert(
+                    option.expiry,
+                    Event::Expiry {
+                        option,
+                        underlying: pos.contract.underlying(),
+                        size: UnknownQuantity::from(expired).with_asset(pos.contract.asset()),
                     },
                 );
             }
@@ -640,7 +661,7 @@ impl History {
                     (btc_price, None, None),
                 ),
                 // Ignore synthetic trades for spreadsheeting purposes
-                Event::Trade { synthetic, .. } if *synthetic => continue,
+                Event::Trade { synthetic, .. } if synthetic.is_some() => continue,
                 Event::Trade {
                     asset, price, size, ..
                 } => (
@@ -769,11 +790,12 @@ impl History {
                     synthetic,
                 } => {
                     debug!(
-                        "[trade] \"{}\" {} @ {}; fee {}; synthetic: {}",
+                        "[trade] \"{}\" {} @ {}; fee {}; synthetic: {:?}",
                         asset, size, price, fee, synthetic
                     );
 
-                    let adj_price = if *synthetic && !self.lx_price_ref.contains_key(&date) {
+                    let adj_price = if synthetic.is_some() && !self.lx_price_ref.contains_key(&date)
+                    {
                         assert_eq!(*asset, TaxAsset::Bitcoin);
                         let btc_price = price_history.price_at(date).btc_price;
                         warn!(
@@ -794,7 +816,7 @@ impl History {
                     };
 
                     tracker
-                        .push_trade(*asset, *size, adj_price, date.into())
+                        .push_trade(*asset, *size, adj_price, date.into(), *synthetic)
                         .with_context(|| format!("pushing trade of {asset} size {size}"))?;
                 }
                 // Expiries are a simple tax event (a straight gain)
@@ -818,11 +840,15 @@ impl History {
                 } => {
                     debug!("[expiry] {} {} assigned {}", underlying, option, size);
                     // see "seriously WTF" doccomment
-                    let expiry = option
-                        .expiry
-                        .date()
-                        .with_time(time::time!(22:00))
-                        .assume_utc();
+                    let expiry = if option.expiry.year() == 2021 {
+                        option
+                            .expiry
+                            .date()
+                            .with_time(time::time!(22:00))
+                            .assume_utc()
+                    } else {
+                        option.expiry
+                    };
 
                     let btc_price = match price_ref {
                         Some(price) => *price,
@@ -931,9 +957,9 @@ impl History {
                     writeln!(report_full, "{}", lot.csv_printer())?;
                 }
                 tax::OpenClose::Close(ref close) => {
-                    let lx = close.csv_printer(event.asset, lot::PrintMode::LedgerX);
+                    let lx = close.csv_printer(event.asset, self.user_id, lot::PrintMode::LedgerX);
                     //let lx_alt = close.csv_printer(event.asset, lot::PrintMode::LedgerXAnnotated);
-                    let full = close.csv_printer(event.asset, lot::PrintMode::Full);
+                    let full = close.csv_printer(event.asset, self.user_id, lot::PrintMode::Full);
                     writeln!(report_lx, "{lx}")?;
                     writeln!(report_full, "{full}")?;
                 }

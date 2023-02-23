@@ -144,6 +144,8 @@ impl_display!(i64);
 impl_display!(u32);
 impl_display!(u64);
 impl_display!(crate::units::Price);
+impl_display!(crate::units::TaxAsset2022);
+impl_display!(rust_decimal::Decimal);
 
 macro_rules! impl_string {
     ($ty:ty) => {

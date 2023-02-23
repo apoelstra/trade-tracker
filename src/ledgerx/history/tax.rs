@@ -174,6 +174,7 @@ impl Position {
         date: TaxDate,
         open_ty: OpenType,
         close_ty: CloseType,
+        synthetic: Option<crate::option::PutCall>,
         lot_selection_strat: LotSelectionStrategy,
     ) -> anyhow::Result<(Vec<Close>, Option<Lot>)> {
         if self.has_same_direction(quantity) {
@@ -188,7 +189,7 @@ impl Position {
             } {
                 let existing_qty = existing_lot.quantity();
                 let (close, partial) = existing_lot
-                    .close(quantity, price, date, close_ty)
+                    .close(quantity, price, date, close_ty, synthetic)
                     .with_context(|| {
                         format!(
                             "Closing {} lot, qty {quantity} price {price} date {date}",
@@ -349,6 +350,7 @@ impl PositionTracker {
                 expiry.into(),
                 OpenType::Unknown,
                 CloseType::Expiry,
+                None,
                 LotSelectionStrategy::LedgerXFifo, // expiries are always options so always FIFO
             )
             .with_context(|| format!("Expiring {size} units of {asset}"))?;
@@ -358,7 +360,14 @@ impl PositionTracker {
                 "attempted expiry of {asset} but had fewer; left over {lot}"
             )));
         }
-        // If this was a complete expiry delete the asset
+        // In 2022+, expiries happen after assignments.
+        // This is essentially just a sanity check.
+        if expiry.year() > 2021 && !pos.queue.is_empty() {
+            return Err(anyhow::Error::msg(format!(
+                "done expiry of {asset} but position not fully closed; remaining {}",
+                pos.total_size()
+            )));
+        }
         if pos.queue.is_empty() {
             self.positions.remove(&asset);
         }
@@ -406,6 +415,7 @@ impl PositionTracker {
                 expiry.into(),
                 OpenType::Unknown,
                 CloseType::Exercise,
+                None,
                 LotSelectionStrategy::LedgerXFifo, // expiries are always options so always FIFO
             )
             .with_context(|| format!("Assigned on {size} units of {asset}"))?;
@@ -417,13 +427,15 @@ impl PositionTracker {
         }
         // Assignments should happen after expiries, and should be total (i.e. there
         // should be nothing left over). This is essentially just a sanity check.
-        if !pos.queue.is_empty() {
+        if expiry.year() == 2021 && !pos.queue.is_empty() {
             return Err(anyhow::Error::msg(format!(
                 "done assignment of {asset} but position not fully closed; remaining {}",
                 pos.total_size()
             )));
         }
-        self.positions.remove(&asset);
+        if pos.queue.is_empty() {
+            self.positions.remove(&asset);
+        }
 
         // Return the number of closes that happened.
         Ok(self.push_events("push_assignment", closes, None))
@@ -441,6 +453,7 @@ impl PositionTracker {
         quantity: Quantity,
         price: Price,
         mut date: TaxDate,
+        synthetic: Option<crate::option::PutCall>,
     ) -> anyhow::Result<usize> {
         let (open_ty, close_ty) = if quantity.is_nonnegative() {
             (OpenType::BuyToOpen, CloseType::BuyBack)
@@ -463,11 +476,14 @@ impl PositionTracker {
             // zero tax consequence since it's an exchange of cash for a cash contract
             // of equal value. It is only at expiry, when bitcoin changes hands, that
             // a taxable event occurs.
-            date = expiry
-                .date()
-                .with_time(time::time!(21:00))
-                .assume_utc()
-                .into();
+            date = expiry.into();
+            if date.year() == 2021 {
+                date = expiry
+                    .date()
+                    .with_time(time::time!(21:00))
+                    .assume_utc()
+                    .into();
+            }
             asset = TaxAsset::Bitcoin;
         }
 
@@ -478,7 +494,7 @@ impl PositionTracker {
         };
         let pos = self.positions.entry(asset).or_insert(Position::new(asset));
         let (closes, open) = pos
-            .add(quantity, price, date, open_ty, close_ty, strat)
+            .add(quantity, price, date, open_ty, close_ty, synthetic, strat)
             .with_context(|| format!("adding {quantity} units of {asset} at {price} on {date}",))?;
 
         Ok(self.push_events("push_trade", closes, open))

@@ -267,14 +267,16 @@ fn main() -> Result<(), anyhow::Error> {
             info!("Loaded contracts. Watching feed.");
 
             let mut last_update = now;
+            let mut last_price = current_price.btc_price;
             loop {
                 let mut sock = tungstenite::client::connect(format!(
                     "wss://api.ledgerx.com/ws?token={api_key}",
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
                     let current_time = time::OffsetDateTime::now_utc();
+                    let current_price = tracker.current_price().0;
                     info!(target: "lx_datafeed", "{}", msg);
-                    info!(target: "lx_btcprice", "{}", tracker.current_price().0);
+                    info!(target: "lx_btcprice", "{}", current_price);
 
                     let obj: datafeed::Object = serde_json::from_str(&msg)
                         .with_context(|| "parsing json from trading/contracts endpoint")?;
@@ -319,9 +321,15 @@ fn main() -> Result<(), anyhow::Error> {
                         tracker.initialize_orderbooks(reply, current_time);
                     }
 
-                    if current_time - last_update > time::Duration::seconds(180) {
+                    // Every 30 minutes log the "standing" data, or whenever the price moves a lot
+                    if current_time - last_update > time::Duration::seconds(1200)
+                        || current_price < last_price.scale_approx(0.98)
+                        || current_price > last_price.scale_approx(1.02)
+                    {
+                        tracker.log_open_orders();
                         tracker.log_interesting_contracts();
                         last_update = current_time;
+                        last_price = current_price;
                     }
                 } // while let
             } // loop

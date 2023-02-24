@@ -28,7 +28,7 @@ pub mod price_tracker;
 
 use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity, Underlying};
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
@@ -182,8 +182,49 @@ impl LedgerX {
     /// Initially uses a price reference supplied at construction (probably coming
     /// from the BTCCharts data ultimately); later will use the midpoint of the LX
     /// current bid/ask for day-ahead swaps.
-    pub fn current_price(&mut self) -> (Price, OffsetDateTime) {
+    pub fn current_price(&self) -> (Price, OffsetDateTime) {
         self.price_ref.reference()
+    }
+
+    /// Go through the list of all open orders and log them all
+    pub fn log_open_orders(&self) {
+        let price_ref = self.current_price();
+        for order in self.own_orders.open_order_iter() {
+            if let Some((contract, _)) = self.contracts.get(&order.contract_id) {
+                let size = order.size.with_asset_trade(contract.asset());
+                match contract.ty() {
+                    contract::Type::Option { opt, .. } => {
+                        info!("Open order {}", order.message_id);
+                        opt.log_option_data("Open ", price_ref.1, price_ref.0);
+                        opt.log_order_data(
+                            "Open ",
+                            price_ref.1,
+                            price_ref.0,
+                            order.price,
+                            Some(size),
+                        );
+                        info!("");
+                    }
+                    contract::Type::NextDay { .. } => {
+                        info!(
+                            "Open order {}: {} BTC @ {}",
+                            order.message_id, size, order.price
+                        );
+                    }
+                    contract::Type::Future { .. } => {
+                        info!(
+                            "Open order {}: {} future?? @ {}",
+                            order.message_id, size, order.price
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    "Have open order for CID {} that we're not tracking.",
+                    order.contract_id
+                );
+            }
+        }
     }
 
     /// Go through the list of all contracts we're tracking and log the interesting ones
@@ -305,7 +346,6 @@ impl LedgerX {
     /// Inserts a new order into the book
     pub fn insert_order(&mut self, order: datafeed::Order) -> UpdateResponse {
         let price_ref = self.current_price(); // need this now for borrowck reasons
-                                              // Then do usual order trackin
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => {

@@ -58,21 +58,8 @@ impl Reference {
     }
 
     /// Returns a price reference, if one can be obtained.
-    pub fn reference(&mut self) -> (Price, time::OffsetDateTime) {
-        let (bid, _) = self.book_state.best_bid();
-        let (ask, _) = self.book_state.best_ask();
-        // Don't return invalid data. Let the caller deal with it if
-        // we're missing data.
-        if bid != Price::ZERO {
-            self.last_best_bid = bid;
-            self.last_update = time::OffsetDateTime::now_utc();
-        }
-        if ask != Price::ZERO {
-            self.last_best_ask = ask;
-            self.last_update = time::OffsetDateTime::now_utc();
-        }
+    pub fn reference(&self) -> (Price, time::OffsetDateTime) {
         let pref = (self.last_best_bid + self.last_best_ask).half();
-        self.log("fetch reference");
         (pref, self.last_update)
     }
 
@@ -90,6 +77,19 @@ impl Reference {
     pub fn insert_order(&mut self, order: Order) {
         let (size, price, time) = (order.size, order.price, order.timestamp);
         self.book_state.insert_order(order);
+
+        let (bid, _) = self.book_state.best_bid();
+        let (ask, _) = self.book_state.best_ask();
+        // Don't return invalid data. Let the caller deal with it if
+        // we're missing data.
+        if bid != Price::ZERO {
+            self.last_best_bid = bid;
+            self.last_update = time::OffsetDateTime::now_utc();
+        }
+        if ask != Price::ZERO {
+            self.last_best_ask = ask;
+            self.last_update = time::OffsetDateTime::now_utc();
+        }
 
         self.log(format_args!(
             "record order at price {} size {} time {}",

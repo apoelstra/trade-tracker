@@ -132,4 +132,9 @@ impl Tracker {
             }
         }
     }
+
+    /// Get an iterator over all open orders
+    pub fn open_order_iter(&self) -> impl Iterator<Item = &Order> {
+        self.map.values()
+    }
 }

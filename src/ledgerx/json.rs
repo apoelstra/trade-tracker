@@ -193,7 +193,6 @@ pub struct MessageInner {
 #[derive(Deserialize, Debug)]
 pub struct MessageData {
     pub message: MessageInner,
-    pub conversation_id: usize,
 }
 
 #[derive(Deserialize, Debug)]
@@ -260,6 +259,7 @@ pub enum DataFeedObject {
     ContactDisconnected {},
     ConversationNewMessage {
         data: MessageData,
+        conversation_id: usize,
     },
     StateManifest {},
     BookTop {

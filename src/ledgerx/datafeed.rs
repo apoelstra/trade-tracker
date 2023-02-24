@@ -186,11 +186,14 @@ impl From<json::DataFeedObject> for Object {
             }
             json::DataFeedObject::ContractAdded { data } => Object::ContractAdded(data),
             json::DataFeedObject::ContractRemoved { data } => Object::ContractRemoved(data.id()),
-            json::DataFeedObject::ConversationNewMessage { data } => Object::ChatMessage {
+            json::DataFeedObject::ConversationNewMessage {
+                data,
+                conversation_id,
+            } => Object::ChatMessage {
                 message: data.message.message,
                 initiator: data.message.initiator.chat_username,
                 counterparty: data.message.counterparty.chat_username,
-                chat_id: data.conversation_id,
+                chat_id: conversation_id,
             },
             _ => Object::Other,
         }

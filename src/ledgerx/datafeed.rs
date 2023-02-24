@@ -126,6 +126,12 @@ pub enum Object {
     },
     ContractAdded(Contract),
     ContractRemoved(ContractId),
+    ChatMessage {
+        message: String,
+        initiator: String,
+        counterparty: String,
+        chat_id: usize,
+    },
     Other,
 }
 
@@ -180,6 +186,12 @@ impl From<json::DataFeedObject> for Object {
             }
             json::DataFeedObject::ContractAdded { data } => Object::ContractAdded(data),
             json::DataFeedObject::ContractRemoved { data } => Object::ContractRemoved(data.id()),
+            json::DataFeedObject::ConversationNewMessage { data } => Object::ChatMessage {
+                message: data.message.message,
+                initiator: data.message.initiator.chat_username,
+                counterparty: data.message.counterparty.chat_username,
+                chat_id: data.conversation_id,
+            },
             _ => Object::Other,
         }
     }

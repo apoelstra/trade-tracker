@@ -178,6 +178,25 @@ pub struct AllBalances {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct ChatCounterparty {
+    pub chat_username: String,
+    pub is_online: bool,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct MessageInner {
+    pub message: String,
+    pub counterparty: ChatCounterparty,
+    pub initiator: ChatCounterparty,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct MessageData {
+    pub message: MessageInner,
+    pub conversation_id: usize,
+}
+
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum DataFeedObject {
     ActionReport {
@@ -239,6 +258,9 @@ pub enum DataFeedObject {
     ContactRemoved {},
     ContactConnected {},
     ContactDisconnected {},
+    ConversationNewMessage {
+        data: MessageData,
+    },
     StateManifest {},
     BookTop {
         contract_id: super::ContractId,

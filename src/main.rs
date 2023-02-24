@@ -301,6 +301,17 @@ fn main() -> Result<(), anyhow::Error> {
                         datafeed::Object::ContractRemoved(cid) => {
                             tracker.remove_contract(cid);
                         }
+                        datafeed::Object::ChatMessage {
+                            message,
+                            initiator,
+                            counterparty,
+                            chat_id,
+                        } => {
+                            info!(
+                                "New message (chat {}) between {} and {}: {}",
+                                chat_id, initiator, counterparty, message
+                            );
+                        }
                     }
 
                     // Initialize any pending contracts

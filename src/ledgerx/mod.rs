@@ -249,7 +249,7 @@ impl LedgerX {
                         );
                     }
 
-                    let (bid_price, bid_size) = book.best_ask();
+                    let (bid_price, bid_size) = book.best_bid();
                     let (max_bid_size, _) =
                         opt.max_sale(bid_price, self.available_usd, self.available_btc);
                     opt.log_order_data(

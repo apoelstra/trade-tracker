@@ -67,7 +67,7 @@ impl Tracker {
         let mid = order.message_id;
         let (msg, size, price) = if order.size == UnknownQuantity::from(0) {
             // A deletion or fill?
-            let filled_size = order.filled_size.with_asset(contract.asset());
+            let filled_size = order.filled_size.with_asset_trade(contract.asset());
             if filled_size.is_nonzero() {
                 // For fills specifically send a text
                 use std::process::Command;
@@ -80,7 +80,7 @@ impl Tracker {
             } else if let Some(old_order) = self.map.remove(&order.message_id) {
                 (
                     "Deleted ",
-                    old_order.size.with_asset(contract.asset()),
+                    old_order.size.with_asset_trade(contract.asset()),
                     old_order.filled_price,
                 )
             } else {
@@ -95,7 +95,7 @@ impl Tracker {
             let data = if existing.updated_timestamp != order.updated_timestamp {
                 (
                     "Updated ",
-                    order.size.with_asset(contract.asset()),
+                    order.size.with_asset_trade(contract.asset()),
                     order.price,
                 )
             } else {
@@ -107,7 +107,7 @@ impl Tracker {
             // Or a new order?
             let data = (
                 "Created ",
-                order.size.with_asset(contract.asset()),
+                order.size.with_asset_trade(contract.asset()),
                 order.price,
             );
             self.map.insert(order.message_id, order);

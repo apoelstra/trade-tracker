@@ -211,7 +211,6 @@ enum Event {
         price: Price,
         size: Quantity,
         fee: Price,
-        synthetic: Option<crate::option::PutCall>,
     },
     Assignment {
         option: crate::option::Option,
@@ -488,7 +487,6 @@ impl History {
                         Side::Ask => -trade.filled_size.with_asset_trade(asset),
                     },
                     fee: trade.fee,
-                    synthetic: None,
                 },
             );
         }
@@ -528,10 +526,21 @@ impl History {
             // This assertion maybe makes it clearer what we're doing.
             assert_eq!(assigned + expired, -pos.size, "{pos:?}");
 
+            // LedgerX's data has the time forced to 22:00 even when DST makes this wrong
+            let price_ref_date = if option.expiry.year() == 2021 {
+                option
+                    .expiry
+                    .date()
+                    .with_time(time::time!(22:00))
+                    .assume_utc()
+            } else {
+                option.expiry + time::Duration::hours(1)
+            };
+
             // Insert the expiry event, if any (in 2021 this is BEFORE assignment, in 2022 AFTER)
             if option.expiry.year() == 2021 && expired != 0 {
                 self.events.insert(
-                    option.expiry,
+                    price_ref_date,
                     Event::Expiry {
                         option,
                         underlying: pos.contract.underlying(),
@@ -542,19 +551,8 @@ impl History {
             // Insert the assignment event, if any
             if assigned != 0 {
                 let n_assigned = UnknownQuantity::from(assigned).with_asset(pos.contract.asset());
-                // LedgerX's data has the time forced to 22:00 even when DST makes this wrong
-                let price_ref_date = if option.expiry.year() == 2021 {
-                    option
-                        .expiry
-                        .date()
-                        .with_time(time::time!(22:00))
-                        .assume_utc()
-                } else {
-                    option.expiry + time::Duration::hours(1)
-                };
-
                 self.events.insert(
-                    option.expiry,
+                    price_ref_date,
                     Event::Assignment {
                         option,
                         underlying: pos.contract.underlying(),
@@ -562,57 +560,11 @@ impl History {
                         price_ref: self.lx_price_ref.get(&price_ref_date).copied(),
                     },
                 );
-
-                // For tax purposes, after exercising we exchange Bitcoin **at the market price**,
-                // not **at the strike price**. This is a bit confusing because of course, in the
-                // trading interface, it appears that you get assigned and forced to trade at the
-                // strike.
-                //
-                // However, tax-wise this would mean taking an instanteous loss (presumably a
-                // short-term loss) and getting Bitcoin at a favorable basis. The IRS instead
-                // wants the loss to be taxed as 1256 and for the Bitcoin to be traded at the
-                // actual market price. Ok, fair enough.
-                //
-                // What this means for us here is that we actually need a price reference, we can't
-                // just look at the price at which the coins changed hands.
-                let trade_price = match self.lx_price_ref.get(&price_ref_date) {
-                    Some(price) => *price,
-                    None => {
-                        warn!(
-                            "Do not have a LX price reference for {price_ref_date}. \
-                             An option assignment occured at this date ({} of {}). For tax purposes \
-                             the consequential trade needs to happen at market prices. \
-                             We do not have this, so we will replace it with a non-official \
-                             price reference later. This is NOT CORRECT and data for this \
-                             year {} SHOULD NOT BE SUBMITTED TO THE IRS.",
-                            n_assigned, option, price_ref_date.year(),
-                        );
-                        option.strike
-                    }
-                };
-
-                // Assignments also cause synthetic trades to happen, which have the
-                // same tax consequences as any other trade.
-                debug!("Because of assignment inserting a synthetic BTC trade");
-                let contracts_in_btc = Quantity::from(n_assigned.btc_equivalent());
-                self.events.insert(
-                    price_ref_date,
-                    Event::Trade {
-                        asset: TaxAsset::Bitcoin,
-                        price: trade_price,
-                        size: match option.pc {
-                            crate::option::Call => -contracts_in_btc,
-                            crate::option::Put => contracts_in_btc,
-                        },
-                        fee: Price::ZERO,
-                        synthetic: Some(option.pc),
-                    },
-                );
             }
             // Insert the expiry event, if any (in 2021 this is BEFORE assignment, in 2022 AFTER)
             if option.expiry.year() > 2021 && expired != 0 {
                 self.events.insert(
-                    option.expiry,
+                    price_ref_date,
                     Event::Expiry {
                         option,
                         underlying: pos.contract.underlying(),
@@ -661,7 +613,6 @@ impl History {
                     (btc_price, None, None),
                 ),
                 // Ignore synthetic trades for spreadsheeting purposes
-                Event::Trade { synthetic, .. } if synthetic.is_some() => continue,
                 Event::Trade {
                     asset, price, size, ..
                 } => (
@@ -787,36 +738,13 @@ impl History {
                     price,
                     size,
                     fee,
-                    synthetic,
                 } => {
-                    debug!(
-                        "[trade] \"{}\" {} @ {}; fee {}; synthetic: {:?}",
-                        asset, size, price, fee, synthetic
-                    );
+                    debug!("[trade] \"{}\" {} @ {}; fee {}", asset, size, price, fee,);
 
-                    let adj_price = if synthetic.is_some() && !self.lx_price_ref.contains_key(&date)
-                    {
-                        assert_eq!(*asset, TaxAsset::Bitcoin);
-                        let btc_price = price_history.price_at(date).btc_price;
-                        warn!(
-                            "Using price {} for synthetic trade (assignment) at {}. See \
-                             above warning.",
-                            btc_price, date,
-                        );
-                        writeln!(
-                            metadata,
-                            "WARNING: used non-official price reference of {} on {} for synthetic trade \
-                             (strike {} size {})",
-                            btc_price, date, price, size,
-                        )?;
-                        btc_price
-                    } else {
-                        let unit_fee = *fee / *size;
-                        *price + unit_fee // nb `unit_fee` is a signed quantity
-                    };
+                    let adj_price = *price + *fee / *size; // nb `unit_fee` is a signed quantity
 
                     tracker
-                        .push_trade(*asset, *size, adj_price, date.into(), *synthetic)
+                        .push_trade(*asset, *size, adj_price, date.into())
                         .with_context(|| format!("pushing trade of {asset} size {size}"))?;
                 }
                 // Expiries are a simple tax event (a straight gain)
@@ -838,18 +766,10 @@ impl History {
                     size,
                     price_ref,
                 } => {
-                    debug!("[expiry] {} {} assigned {}", underlying, option, size);
-                    // see "seriously WTF" doccomment
-                    let expiry = if option.expiry.year() == 2021 {
-                        option
-                            .expiry
-                            .date()
-                            .with_time(time::time!(22:00))
-                            .assume_utc()
-                    } else {
-                        option.expiry
-                    };
-
+                    debug!(
+                        "[expiry] {} {} assigned {} at date {}",
+                        underlying, option, size, date
+                    );
                     let btc_price = match price_ref {
                         Some(price) => *price,
                         None => {
@@ -858,10 +778,10 @@ impl History {
                             // forever to do. But arguably it should be a hard error
                             // because the result will not be so easily justifiable to
                             // the IRS.
-                            let btc_price = price_history.price_at(expiry);
+                            let btc_price = price_history.price_at(date);
                             warn!(
                                 "Do not have LX price reference for {}; using price {}",
-                                expiry, btc_price
+                                date, btc_price
                             );
                             writeln!(
                                 metadata,

@@ -358,6 +358,11 @@ impl Close {
         self.open_original_quantity
     }
 
+    /// The amount closed
+    pub fn quantity(&self) -> Quantity {
+        self.quantity
+    }
+
     /// The basis of the lot at its size prior to this close
     pub fn old_lot_basis(&self) -> Price {
         self.open_price * self.open_original_quantity

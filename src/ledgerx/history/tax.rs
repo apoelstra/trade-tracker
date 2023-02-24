@@ -437,8 +437,58 @@ impl PositionTracker {
             self.positions.remove(&asset);
         }
 
-        // Return the number of closes that happened.
-        Ok(self.push_events("push_assignment", closes, None))
+        // Each close also triggers a synthetic BTC trade of the same amount. Notice that
+        // for tax purposes, after exercising we exchange Bitcoin **at the market price**,
+        // not **at the strike price**. This is a bit confusing because of course, in the
+        // trading interface, it appears that you get assigned and forced to trade at the
+        // strike.
+        //
+        // However, tax-wise this would mean taking an instanteous loss (presumably a
+        // short-term loss) and getting Bitcoin at a favorable basis. The IRS instead
+        // wants the loss to be taxed as 1256 and for the Bitcoin's basis to be the
+        // actual market price. Ok, fair enough.
+        let n_closes = closes.len();
+        for close in closes {
+            let btc_qty = match option.pc {
+                crate::option::Call => (-close.quantity()).btc_equivalent().into(),
+                crate::option::Put => close.quantity().btc_equivalent().into(),
+            };
+            debug!(
+                "Because of assignment of {} units of {}, creating synthetic BTC trade of {}",
+                close.quantity(),
+                asset,
+                btc_qty,
+            );
+            // Note: anonyingly have to re-look-up bitcoin position on every loop
+            // iteration because the borrowck complains about the self.push_events
+            // below.
+            let bitcoin_pos = self
+                .positions
+                .entry(TaxAsset::Bitcoin)
+                .or_insert(Position::new(TaxAsset::Bitcoin));
+            let (btc_closes, btc_open) = bitcoin_pos
+                .add(
+                    btc_qty,
+                    btc_price,
+                    expiry.into(),
+                    OpenType::BuyToOpen,
+                    if close.quantity().is_positive() {
+                        CloseType::BuyBack
+                    } else {
+                        CloseType::Sell
+                    },
+                    Some(option.pc),
+                    self.bitcoin_strat,
+                )
+                .with_context(|| format!("BTC trade b/c assigned {size} of {asset}"))?;
+
+            self.push_events("push_assignment [opt]", vec![close], None);
+            self.push_events("push_assignment [btc]", btc_closes, btc_open);
+        }
+
+        // Return the number of option closes that happened (nothing about the number
+        // of BTC events that happened, which it's unclear how/if we should report)
+        Ok(n_closes)
     }
 
     /// Adds a trade of some asset to the tracker, adjusting positions as appropriate.
@@ -453,7 +503,6 @@ impl PositionTracker {
         quantity: Quantity,
         price: Price,
         mut date: TaxDate,
-        synthetic: Option<crate::option::PutCall>,
     ) -> anyhow::Result<usize> {
         let (open_ty, close_ty) = if quantity.is_nonnegative() {
             (OpenType::BuyToOpen, CloseType::BuyBack)
@@ -494,7 +543,7 @@ impl PositionTracker {
         };
         let pos = self.positions.entry(asset).or_insert(Position::new(asset));
         let (closes, open) = pos
-            .add(quantity, price, date, open_ty, close_ty, synthetic, strat)
+            .add(quantity, price, date, open_ty, close_ty, None, strat)
             .with_context(|| format!("adding {quantity} units of {asset} at {price} on {date}",))?;
 
         Ok(self.push_events("push_trade", closes, open))

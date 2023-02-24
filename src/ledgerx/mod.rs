@@ -24,9 +24,10 @@ pub mod datafeed;
 pub mod history;
 pub mod json;
 pub mod own_orders;
+pub mod price_tracker;
 
 use crate::terminal::ColorFormat;
-use crate::units::{Price, Quantity, Underlying};
+use crate::units::{Asset, Price, Quantity, Underlying};
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json;
@@ -137,12 +138,11 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LedgerX {
     contracts: HashMap<ContractId, (Contract, BookState)>,
+    price_ref: price_tracker::Reference,
+    backup_price_ref: crate::price::BitcoinPrice,
     own_orders: own_orders::Tracker,
     available_usd: Price,
     available_btc: bitcoin::Amount,
-    last_btc_bid: Price,
-    last_btc_ask: Price,
-    last_btc_time: OffsetDateTime,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
@@ -163,11 +163,10 @@ impl LedgerX {
         LedgerX {
             contracts: HashMap::new(),
             own_orders: own_orders::Tracker::new(),
+            price_ref: price_tracker::Reference::new(),
+            backup_price_ref: btc_price,
             available_usd: Price::ZERO,
             available_btc: bitcoin::Amount::ZERO,
-            last_btc_bid: btc_price.btc_price,
-            last_btc_ask: btc_price.btc_price,
-            last_btc_time: btc_price.timestamp,
         }
     }
 
@@ -186,10 +185,10 @@ impl LedgerX {
     /// from the BTCCharts data ultimately); later will use the midpoint of the LX
     /// current bid/ask for day-ahead swaps.
     pub fn current_price(&self) -> (Price, OffsetDateTime) {
-        (
-            (self.last_btc_bid + self.last_btc_ask).half(),
-            self.last_btc_time,
-        )
+        self.price_ref.reference().unwrap_or((
+            self.backup_price_ref.btc_price,
+            self.backup_price_ref.timestamp,
+        ))
     }
 
     /// Go through the list of all contracts we're tracking and log the interesting ones
@@ -280,8 +279,8 @@ impl LedgerX {
                 book.log_interesting_orders(
                     &opt,
                     now,
-                    self.last_btc_bid,
-                    self.last_btc_ask,
+                    self.price_ref.best_bid(),
+                    self.price_ref.best_ask(),
                     self.available_usd,
                     self.available_btc,
                 );
@@ -334,33 +333,16 @@ impl LedgerX {
             self.own_orders
                 .insert_order(contract, order.clone(), price_ref);
         }
-        let timestamp = order.timestamp;
-        // Insert the order and signal if the best bid/ask has changed.
-        // Note that we check whether it changed by comparing the before-and-after values.
-        // Anything "more clever" than this may fail to catch edge cases where e.g. the
-        // previous best order has its size reduced to 0 and is dropped from the book.
-        let old_bb = book_state.best_bid();
-        let old_ba = book_state.best_ask();
-        debug!("Inserting into contract {}: {}", contract.id(), order);
-        book_state.insert_order(order);
-        let new_bb = book_state.best_bid();
-        let new_ba = book_state.best_ask();
 
-        let is_bb = old_bb != new_bb;
-        let is_ba = old_ba != new_ba;
-        // For day-ahead swaps update the current BTC price reference
-        if let contract::Type::NextDay { .. } = contract.ty() {
-            if contract.underlying() == Underlying::Btc && (is_bb || is_ba) {
-                if is_bb && new_bb.0 > Price::ZERO {
-                    self.last_btc_bid = new_bb.0;
-                }
-                if is_ba && new_ba.0 > Price::ZERO {
-                    self.last_btc_ask = new_ba.0;
-                }
-                self.last_btc_time = timestamp;
-            }
+        // Insert the order into the main book.
+        debug!("Inserting into contract {}: {}", contract.id(), order);
+        if contract.asset() == Asset::Btc {
+            // For day-ahead swaps update the current BTC price reference
+            self.price_ref.insert_order(order.clone());
+            book_state.insert_order(order);
             UpdateResponse::AcceptedBtc
         } else {
+            book_state.insert_order(order);
             UpdateResponse::Accepted
         }
     }
@@ -371,6 +353,14 @@ impl LedgerX {
         data: json::BookStateMessage,
         timestamp: OffsetDateTime,
     ) {
+        // Delete existing data
+        if let Some((contract, ref mut book_state)) = self.contracts.get_mut(&data.data.contract_id)
+        {
+            *book_state = BookState::new(contract.asset());
+            if contract.asset() == Asset::Btc {
+                self.price_ref = price_tracker::Reference::new();
+            }
+        }
         for order in data.data.book_states {
             self.insert_order(datafeed::Order::from((order, timestamp)));
         }

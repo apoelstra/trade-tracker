@@ -139,7 +139,6 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
 pub struct LedgerX {
     contracts: HashMap<ContractId, (Contract, BookState)>,
     price_ref: price_tracker::Reference,
-    backup_price_ref: crate::price::BitcoinPrice,
     own_orders: own_orders::Tracker,
     available_usd: Price,
     available_btc: bitcoin::Amount,
@@ -163,8 +162,7 @@ impl LedgerX {
         LedgerX {
             contracts: HashMap::new(),
             own_orders: own_orders::Tracker::new(),
-            price_ref: price_tracker::Reference::new(),
-            backup_price_ref: btc_price,
+            price_ref: price_tracker::Reference::new(btc_price),
             available_usd: Price::ZERO,
             available_btc: bitcoin::Amount::ZERO,
         }
@@ -184,11 +182,8 @@ impl LedgerX {
     /// Initially uses a price reference supplied at construction (probably coming
     /// from the BTCCharts data ultimately); later will use the midpoint of the LX
     /// current bid/ask for day-ahead swaps.
-    pub fn current_price(&self) -> (Price, OffsetDateTime) {
-        self.price_ref.reference().unwrap_or((
-            self.backup_price_ref.btc_price,
-            self.backup_price_ref.timestamp,
-        ))
+    pub fn current_price(&mut self) -> (Price, OffsetDateTime) {
+        self.price_ref.reference()
     }
 
     /// Go through the list of all contracts we're tracking and log the interesting ones
@@ -358,7 +353,7 @@ impl LedgerX {
         {
             *book_state = BookState::new(contract.asset());
             if contract.asset() == Asset::Btc {
-                self.price_ref = price_tracker::Reference::new();
+                self.price_ref.clear_book();
             }
         }
         for order in data.data.book_states {

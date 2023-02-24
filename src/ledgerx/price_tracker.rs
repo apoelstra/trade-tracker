@@ -27,64 +27,79 @@ use log::debug;
 pub struct Reference {
     /// The BTC book state, from which we obtain our price reference
     book_state: BookState,
+    /// Last available best bid
+    last_best_bid: Price,
+    /// Last available best ask
+    last_best_ask: Price,
     /// Time of the most recent update to the book
     last_update: time::OffsetDateTime,
 }
 
 impl Reference {
-    /// Create a new empty price reference
-    pub fn new() -> Self {
+    /// Create a new empty price reference, using an input price as a starting point
+    pub fn new(price_ref: crate::price::BitcoinPrice) -> Self {
         Reference {
             book_state: BookState::new(Asset::Btc),
-            last_update: time::OffsetDateTime::now_utc(),
+            last_best_bid: price_ref.btc_price,
+            last_best_ask: price_ref.btc_price,
+            last_update: price_ref.timestamp,
         }
     }
 
+    fn log<D: std::fmt::Display>(&self, reason: D) {
+        debug!(
+            "[price reference] {}; {} (bb {} ba {}, last update {})",
+            reason,
+            (self.last_best_bid + self.last_best_ask).half(),
+            self.last_best_bid,
+            self.last_best_ask,
+            self.last_update
+        );
+    }
+
     /// Returns a price reference, if one can be obtained.
-    pub fn reference(&self) -> Option<(Price, time::OffsetDateTime)> {
+    pub fn reference(&mut self) -> (Price, time::OffsetDateTime) {
         let (bid, _) = self.book_state.best_bid();
         let (ask, _) = self.book_state.best_ask();
         // Don't return invalid data. Let the caller deal with it if
         // we're missing data.
-        if bid == Price::ZERO || ask == Price::ZERO {
-            debug!("[price reference] reference no data");
-            return None;
+        if bid != Price::ZERO {
+            self.last_best_bid = bid;
+            self.last_update = time::OffsetDateTime::now_utc();
         }
-        let pref = (bid + ask).half();
-        debug!(
-            "[price reference] reference {} ({})",
-            pref, self.last_update
-        );
-        Some((pref, self.last_update))
+        if ask != Price::ZERO {
+            self.last_best_ask = ask;
+            self.last_update = time::OffsetDateTime::now_utc();
+        }
+        let pref = (self.last_best_bid + self.last_best_ask).half();
+        self.log("fetch reference");
+        (pref, self.last_update)
     }
 
     /// Returns the current best bid, or 0 if none exists
     pub fn best_bid(&self) -> Price {
-        self.book_state.best_bid().0
+        self.last_best_bid
     }
 
     /// Returns the current best ask, or 0 if none exists
     pub fn best_ask(&self) -> Price {
-        self.book_state.best_ask().0
+        self.last_best_ask
     }
 
     /// Adds an order to the price reference
     pub fn insert_order(&mut self, order: Order) {
-        let (size, price) = (order.size, order.price);
-        self.last_update = order.timestamp;
+        let (size, price, time) = (order.size, order.price, order.timestamp);
         self.book_state.insert_order(order);
 
-        // Log current state (don't filter invalid data here)
-        let (bid, _) = self.book_state.best_bid();
-        let (ask, _) = self.book_state.best_ask();
-        debug!(
-            "[price reference] record order at price {} size {} time {}; reference {} (bb {} ba {})",
-            price,
-            size,
-            self.last_update,
-            (bid + ask).half(),
-            bid,
-            ask,
-        );
+        self.log(format_args!(
+            "record order at price {} size {} time {}",
+            price, size, time,
+        ));
+    }
+
+    /// Clear out the order book (but retain the current "last best bid/ask" data)
+    pub fn clear_book(&mut self) {
+        self.book_state = BookState::new(Asset::Btc);
+        self.log("clear book");
     }
 }

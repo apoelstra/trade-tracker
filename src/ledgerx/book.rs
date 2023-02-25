@@ -65,7 +65,6 @@ impl BookState {
                 size,
                 message_id: order.message_id,
                 timestamp: order.timestamp,
-                last_log: None,
             };
             book.insert((order.price, order.message_id), book_order);
         }
@@ -131,7 +130,7 @@ impl BookState {
     }
 
     pub fn log_interesting_orders(
-        &mut self,
+        &self,
         opt: &crate::option::Option,
         now: OffsetDateTime,
         btc_bid: Price,
@@ -141,7 +140,7 @@ impl BookState {
     ) {
         let (best_bid, _) = self.best_bid();
         let mut bid_depth = Quantity::Zero;
-        for bid in self.bids.values_mut().rev() {
+        for bid in self.bids.values().rev() {
             // Don't bother logging bids that are less than 50% of the best
             if bid.price < best_bid.half() {
                 break;
@@ -166,7 +165,7 @@ impl BookState {
 
         let (best_ask, _) = self.best_ask();
         let mut ask_depth = Quantity::Zero;
-        for ask in self.asks.values_mut() {
+        for ask in self.asks.values() {
             // Don't bother logging asks that are more than 200% of the best
             if ask.price < best_ask.double() {
                 break;
@@ -202,12 +201,10 @@ pub struct Order {
     pub message_id: MessageId,
     /// Timestamp that the order occured on
     pub timestamp: OffsetDateTime,
-    /// The most recent time this order was logged as "interesting"
-    pub last_log: Option<OffsetDateTime>,
 }
 
 fn log_bid_if_interesting(
-    order: &mut Order,
+    order: &Order,
     opt: &crate::option::Option,
     now: OffsetDateTime,
     btc_bid: Price,
@@ -215,12 +212,6 @@ fn log_bid_if_interesting(
     available_usd: Price,
     available_btc: bitcoin::Amount,
 ) {
-    if let Some(last_log) = order.last_log {
-        // Refuse to log the same order more than once every 4 hours
-        if now - last_log < time::Duration::hours(4) {
-            return;
-        }
-    }
     // For bids we'll just use the midpoint since we're not thinking
     // about any short-option-delta-neutral strategies. If we were
     // trying to go delta-neutral we should use the best BTC ask instead.
@@ -235,13 +226,11 @@ fn log_bid_if_interesting(
     if super::BID_INTERESTING.is_interesting(opt, now, btc_price, order.price, order_size) {
         opt.log_option_data(ColorFormat::pale_aqua("Interesting bid: "), now, btc_price);
         opt.log_order_data("    Price: ", now, btc_price, order.price, Some(order_size));
-
-        order.last_log = Some(now);
     }
 }
 
 fn log_ask_if_interesting(
-    order: &mut Order,
+    order: &Order,
     opt: &crate::option::Option,
     now: OffsetDateTime,
     btc_bid: Price,
@@ -249,12 +238,6 @@ fn log_ask_if_interesting(
     available_usd: Price,
     available_btc: bitcoin::Amount,
 ) {
-    if let Some(last_log) = order.last_log {
-        // Refuse to log the same order more than once every 4 hours
-        if now - last_log < time::Duration::hours(4) {
-            return;
-        }
-    }
     // Add a fudge factor because there's a race condition involved in
     // executing on something like this, so we want a nontrivial payout
     let btc_price = if opt.pc == crate::option::Call {
@@ -307,8 +290,6 @@ fn log_ask_if_interesting(
                 max_profit,
             );
         }
-
-        order.last_log = Some(now);
     } else {
         // Otherwise they may be interesting to match
         let (max_ask_size, _) = opt.max_sale(order.price, available_usd, available_btc);
@@ -325,7 +306,6 @@ fn log_ask_if_interesting(
                 order.price,
                 Some(max_ask_size),
             );
-            order.last_log = Some(now);
         }
     }
 }

@@ -194,10 +194,10 @@ impl LedgerX {
                 let size = order.size.with_asset_trade(contract.asset());
                 match contract.ty() {
                     contract::Type::Option { opt, .. } => {
-                        info!("Open order {}", order.message_id);
-                        opt.log_option_data("Open ", price_ref.1, price_ref.0);
+                        info!("Open order {}:", order.message_id);
+                        opt.log_option_data("    ", price_ref.1, price_ref.0);
                         opt.log_order_data(
-                            "Open ",
+                            "    ",
                             price_ref.1,
                             price_ref.0,
                             order.price,
@@ -239,18 +239,12 @@ impl LedgerX {
     }
 
     /// Log a single interesting contract
-    fn log_interesting_contract(&mut self, cid: ContractId) {
+    fn log_interesting_contract(&self, cid: ContractId) {
         let (btc_price, now) = self.current_price();
-        if let Some(&mut (ref mut c, ref mut book)) = self.contracts.get_mut(&cid) {
+        if let Some((c, book)) = self.contracts.get(&cid) {
             // Only log BTC contracts
             if c.underlying() != Underlying::Btc {
                 return;
-            }
-            if let Some(last_log) = c.last_log {
-                // Refuse to log the same contract more than once every 4 hours
-                if now - last_log < time::Duration::hours(4) {
-                    return;
-                }
             }
             // Log the contract itself
             if let Some(opt) = c.as_option() {
@@ -307,7 +301,6 @@ impl LedgerX {
                         ask_price,
                         Some(ask_size),
                     );
-                    c.last_log = Some(now);
                 }
             }
             // Log open orders

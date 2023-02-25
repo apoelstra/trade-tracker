@@ -76,8 +76,6 @@ pub struct Contract {
     label: String,
     /// Multiplier (100 for BTC options, 10 for ETH options)
     multiplier: usize,
-    /// Most recent "interesting contract" log date
-    pub last_log: Option<OffsetDateTime>,
 }
 
 impl fmt::Display for Contract {
@@ -212,7 +210,6 @@ impl TryFrom<json::Contract> for Contract {
             underlying: js.underlying_asset,
             multiplier: js.multiplier,
             label: js.label,
-            last_log: None,
         })
     }
 }
@@ -253,7 +250,6 @@ mod tests {
                 underlying: Underlying::Eth,
                 multiplier: 10,
                 label: "ETH-29DEC2023-4000-Put".into(),
-                last_log: None,
             },
         );
     }
@@ -280,7 +276,6 @@ mod tests {
                 underlying: Underlying::Btc,
                 multiplier: 100,
                 label: "BTC-Mini-29DEC2023-25000-Call".into(),
-                last_log: None,
             },
         );
     }
@@ -301,7 +296,6 @@ mod tests {
                 underlying: Underlying::Btc,
                 multiplier: 100,
                 label: "BTC-Mini-14FEB2023-NextDay".into(),
-                last_log: None,
             },
         );
     }
@@ -322,7 +316,6 @@ mod tests {
                 underlying: Underlying::Btc,
                 multiplier: 100,
                 label: "BTC-Mini-31MAR2023-Future".into(),
-                last_log: None,
             },
         );
     }

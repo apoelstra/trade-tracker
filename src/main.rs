@@ -321,8 +321,8 @@ fn main() -> Result<(), anyhow::Error> {
                         tracker.initialize_orderbooks(reply, current_time);
                     }
 
-                    // Every 30 minutes log the "standing" data, or whenever the price moves a lot
-                    if current_time - last_update > time::Duration::seconds(1200)
+                    // Log the "standing" data every 6 hours or whenever the price moves a lot
+                    if current_time - last_update > time::Duration::hours(6)
                         || current_price < last_price.scale_approx(0.98)
                         || current_price > last_price.scale_approx(1.02)
                     {

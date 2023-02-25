@@ -278,8 +278,8 @@ mod tests {
         assert_eq!(format!("{}", price!(123.45)), "123.45");
 
         assert_eq!(format!("{}", price!(123456789)), "123456789.00");
-        assert_eq!(format!("{:#}", price!(123456789)), "$123,456,789.00");
-        assert_eq!(format!("{:#}", price!(1234567.89)), "$1,234,567.89");
-        assert_eq!(format!("{:#}", price!(34567.09)), "$34,567.09");
+        assert_eq!(format!("{:#}", price!(123456789)), "123,456,789.00");
+        assert_eq!(format!("{:#}", price!(1234567.89)), "1,234,567.89");
+        assert_eq!(format!("{:#}", price!(34567.09)), "34,567.09");
     }
 }

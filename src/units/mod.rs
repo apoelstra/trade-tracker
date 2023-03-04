@@ -23,10 +23,7 @@ mod asset;
 mod price;
 mod quantity;
 
-pub use asset::{
-    deserialize_name_deposit_asset, Asset, BudgetAsset, DepositAsset, TaxAsset, TaxAsset2022,
-    Underlying,
-};
+pub use asset::{Asset, BudgetAsset, DepositAsset, TaxAsset, TaxAsset2022, Underlying};
 pub use price::{
     deserialize_cents, deserialize_cents_opt, deserialize_dollars, serialize_dollars, Price,
 };

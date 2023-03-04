@@ -55,17 +55,10 @@ struct Meta {
 }
 
 #[derive(Deserialize, Debug)]
-struct DepositAddress {
-    address: String,
-    asset: DepositAsset,
-}
-
-#[derive(Deserialize, Debug)]
 struct Deposit {
     amount: UnknownQuantity,
-    #[serde(deserialize_with = "crate::units::deserialize_name_deposit_asset")]
     asset: DepositAsset,
-    deposit_address: DepositAddress,
+    address: String,
     #[serde(deserialize_with = "deserialize_datetime")]
     created_at: OffsetDateTime,
 }
@@ -88,7 +81,6 @@ impl Deposits {
 #[derive(Deserialize, Debug)]
 struct Withdrawal {
     amount: UnknownQuantity,
-    // Note: withdrawals don't have the extra "name" indirection for some reason
     asset: DepositAsset,
     #[serde(deserialize_with = "deserialize_datetime")]
     created_at: OffsetDateTime,
@@ -337,10 +329,6 @@ impl History {
     /// Import a list of deposits into the history
     fn import_deposits(&mut self, deposits: &Deposits) -> anyhow::Result<()> {
         for dep in &deposits.data {
-            assert_eq!(
-                dep.asset, dep.deposit_address.asset,
-                "lol lx fucked up here pretty good",
-            );
             let amount = dep.amount.with_asset(dep.asset.into());
             match dep.asset {
                 // ETH deposits are easy
@@ -355,10 +343,8 @@ impl History {
                     let total_btc = dep.amount.as_sats().to_unsigned().with_context(|| {
                         format!("negative deposit amount {}", dep.amount.as_sats())
                     })?;
-                    let addr = bitcoin::Address::from_str(&dep.deposit_address.address)
-                        .with_context(|| {
-                            format!("parsing BTC address {}", dep.deposit_address.address)
-                        })?;
+                    let addr = bitcoin::Address::from_str(&dep.address)
+                        .with_context(|| format!("parsing BTC address {}", dep.address))?;
 
                     // Look up transaction based on address. If we can't find one, error out.
                     let (tx, vout) = self

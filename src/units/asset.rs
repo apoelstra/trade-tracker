@@ -256,16 +256,3 @@ impl fmt::Display for Underlying {
         }
     }
 }
-
-/// Deserialize a deposit address which is contained within a "name" field for some reason
-pub fn deserialize_name_deposit_asset<'de, D>(deser: D) -> Result<DepositAsset, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct WrappedAsset {
-        name: DepositAsset,
-    }
-    let wrapped: WrappedAsset = Deserialize::deserialize(deser)?;
-    Ok(wrapped.name)
-}

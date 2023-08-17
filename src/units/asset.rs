@@ -57,7 +57,7 @@ pub enum Asset {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Deserialize)]
 pub enum DepositAsset {
     /// Bitcoin
-    #[serde(rename = "CBTC")]
+    #[serde(rename = "BTC")]
     Btc,
     /// Ethereum
     #[serde(rename = "ETH")]
@@ -232,7 +232,7 @@ impl From<BudgetAsset> for Asset {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Deserialize)]
 pub enum Underlying {
     /// Bitcoin
-    #[serde(rename = "CBTC")]
+    #[serde(rename = "BTC")]
     Btc,
     /// Ethereum
     #[serde(rename = "ETH")]

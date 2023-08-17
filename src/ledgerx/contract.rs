@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn parse_contract_call() {
-        let contract_s = "{ \"id\": 22256298, \"name\": null, \"is_call\": true, \"strike_price\": 2500000, \"min_increment\": 100, \"date_live\": \"2023-01-12 05:00:00+0000\", \"date_expires\": \"2023-12-29 21:00:00+0000\", \"date_exercise\": \"2023-12-29 22:00:00+0000\", \"derivative_type\": \"options_contract\", \"open_interest\": 674, \"multiplier\": 100, \"label\": \"BTC-Mini-29DEC2023-25000-Call\", \"active\": true, \"is_next_day\": false, \"is_ecp_only\": false, \"underlying_asset\": \"CBTC\", \"collateral_asset\": \"CBTC\", \"type\": \"call\" }";
+        let contract_s = "{ \"id\": 22256298, \"name\": null, \"is_call\": true, \"strike_price\": 2500000, \"min_increment\": 100, \"date_live\": \"2023-01-12 05:00:00+0000\", \"date_expires\": \"2023-12-29 21:00:00+0000\", \"date_exercise\": \"2023-12-29 22:00:00+0000\", \"derivative_type\": \"options_contract\", \"open_interest\": 674, \"multiplier\": 100, \"label\": \"BTC-Mini-29DEC2023-25000-Call\", \"active\": true, \"is_next_day\": false, \"is_ecp_only\": false, \"underlying_asset\": \"BTC\", \"collateral_asset\": \"BTC\", \"type\": \"call\" }";
         let contract: Contract = serde_json::from_str(contract_s).unwrap();
         assert_eq!(
             contract,
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn parse_contract_nextday() {
-        let contract_s = "{ \"id\": 22256348, \"name\": null, \"is_call\": null, \"strike_price\": null, \"min_increment\": 100, \"date_live\": \"2023-02-13 21:00:00+0000\", \"date_expires\": \"2023-02-14 21:00:00+0000\", \"date_exercise\": \"2023-02-14 21:00:00+0000\", \"derivative_type\": \"day_ahead_swap\", \"open_interest\": null, \"multiplier\": 100, \"label\": \"BTC-Mini-14FEB2023-NextDay\", \"active\": false, \"is_next_day\": true, \"is_ecp_only\": false, \"underlying_asset\": \"CBTC\", \"collateral_asset\": \"CBTC\" }";
+        let contract_s = "{ \"id\": 22256348, \"name\": null, \"is_call\": null, \"strike_price\": null, \"min_increment\": 100, \"date_live\": \"2023-02-13 21:00:00+0000\", \"date_expires\": \"2023-02-14 21:00:00+0000\", \"date_exercise\": \"2023-02-14 21:00:00+0000\", \"derivative_type\": \"day_ahead_swap\", \"open_interest\": null, \"multiplier\": 100, \"label\": \"BTC-Mini-14FEB2023-NextDay\", \"active\": false, \"is_next_day\": true, \"is_ecp_only\": false, \"underlying_asset\": \"BTC\", \"collateral_asset\": \"BTC\" }";
 
         let contract: Contract = serde_json::from_str(contract_s).unwrap();
         assert_eq!(
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn parse_future() {
-        let contract_s = "{\"active\":true,\"collateral_asset\":\"CBTC\",\"date_exercise\":null,\"date_expires\":\"2023-03-31 21:00:00+0000\",\"date_live\":\"2023-01-27 05:00:00+0000\",\"derivative_type\":\"future_contract\",\"id\":22256410,\"is_call\":null,\"is_ecp_only\":false,\"is_next_day\":false,\"label\":\"BTC-Mini-31MAR2023-Future\",\"min_increment\":100,\"multiplier\":100,\"name\":null,\"open_interest\":null,\"strike_price\":null,\"underlying_asset\":\"CBTC\"}";
+        let contract_s = "{\"active\":true,\"collateral_asset\":\"BTC\",\"date_exercise\":null,\"date_expires\":\"2023-03-31 21:00:00+0000\",\"date_live\":\"2023-01-27 05:00:00+0000\",\"derivative_type\":\"future_contract\",\"id\":22256410,\"is_call\":null,\"is_ecp_only\":false,\"is_next_day\":false,\"label\":\"BTC-Mini-31MAR2023-Future\",\"min_increment\":100,\"multiplier\":100,\"name\":null,\"open_interest\":null,\"strike_price\":null,\"underlying_asset\":\"BTC\"}";
 
         let contract: Contract = serde_json::from_str(contract_s).unwrap();
         assert_eq!(

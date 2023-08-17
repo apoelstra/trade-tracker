@@ -166,7 +166,7 @@ pub struct DataFeedMeta {
 pub struct Balances {
     #[serde(rename = "USD", deserialize_with = "crate::units::deserialize_cents")]
     pub usd: Price,
-    #[serde(rename = "CBTC", with = "bitcoin::util::amount::serde::as_sat")]
+    #[serde(rename = "BTC", with = "bitcoin::util::amount::serde::as_sat")]
     pub btc: bitcoin::Amount,
 }
 

@@ -70,12 +70,29 @@ impl Tracker {
             let filled_size = order.filled_size.with_asset_trade(contract.asset());
             if filled_size.is_nonzero() {
                 // For fills specifically send a text
-                use std::process::Command;
-                let text = format!(
-                    "LedgerX filled order\n{}: {} @ {}\nID {}\nBTC Price {}",
+                let message = &format!(
+                    "LedgerX filled order\n\
+                    {}: {} @ {}\n\
+                    ID {}\n\
+                    BTC Price {}",
                     contract, filled_size, order.filled_price, order.message_id, price_ref.0,
                 );
-                let _ = Command::new("send-text.sh").arg(&text).output();
+                let encoded = urlencoding::encode(&message);
+                let body = format!(
+                    "apikey=71d4fa4bfa2a49c69ebb470594be2e079b05006d\
+                    &application=lx-trade-tracker\
+                    &event=filled-trade\
+                    &description={encoded}"
+                );
+                if let Err(e) = minreq::post("https://api.prowlapp.com/publicapi/add")
+                    .with_timeout(10)
+                    .with_header("Content-type", "application/x-www-form-urlencoded")
+                    .with_body(body.clone())
+                    .send()
+                {
+                    warn!("Sending message to Prowl failed: {}", e);
+                    warn!("{}", body);
+                }
                 ("Filled ", filled_size, order.filled_price)
             } else if let Some(old_order) = self.map.remove(&order.message_id) {
                 (

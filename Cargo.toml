@@ -23,4 +23,5 @@ serde = { version = "1.0", features = [ "derive" ] }
 serde_json = "1.0"
 time = { version = "0.2", features = [ "serde", "std" ] }
 tungstenite = { version = "0.18", features = [ "rustls-tls-webpki-roots" ] }
+urlencoding = "2.1.2"
 

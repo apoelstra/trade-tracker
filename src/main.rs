@@ -18,6 +18,7 @@
 //!
 
 pub mod cli;
+pub mod coinbase;
 pub mod csv;
 pub mod file;
 pub mod http;
@@ -89,7 +90,10 @@ fn initialize_logging(
     let ret = match command {
         // Commands that interact with the LX API should have full logging, including
         // debug logs and sending all json replies to log files.
-        Command::Connect { .. } | Command::History { .. } | Command::TaxHistory { .. } => {
+        Command::Connect { .. }
+        | Command::History { .. }
+        | Command::TaxHistory { .. }
+        | Command::TmpAndrew => {
             let log_dir = format!("{}/log", env!("CARGO_MANIFEST_DIR"));
             if let Ok(metadata) = std::fs::metadata(&log_dir) {
                 if !metadata.is_dir() {
@@ -388,6 +392,13 @@ fn main() -> Result<(), anyhow::Error> {
                     &log_filenames.http_get_log,
                     &format!("{dir_path}/http_get.log"),
                 )?;
+            }
+        }
+        Command::TmpAndrew => {
+            let rx = crate::coinbase::spawn_ticker_thread();
+            loop {
+                let price_update = rx.recv().unwrap();
+                // TODO use the return value
             }
         }
     }

@@ -25,13 +25,12 @@
 //! assigned.
 //!
 
-use crate::units::Price;
+use crate::units::{Price, UtcTime};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::str::FromStr;
-use time::OffsetDateTime;
 
-pub fn price_ref(s: &str) -> Result<Option<(OffsetDateTime, Price)>, String> {
+pub fn price_ref(s: &str) -> Result<Option<(UtcTime, Price)>, String> {
     let fields: Vec<_> = CsvIter::new(s, ',').collect();
     if fields.len() != 10 {
         return Err(format!(
@@ -58,7 +57,7 @@ fn trim1(s: &str) -> &str {
 }
 
 /// Helper function for parsing the 2021 CSV file
-fn price_ref_2021(fields: &[&str]) -> Result<Option<(OffsetDateTime, Price)>, String> {
+fn price_ref_2021(fields: &[&str]) -> Result<Option<(UtcTime, Price)>, String> {
     if fields[0] != "Exercised" {
         return Ok(None);
     }
@@ -81,7 +80,8 @@ fn price_ref_2021(fields: &[&str]) -> Result<Option<(OffsetDateTime, Price)>, St
         .map_err(|e| format!("parsing price {}: {e}", desc_fields[5]))?;
 
     // Parse the date/basis of the exercise
-    let ex_date = OffsetDateTime::parse(fields[2], time::Format::Rfc3339)
+    let ex_date = chrono::DateTime::parse_from_rfc3339(fields[2])
+        .map(UtcTime::from)
         .map_err(|e| format!("parsing exercise date {}: {e}", fields[2]))?;
     let ex_basis =
         Price::from_str(fields[5]).map_err(|e| format!("parsing exercise {}: {e}", fields[5]))?;
@@ -97,7 +97,7 @@ fn price_ref_2021(fields: &[&str]) -> Result<Option<(OffsetDateTime, Price)>, St
 }
 
 /// Helper function for parsing the 2022 CSV file
-fn price_ref_2022(fields: &[&str]) -> Result<Option<(OffsetDateTime, Price)>, String> {
+fn price_ref_2022(fields: &[&str]) -> Result<Option<(UtcTime, Price)>, String> {
     // Only option exercises provide (a) price information (b) at a date that
     // we need a price reference at. (Expiries have no price info and trades
     // either happened at a market price or at the same time as some exercise.)
@@ -120,7 +120,8 @@ fn price_ref_2022(fields: &[&str]) -> Result<Option<(OffsetDateTime, Price)>, St
     let qty_64 = qty.to_f64().unwrap();
 
     // Parse the date/basis of the exercise
-    let ex_date = OffsetDateTime::parse(fields[4], time::Format::Rfc3339)
+    let ex_date = chrono::DateTime::parse_from_rfc3339(fields[4])
+        .map(UtcTime::from)
         .map_err(|e| format!("parsing exercise date {}: {e}", fields[4]))?;
     let ex_basis =
         Price::from_str(fields[7]).map_err(|e| format!("parsing exercise {}: {e}", fields[7]))?;
@@ -187,7 +188,7 @@ impl<'s> Iterator for CsvIter<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::{date, time};
+    use chrono::DateTime;
 
     #[test]
     fn exercise_2021() {
@@ -201,9 +202,7 @@ mod tests {
         };
         assert_eq!(
             date,
-            date!(2021 - 07 - 16)
-                .with_time(time!(22:00:00))
-                .assume_utc()
+            UtcTime::from(DateTime::parse_from_str("2021-07-16 22:00:00+0000", "%F %T%z").unwrap()),
         );
         assert_eq!(price.to_int(), 31777);
 
@@ -229,7 +228,9 @@ mod tests {
                 "3197933266,Exercise - 1256 Option - Call,500.00,BTC-Mini-04FEB2022-40000-Call,2022-02-04T22:00:00.000Z,2022-01-27T23:08:44.124Z,\"1,565.00\",\"3,223.90\",\"-1,658.90\",- 1256 - ",
             ),
             Ok(Some((
-                date!(2022-02-04).with_time(time!(22:00:00)).assume_utc(),
+                DateTime::parse_from_str("2022-02-04 22:00:00+0000", "%F %T%z")
+                    .unwrap()
+                    .into(),
                 crate::price!(40644.78),
             ))),
         );

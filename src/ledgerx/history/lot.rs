@@ -20,7 +20,8 @@
 use crate::csv;
 use crate::ledgerx::history::tax::{GainType, TaxDate};
 use crate::option::{Call, Put};
-use crate::units::{Price, Quantity, TaxAsset, TaxAsset2022};
+use crate::units::{Price, Quantity, TaxAsset, TaxAsset2022, UtcTime};
+use chrono::Timelike as _;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -86,7 +87,7 @@ pub struct Lot {
     price: Price,
     date: TaxDate,
     open_ty: OpenType,
-    sort_date: time::OffsetDateTime,
+    sort_date: UtcTime,
 }
 
 impl fmt::Display for Lot {
@@ -134,7 +135,7 @@ impl Lot {
         outpoint: bitcoin::OutPoint,
         price: Price,
         quantity: bitcoin::Amount,
-        date: time::OffsetDateTime,
+        date: UtcTime,
     ) -> Lot {
         Lot {
             id: Id::from_outpoint(outpoint),
@@ -143,7 +144,7 @@ impl Lot {
             price,
             date: date.into(),
             open_ty: OpenType::Deposit,
-            sort_date: date + time::Duration::days(365 * 100),
+            sort_date: date + chrono::Duration::days(365 * 100),
         }
     }
 
@@ -170,7 +171,7 @@ impl Lot {
     ///
     /// Note that this returns a bare date, not a [TaxDate], which hopefully
     /// should avoid accidentally using this for anything "real"
-    pub fn sort_date(&self) -> time::OffsetDateTime {
+    pub fn sort_date(&self) -> UtcTime {
         self.sort_date
     }
 
@@ -400,7 +401,7 @@ impl Close {
     pub fn gain_loss_type(&self) -> GainType {
         if self.asset.is_1256() {
             GainType::Option1256
-        } else if self.close_date - self.open_date <= time::Duration::days(365) {
+        } else if self.close_date - self.open_date <= chrono::Duration::days(365) {
             GainType::ShortTerm
         } else {
             GainType::LongTerm
@@ -578,12 +579,12 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                     let close_date = format!(
                         "{}.{:03}Z",
                         close_date.bare_time().format("%FT%H:%M:%S"),
-                        close_date.bare_time().millisecond(),
+                        close_date.bare_time().nanosecond() / 1_000_000,
                     );
                     let open_date = format!(
                         "{}.{:03}Z",
                         open_date.bare_time().format("%FT%H:%M:%S"),
-                        open_date.bare_time().millisecond(),
+                        open_date.bare_time().nanosecond() / 1_000_000,
                     );
                     (
                         self.user_id,

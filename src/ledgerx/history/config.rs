@@ -28,7 +28,7 @@
 //!
 
 use crate::ledgerx::history::{tax::LotSelectionStrategy, LotId};
-use crate::units::Price;
+use crate::units::{Price, UtcTime};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -97,14 +97,6 @@ pub struct LotInfo {
     #[serde(deserialize_with = "crate::units::deserialize_cents")]
     pub price: Price,
     /// The ID of the lot in question
-    #[serde(deserialize_with = "deserialize_timestamp")]
-    pub date: time::OffsetDateTime,
-}
-
-fn deserialize_timestamp<'de, D>(deser: D) -> Result<time::OffsetDateTime, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s: i64 = Deserialize::deserialize(deser)?;
-    Ok(time::OffsetDateTime::from_unix_timestamp(s))
+    #[serde(with = "chrono::serde::ts_seconds")]
+    pub date: UtcTime,
 }

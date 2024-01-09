@@ -20,10 +20,9 @@
 use super::{datafeed, MessageId};
 use crate::option::{Call, Put};
 use crate::terminal::ColorFormat;
-use crate::units::{Asset, Price, Quantity};
+use crate::units::{Asset, Price, Quantity, UtcTime};
 use log::info;
 use std::collections::BTreeMap;
-use time::OffsetDateTime;
 
 /// Book state for a specific contract
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
@@ -132,7 +131,7 @@ impl BookState {
     pub fn log_interesting_orders(
         &self,
         opt: &crate::option::Option,
-        now: OffsetDateTime,
+        now: UtcTime,
         btc_bid: Price,
         btc_ask: Price,
         available_usd: Price,
@@ -200,13 +199,13 @@ pub struct Order {
     /// ID of the manifest
     pub message_id: MessageId,
     /// Timestamp that the order occured on
-    pub timestamp: OffsetDateTime,
+    pub timestamp: UtcTime,
 }
 
 fn log_bid_if_interesting(
     order: &Order,
     opt: &crate::option::Option,
-    now: OffsetDateTime,
+    now: UtcTime,
     btc_bid: Price,
     btc_ask: Price,
     available_usd: Price,
@@ -232,7 +231,7 @@ fn log_bid_if_interesting(
 fn log_ask_if_interesting(
     order: &Order,
     opt: &crate::option::Option,
-    now: OffsetDateTime,
+    now: UtcTime,
     btc_bid: Price,
     btc_ask: Price,
     available_usd: Price,

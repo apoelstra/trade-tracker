@@ -36,6 +36,8 @@ pub use crate::timemap::TimeMap;
 use crate::units::Underlying;
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
+use chrono::offset::Utc;
+use chrono::{DateTime, Datelike as _};
 use log::{info, warn};
 use std::{
     fs, io,
@@ -81,7 +83,7 @@ fn newline() {
 }
 
 fn initialize_logging(
-    now: time::OffsetDateTime,
+    now: DateTime<Utc>,
     command: &Command,
 ) -> Result<Option<logger::LogFilenames>, anyhow::Error> {
     let ret = match command {
@@ -101,7 +103,7 @@ fn initialize_logging(
             }
 
             let log_name = command.log_name();
-            let log_time = now.lazy_format("%F_%H-%M-%S");
+            let log_time = now.format("%F_%H-%M-%S");
             let filenames = logger::LogFilenames {
                 debug_log: format!("{log_dir}/{log_name}_{log_time}_debug.log"),
                 datafeed_log: format!("{log_dir}/{log_name}_{log_time}_datafeed.log"),
@@ -149,17 +151,14 @@ fn main() -> Result<(), anyhow::Error> {
             Historic::read_json_from(&data_path, TAX_PRICE_MIN_YEAR)
         }
         // For most everything else we can just use the current year
-        _ => Historic::read_json_from(
-            &data_path,
-            &time::OffsetDateTime::now_utc().year().to_string(),
-        ),
+        _ => Historic::read_json_from(&data_path, &Utc::now().year().to_string()),
     }
     .context("reading price history")?;
 
     data_path.pop(); // "pricedata"
 
     // Turn on logging
-    let now = time::OffsetDateTime::now_utc();
+    let now = Utc::now();
     let log_filenames = initialize_logging(now, &command).context("initializing logging")?;
 
     // Go
@@ -273,7 +272,7 @@ fn main() -> Result<(), anyhow::Error> {
                     "wss://api.ledgerx.com/ws?token={api_key}",
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
-                    let current_time = time::OffsetDateTime::now_utc();
+                    let current_time = Utc::now();
                     let current_price = tracker.current_price().0;
                     info!(target: "lx_datafeed", "{}", msg);
                     info!(target: "lx_btcprice", "{}", current_price);
@@ -322,7 +321,7 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // Log the "standing" data every 6 hours or whenever the price moves a lot
-                    if current_time - last_update > time::Duration::hours(6)
+                    if current_time - last_update > chrono::Duration::hours(6)
                         || current_price < last_price.scale_approx(0.98)
                         || current_price > last_price.scale_approx(1.02)
                     {
@@ -371,7 +370,7 @@ fn main() -> Result<(), anyhow::Error> {
             if let Command::History { .. } = command {
                 hist.print_csv(&history);
             } else {
-                let dir_path = format!("lx_tax_output_{}", now.lazy_format("%F-%H%M"));
+                let dir_path = format!("lx_tax_output_{}", now.format("%F-%H%M"));
                 if fs::metadata(&dir_path).is_ok() {
                     return Err(anyhow::Error::msg(format!(
                         "Output directory {dir_path} exists. Refusing to run."

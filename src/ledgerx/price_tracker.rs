@@ -19,7 +19,7 @@
 //!
 
 use crate::ledgerx::{datafeed::Order, BookState};
-use crate::units::{Asset, Price};
+use crate::units::{Asset, Price, UtcTime};
 use log::debug;
 
 /// A price reference
@@ -32,7 +32,7 @@ pub struct Reference {
     /// Last available best ask
     last_best_ask: Price,
     /// Time of the most recent update to the book
-    last_update: time::OffsetDateTime,
+    last_update: UtcTime,
 }
 
 impl Reference {
@@ -58,7 +58,7 @@ impl Reference {
     }
 
     /// Returns a price reference, if one can be obtained.
-    pub fn reference(&self) -> (Price, time::OffsetDateTime) {
+    pub fn reference(&self) -> (Price, UtcTime) {
         let pref = (self.last_best_bid + self.last_best_ask).half();
         (pref, self.last_update)
     }
@@ -84,11 +84,11 @@ impl Reference {
         // we're missing data.
         if bid != Price::ZERO {
             self.last_best_bid = bid;
-            self.last_update = time::OffsetDateTime::now_utc();
+            self.last_update = chrono::offset::Utc::now();
         }
         if ask != Price::ZERO {
             self.last_best_ask = ask;
-            self.last_update = time::OffsetDateTime::now_utc();
+            self.last_update = chrono::offset::Utc::now();
         }
 
         self.log(format_args!(

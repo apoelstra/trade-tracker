@@ -17,30 +17,37 @@
 //! Some utility methods for parsing json from the LX API
 //!
 
-use crate::units::{Price, Underlying};
+use crate::units::{Price, Underlying, UtcTime};
 use serde::{de, Deserialize, Deserializer};
 use std::convert::TryFrom;
-use time::OffsetDateTime;
 
-fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<OffsetDateTime>, D::Error>
+fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<UtcTime>, D::Error>
 where
     D: Deserializer<'de>,
 {
+    use chrono::DateTime;
+
     let s: Option<&str> = Deserialize::deserialize(deser)?;
     match s {
-        Some(s) => Ok(Some(OffsetDateTime::parse(s, "%F %T%z").map_err(|_| {
+        Some(s) => Ok(Some(DateTime::parse_from_str(s, "%F %T%z").map_err(|_| {
             de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in %F %T%z format")
-        })?)),
+        })?)
+        .map(From::from)),
         None => Ok(None),
     }
 }
 
-fn deserialize_timestamp<'de, D>(deser: D) -> Result<OffsetDateTime, D::Error>
+fn deserialize_timestamp<'de, D>(deser: D) -> Result<UtcTime, D::Error>
 where
     D: Deserializer<'de>,
 {
     let s: i64 = Deserialize::deserialize(deser)?;
-    Ok(OffsetDateTime::from_unix_timestamp_nanos(s.into()))
+    UtcTime::from_timestamp(s / 1_000_000_000, (s % 1_000_000_000) as u32).ok_or_else(|| {
+        de::Error::invalid_value(
+            de::Unexpected::Str(&s.to_string()),
+            &"a timestamp in range for the datetime type",
+        )
+    })
 }
 
 /// The type of the derivative
@@ -132,11 +139,11 @@ pub struct Contract {
     pub active: bool,
     pub underlying_asset: Underlying,
     #[serde(default, deserialize_with = "deserialize_datetime")]
-    pub date_exercise: Option<OffsetDateTime>,
+    pub date_exercise: Option<UtcTime>,
     #[serde(default, deserialize_with = "deserialize_datetime")]
-    pub date_expires: Option<OffsetDateTime>,
+    pub date_expires: Option<UtcTime>,
     #[serde(default, deserialize_with = "deserialize_datetime")]
-    pub date_live: Option<OffsetDateTime>,
+    pub date_live: Option<UtcTime>,
     pub is_call: Option<bool>,
     pub is_next_day: Option<bool>,
     pub is_ecp_only: Option<bool>,
@@ -230,11 +237,11 @@ pub enum DataFeedObject {
         /// "The current clock for the entire contract"
         clock: u64,
         #[serde(deserialize_with = "deserialize_timestamp")]
-        timestamp: OffsetDateTime,
+        timestamp: UtcTime,
         #[serde(deserialize_with = "deserialize_timestamp")]
-        inserted_time: OffsetDateTime,
+        inserted_time: UtcTime,
         #[serde(deserialize_with = "deserialize_timestamp")]
-        updated_time: OffsetDateTime,
+        updated_time: UtcTime,
         #[serde(default)]
         _meta: Option<DataFeedMeta>,
     },

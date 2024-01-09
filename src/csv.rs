@@ -17,6 +17,7 @@
 //! Basic support for printing data in comma-separated-value format
 //!
 
+use crate::units::UtcTime;
 use std::fmt;
 
 /// Trait for objects that can be printed in CSV format
@@ -35,31 +36,21 @@ impl<P: PrintCsv> fmt::Display for CsvPrinter<P> {
 
 /// Wrapper around a date that will output only the date
 #[derive(Copy, Clone)]
-pub struct DateOnly(pub time::OffsetDateTime);
+pub struct DateOnly(pub UtcTime);
 impl PrintCsv for DateOnly {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // It took a ton of experimenting to get a date format that gnumeric
         // will recognize and parse correctly..
-        write!(
-            f,
-            "{}",
-            self.0.to_offset(time::UtcOffset::UTC).lazy_format("%F")
-        )
+        write!(f, "{}", self.0.format("%F"))
     }
 }
 
 /// Wrapper around a date that will output both date and time
 #[derive(Copy, Clone)]
-pub struct DateTime(pub time::OffsetDateTime);
+pub struct DateTime(pub UtcTime);
 impl PrintCsv for DateTime {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.0
-                .to_offset(time::UtcOffset::UTC)
-                .lazy_format("%FT%T.%NZ")
-        )
+        write!(f, "{}", self.0.format("%FT%T.%NZ"))
     }
 }
 

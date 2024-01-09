@@ -25,10 +25,10 @@
 //!
 
 use crate::terminal::{set_color_off_thread_local, set_color_on_thread_local};
+use crate::units::UtcTime;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Mutex;
-use time::OffsetDateTime;
 
 /// Convenience struct for all the filenames that we need
 pub struct LogFilenames {
@@ -63,7 +63,7 @@ impl log::Log for StdoutOnly {
 /// Actual logging structure
 pub struct Logger {
     /// Most recent time that we logged something to stdout
-    last_stdout_time: Mutex<OffsetDateTime>,
+    last_stdout_time: Mutex<UtcTime>,
     /// Log for general output (excluding json-encoded data)
     ///
     /// Info and greater logs will also be put to stderr
@@ -81,7 +81,7 @@ impl Logger {
     pub fn init(filenames: &LogFilenames) -> Result<(), anyhow::Error> {
         log::set_max_level(log::LevelFilter::Debug);
         log::set_boxed_logger(Box::new(Logger {
-            last_stdout_time: Mutex::new(OffsetDateTime::now_utc()),
+            last_stdout_time: Mutex::new(chrono::offset::Utc::now()),
             debug_log: Mutex::new(File::create(&filenames.debug_log)?),
             datafeed_log: Mutex::new(File::create(&filenames.datafeed_log)?),
             http_get_log: Mutex::new(File::create(&filenames.http_get_log)?),
@@ -109,7 +109,7 @@ impl log::Log for Logger {
                 let _ = writeln!(
                     self.http_get_log.lock().unwrap(),
                     "[{}] [{}] {}",
-                    OffsetDateTime::now_utc().lazy_format(time::Format::Rfc3339),
+                    chrono::offset::Utc::now(),
                     record.level(),
                     record.args()
                 );
@@ -121,25 +121,25 @@ impl log::Log for Logger {
                 // TODO maybe we should log the price somewhere as a personal price reference?
                 *self.price.lock().unwrap() = format!("{}", record.args());
             } else {
-                let now = OffsetDateTime::now_utc();
+                let now = chrono::offset::Utc::now();
 
                 // If it's more important than info, log to stdout
                 if record.level() <= log::Level::Info {
                     set_color_on_thread_local();
                     let mut last_time_lock = self.last_stdout_time.lock().unwrap();
-                    if now - *last_time_lock > time::Duration::minutes(10) {
+                    if now - *last_time_lock > chrono::Duration::minutes(10) {
                         println!();
                     }
-                    if now - *last_time_lock > time::Duration::seconds(30) {
+                    if now - *last_time_lock > chrono::Duration::seconds(30) {
                         println!();
                     }
-                    if now - *last_time_lock > time::Duration::seconds(1) {
+                    if now - *last_time_lock > chrono::Duration::seconds(1) {
                         println!();
                         println!(
                             "{}",
                             crate::terminal::ColorFormat::pale_yellow(format_args!(
                                 "Time: {}  BTC Price: {}",
-                                now.lazy_format("%F %T%z"),
+                                now.format("%F %T%z"),
                                 self.price.lock().unwrap(),
                             ),),
                         );
@@ -152,7 +152,7 @@ impl log::Log for Logger {
                 let _ = writeln!(
                     self.debug_log.lock().unwrap(),
                     "{} [{}] {}",
-                    now.lazy_format("%F %T%N%z"),
+                    now.format("%F %T%N%z"),
                     record.level(),
                     record.args(),
                 );

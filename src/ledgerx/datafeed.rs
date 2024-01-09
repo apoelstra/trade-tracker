@@ -18,10 +18,9 @@
 //!
 
 use super::{json, Contract, ContractId};
-use crate::units::{Price, UnknownQuantity};
+use crate::units::{Price, UnknownQuantity, UtcTime};
 use serde::Deserialize;
 use std::fmt;
-use time::OffsetDateTime;
 
 /// ID of a customer; provided only for own trades
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -60,9 +59,9 @@ pub struct Order {
     /// ID of the manifest
     pub message_id: MessageId,
     /// Timestamp that the order occured on
-    pub timestamp: OffsetDateTime,
+    pub timestamp: UtcTime,
     /// Timestamp that the order was last updated on
-    pub updated_timestamp: OffsetDateTime,
+    pub updated_timestamp: UtcTime,
 }
 
 impl fmt::Display for Order {
@@ -84,14 +83,14 @@ impl fmt::Display for Order {
         write!(
             f,
             ", timestamp {} updated {})",
-            self.timestamp.lazy_format("%FT%H:%M:%S.%N%z"),
-            self.updated_timestamp.lazy_format("%FT%H:%M:%S.%N%%z"),
+            self.timestamp.format("%FT%H:%M:%S.%N%z"),
+            self.updated_timestamp.format("%FT%H:%M:%S.%N%%z"),
         )
     }
 }
 
-impl From<(json::BookState, OffsetDateTime)> for Order {
-    fn from(data: (json::BookState, OffsetDateTime)) -> Self {
+impl From<(json::BookState, UtcTime)> for Order {
+    fn from(data: (json::BookState, UtcTime)) -> Self {
         let ba_mult = if data.0.is_ask { -1 } else { 1 };
         Order {
             size: UnknownQuantity::from(ba_mult * data.0.size),
@@ -222,8 +221,8 @@ mod tests {
                     0x01, 0x4a, 0xa5, 0xad, 0x13, 0x56, 0x42, 0x72, 0xa7, 0x93, 0xc0, 0x58, 0x2a,
                     0x77, 0x60, 0x00,
                 ]),
-                timestamp: OffsetDateTime::from_unix_timestamp_nanos(1674839748016616735),
-                updated_timestamp: OffsetDateTime::from_unix_timestamp_nanos(1674839748016616735),
+                timestamp: UtcTime::from_timestamp(1674839748, 016616735).unwrap(),
+                updated_timestamp: UtcTime::from_timestamp(1674839748, 016616735).unwrap(),
             })
         );
     }

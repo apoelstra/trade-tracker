@@ -22,14 +22,14 @@
 //! support direct indexing or random access.
 //!
 
+use crate::units::UtcTime;
 use std::collections::{btree_map, BTreeMap};
 use std::iter;
-use time::OffsetDateTime;
 
 /// A time-indexed map
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct TimeMap<V> {
-    map: BTreeMap<(OffsetDateTime, usize), V>,
+    map: BTreeMap<(UtcTime, usize), V>,
     next_idx: usize,
 }
 
@@ -61,7 +61,7 @@ impl<V> TimeMap<V> {
     }
 
     /// Pops the first element from the map, if one exists
-    pub fn pop_first(&mut self) -> Option<(OffsetDateTime, V)> {
+    pub fn pop_first(&mut self) -> Option<(UtcTime, V)> {
         let first_key = self.map.keys().next().copied();
         let value = first_key.and_then(|key| self.map.remove(&key));
         first_key.map(|key| (key.0, value.unwrap()))
@@ -71,7 +71,7 @@ impl<V> TimeMap<V> {
     ///
     /// Unlike `pop_first` this function is O(n), and if you are using it heavily,
     /// it may make sense to change data structures.
-    pub fn pop_max<F, T>(&mut self, mut maxfn: F) -> Option<(OffsetDateTime, V)>
+    pub fn pop_max<F, T>(&mut self, mut maxfn: F) -> Option<(UtcTime, V)>
     where
         F: FnMut(&V) -> T,
         T: Ord,
@@ -96,7 +96,7 @@ impl<V> TimeMap<V> {
     /// There is no way to replace or delete an element once it is added to the
     /// time map. If you insert an element twice, even with the same timestamp,
     /// it will just be in the map twice.
-    pub fn insert(&mut self, time: OffsetDateTime, item: V) {
+    pub fn insert(&mut self, time: UtcTime, item: V) {
         let idx = self.next_idx;
         // If this assertion fails it means we somehow used `idx` twice
         assert!(self.map.insert((time, idx), item).is_none());
@@ -104,7 +104,7 @@ impl<V> TimeMap<V> {
     }
 
     /// Returns the most recent element whose timestamp is prior to the given timestamp
-    pub fn most_recent(&self, as_of: OffsetDateTime) -> Option<(OffsetDateTime, &V)> {
+    pub fn most_recent(&self, as_of: UtcTime) -> Option<(UtcTime, &V)> {
         self.map
             .range(..(as_of, 0))
             .rev()
@@ -131,7 +131,7 @@ impl<V> TimeMap<V> {
 
 /// Borrowed iterator overentries
 pub struct Values<'a, V> {
-    iter: btree_map::Values<'a, (OffsetDateTime, usize), V>,
+    iter: btree_map::Values<'a, (UtcTime, usize), V>,
 }
 impl<'a, V> Iterator for Values<'a, V> {
     type Item = &'a V;
@@ -142,18 +142,18 @@ impl<'a, V> Iterator for Values<'a, V> {
 
 /// Borrowed iterator over (timestamp, entry) pairs
 pub struct Iter<'a, V> {
-    iter: btree_map::Iter<'a, (OffsetDateTime, usize), V>,
+    iter: btree_map::Iter<'a, (UtcTime, usize), V>,
 }
 
 impl<'a, V> Iterator for Iter<'a, V> {
-    type Item = (OffsetDateTime, &'a V);
+    type Item = (UtcTime, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|((time, _), v)| (*time, v))
     }
 }
 
 impl<'a, V> iter::IntoIterator for &'a TimeMap<V> {
-    type Item = (OffsetDateTime, &'a V);
+    type Item = (UtcTime, &'a V);
     type IntoIter = Iter<'a, V>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -162,18 +162,18 @@ impl<'a, V> iter::IntoIterator for &'a TimeMap<V> {
 
 /// Owned iterator over (timestamp, entry) pairs
 pub struct IntoIter<V> {
-    iter: btree_map::IntoIter<(OffsetDateTime, usize), V>,
+    iter: btree_map::IntoIter<(UtcTime, usize), V>,
 }
 
 impl<V> Iterator for IntoIter<V> {
-    type Item = (OffsetDateTime, V);
+    type Item = (UtcTime, V);
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|((time, _), v)| (time, v))
     }
 }
 
 impl<V> iter::IntoIterator for TimeMap<V> {
-    type Item = (OffsetDateTime, V);
+    type Item = (UtcTime, V);
     type IntoIter = IntoIter<V>;
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {

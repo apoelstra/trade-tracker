@@ -34,7 +34,7 @@ pub fn get_bytes(url: &str, api_key: Option<&str>) -> Result<Vec<u8>, anyhow::Er
     info!(
         target: "lx_http_get",
         "{}: request to {} (api key {})",
-        time::OffsetDateTime::now_utc().lazy_format(time::Format::Rfc3339),
+        chrono::offset::Utc::now(),
         url,
         api_key.is_some(),
     );

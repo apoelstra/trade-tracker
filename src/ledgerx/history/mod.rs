@@ -20,14 +20,14 @@
 use crate::csv::{self, CsvPrinter};
 use crate::file::create_text_file;
 use crate::units::{
-    BudgetAsset, DepositAsset, Price, Quantity, TaxAsset, Underlying, UnknownQuantity,
+    BudgetAsset, DepositAsset, Price, Quantity, TaxAsset, Underlying, UnknownQuantity, UtcTime,
 };
 use anyhow::Context;
+use chrono::{Datelike as _, Timelike as _};
 use log::{debug, info, warn};
-use serde::{de, Deserialize, Deserializer};
+use serde::Deserialize;
 use std::collections::{hash_map, BTreeMap, HashMap};
 use std::str::FromStr;
-use time::OffsetDateTime;
 
 pub mod config;
 pub mod lot;
@@ -35,18 +35,6 @@ pub mod tax;
 
 pub use self::config::Configuration;
 pub use self::lot::Id as LotId;
-
-// Note that this is *not* the same as the equivalent function in ledgerx/json.rs
-// For some reason LX returns timestamps in like a dozen different formats.
-fn deserialize_datetime<'de, D>(deser: D) -> Result<OffsetDateTime, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: &str = Deserialize::deserialize(deser)?;
-    OffsetDateTime::parse(s, time::Format::Rfc3339).map_err(|_| {
-        de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in RFC 3339 format")
-    })
-}
 
 #[derive(Deserialize, Debug)]
 struct Meta {
@@ -59,8 +47,7 @@ struct Deposit {
     amount: UnknownQuantity,
     asset: DepositAsset,
     address: String,
-    #[serde(deserialize_with = "deserialize_datetime")]
-    created_at: OffsetDateTime,
+    created_at: UtcTime,
 }
 
 /// Opaque structure representing the deposits list returned by the funds/deposits endpoint
@@ -82,8 +69,7 @@ impl Deposits {
 struct Withdrawal {
     amount: UnknownQuantity,
     asset: DepositAsset,
-    #[serde(deserialize_with = "deserialize_datetime")]
-    created_at: OffsetDateTime,
+    created_at: UtcTime,
 }
 
 /// Opaque structure representing the withdrawals list returned by the funds/withdrawals endpoint
@@ -111,8 +97,7 @@ enum Side {
 #[derive(Deserialize, Debug)]
 struct Trade {
     contract_id: String,
-    #[serde(deserialize_with = "deserialize_datetime")]
-    execution_time: OffsetDateTime,
+    execution_time: UtcTime,
     #[serde(deserialize_with = "crate::units::deserialize_cents")]
     filled_price: Price,
     filled_size: UnknownQuantity,
@@ -223,7 +208,7 @@ pub struct History {
     years: BTreeMap<i32, tax::LotSelectionStrategy>,
     lot_db: HashMap<LotId, config::LotInfo>,
     transaction_db: crate::transaction::Database,
-    lx_price_ref: HashMap<OffsetDateTime, Price>,
+    lx_price_ref: HashMap<UtcTime, Price>,
     config_hash: bitcoin::hashes::sha256::Hash,
     events: crate::TimeMap<Event>,
 }
@@ -514,13 +499,12 @@ impl History {
 
             // LedgerX's data has the time forced to 22:00 even when DST makes this wrong
             let price_ref_date = if option.expiry.year() == 2021 {
-                option
-                    .expiry
-                    .date()
-                    .with_time(time::time!(22:00))
-                    .assume_utc()
+                assert_eq!(option.expiry.minute(), 0);
+                assert_eq!(option.expiry.second(), 0);
+                assert_eq!(option.expiry.nanosecond(), 0);
+                option.expiry.with_hour(22).unwrap().into()
             } else {
-                option.expiry + time::Duration::hours(1)
+                option.expiry + chrono::Duration::hours(1)
             };
 
             // Insert the expiry event, if any (in 2021 this is BEFORE assignment, in 2022 AFTER)
@@ -680,7 +664,7 @@ impl History {
         writeln!(
             metadata,
             "Started on: {}",
-            OffsetDateTime::now_utc().lazy_format("%F %H:%M:%S UTC")
+            chrono::offset::Utc::now().format("%F %H:%M:%S UTC")
         )?;
         writeln!(metadata, "Configuration file hash: {}", self.config_hash)?;
 

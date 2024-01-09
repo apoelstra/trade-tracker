@@ -18,10 +18,9 @@
 //!
 
 use crate::terminal::ColorFormat;
-use crate::units::{Price, Quantity};
+use crate::units::{Price, Quantity, UtcTime};
 use log::info;
 use std::{fmt, str};
-use time::OffsetDateTime;
 
 /// Whether an option is a put or a call
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -60,12 +59,17 @@ pub struct Option {
     /// Strike price
     pub strike: Price,
     /// Expiry date
-    pub expiry: OffsetDateTime,
+    pub expiry: UtcTime,
 }
 
 impl fmt::Display for Option {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = format!("{}{}{}", self.expiry.date(), self.pc.to_char(), self.strike,);
+        let s = format!(
+            "{}{}{}",
+            self.expiry.format("%F"),
+            self.pc.to_char(),
+            self.strike,
+        );
         f.pad(&s)
     }
 }
@@ -81,10 +85,11 @@ impl str::FromStr for Option {
             return Err(format!("option {} is too short (len {})", s, s.len()));
         }
 
-        let expiry = time::Date::parse(&s[0..10], "%F")
-            .map(|d| d.with_time(time::time!(21:00)))
-            .map(|dt| dt.assume_utc().to_offset(time::UtcOffset::UTC))
-            .map_err(|e| format!("Parsing time in option {s}: {e}"))?;
+        let expiry = chrono::NaiveDate::parse_from_str(&s[0..10], "%F")
+            .map_err(|e| format!("Parsing time in option {s}: {e}"))?
+            .and_hms_opt(21, 0, 0)
+            .unwrap()
+            .and_utc();
         let pc = match s.as_bytes()[10] {
             b'C' | b'c' => Call,
             b'P' | b'p' => Put,
@@ -99,7 +104,7 @@ impl str::FromStr for Option {
 
 impl Option {
     /// Construct a new call option
-    pub fn new_call(strike: Price, expiry: OffsetDateTime) -> Self {
+    pub fn new_call(strike: Price, expiry: UtcTime) -> Self {
         Option {
             pc: Call,
             strike,
@@ -108,7 +113,7 @@ impl Option {
     }
 
     /// Construct a new put option
-    pub fn new_put(strike: Price, expiry: OffsetDateTime) -> Self {
+    pub fn new_put(strike: Price, expiry: UtcTime) -> Self {
         Option {
             pc: Put,
             strike,
@@ -117,8 +122,12 @@ impl Option {
     }
 
     /// Compute the number of years to expiry, as a float, given current time
-    pub fn years_to_expiry(&self, now: OffsetDateTime) -> f64 {
-        (self.expiry - now) / time::Duration::days(365)
+    pub fn years_to_expiry(&self, now: UtcTime) -> f64 {
+        if self.expiry > now {
+            (self.expiry - now).num_seconds() as f64 / (86400.0 * 365.0)
+        } else {
+            0.0
+        }
     }
 
     /// Whether the option is ITM or not. Considers options exactly at the money
@@ -140,7 +149,7 @@ impl Option {
     /// a money fire). That is, for the remaining option lifetime, the seller must lock
     /// up some amount of collateral, and in exchange they receive some premium, or
     /// "interest".
-    pub fn arr(&self, now: OffsetDateTime, btc_price: Price, self_price: Price) -> f64 {
+    pub fn arr(&self, now: UtcTime, btc_price: Price, self_price: Price) -> f64 {
         let yte = self.years_to_expiry(now);
         assert!(yte > 0.0);
         match self.pc {
@@ -199,7 +208,7 @@ impl Option {
     }
 
     /// Compute the price of the option at a given volatility
-    pub fn bs_price(&self, now: OffsetDateTime, btc_price: Price, volatility: f64) -> Price {
+    pub fn bs_price(&self, now: UtcTime, btc_price: Price, volatility: f64) -> Price {
         let price_64 = match self.pc {
             Call => black_scholes::call(
                 btc_price.to_approx_f64(),
@@ -220,7 +229,7 @@ impl Option {
     }
 
     /// Compute the IV of the option at a given price
-    pub fn bs_iv(&self, now: OffsetDateTime, btc_price: Price, price: Price) -> Result<f64, f64> {
+    pub fn bs_iv(&self, now: UtcTime, btc_price: Price, price: Price) -> Result<f64, f64> {
         match self.pc {
             Call => black_scholes::call_iv(
                 price.to_approx_f64(),
@@ -240,7 +249,7 @@ impl Option {
     }
 
     /// Compute the theta of the option at a given price
-    pub fn bs_theta(&self, now: OffsetDateTime, btc_price: Price, vol: f64) -> f64 {
+    pub fn bs_theta(&self, now: UtcTime, btc_price: Price, vol: f64) -> f64 {
         match self.pc {
             Call => {
                 black_scholes::call_theta(
@@ -264,7 +273,7 @@ impl Option {
     }
 
     /// Compute the dual delta of the option at a given price
-    pub fn bs_dual_delta(&self, now: OffsetDateTime, btc_price: Price, vol: f64) -> f64 {
+    pub fn bs_dual_delta(&self, now: UtcTime, btc_price: Price, vol: f64) -> f64 {
         match self.pc {
             Call => {
                 crate::local_bs::call_dual_delta(
@@ -289,7 +298,7 @@ impl Option {
 
     /// Compute the "loss 80" which is the probability that the option will wind up
     /// so far ITM that even the premium is lost
-    pub fn bs_loss80(&self, now: OffsetDateTime, btc_price: Price, self_price: Price) -> f64 {
+    pub fn bs_loss80(&self, now: UtcTime, btc_price: Price, self_price: Price) -> f64 {
         let vol = 0.8;
         match self.pc {
             Call => {
@@ -314,7 +323,7 @@ impl Option {
     }
 
     /// Compute the dual delta of the option at a given price
-    pub fn bs_delta(&self, now: OffsetDateTime, btc_price: Price, vol: f64) -> f64 {
+    pub fn bs_delta(&self, now: UtcTime, btc_price: Price, vol: f64) -> f64 {
         match self.pc {
             Call => {
                 black_scholes::call_delta(
@@ -338,12 +347,7 @@ impl Option {
     }
 
     /// Print option data
-    pub fn log_option_data<D: fmt::Display>(
-        &self,
-        prefix: D,
-        now: OffsetDateTime,
-        btc_price: Price,
-    ) {
+    pub fn log_option_data<D: fmt::Display>(&self, prefix: D, now: UtcTime, btc_price: Price) {
         let dte = self.years_to_expiry(now) * 365.0;
         let dd80 = self.bs_dual_delta(now, btc_price, 0.80).abs();
         let intrinsic_str = if self.in_the_money(btc_price) {
@@ -367,7 +371,7 @@ impl Option {
     pub fn log_order_data<D: fmt::Display>(
         &self,
         prefix: D,
-        now: OffsetDateTime,
+        now: UtcTime,
         btc_price: Price,
         self_price: Price,
         size: std::option::Option<Quantity>,

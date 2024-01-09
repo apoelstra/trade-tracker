@@ -29,6 +29,8 @@ pub use price::{
 };
 pub use quantity::{Quantity, UnknownQuantity};
 
+pub type UtcTime = chrono::DateTime<chrono::offset::Utc>;
+
 macro_rules! impl_ops_0 {
     ($outer:ty, $op:ident, $opfn:ident) => {
         impl std::ops::$op<$outer> for $outer {

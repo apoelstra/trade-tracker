@@ -18,7 +18,7 @@
 //!
 
 use crate::ledgerx::{contract, datafeed::Order, Contract, CustomerId, MessageId};
-use crate::units::{Price, Quantity, UnknownQuantity};
+use crate::units::{Price, Quantity, UnknownQuantity, UtcTime};
 use log::{info, warn};
 use std::collections::HashMap;
 
@@ -36,12 +36,7 @@ impl Tracker {
         Default::default()
     }
 
-    pub fn insert_order(
-        &mut self,
-        contract: &Contract,
-        order: Order,
-        price_ref: (Price, time::OffsetDateTime),
-    ) {
+    pub fn insert_order(&mut self, contract: &Contract, order: Order, price_ref: (Price, UtcTime)) {
         // First log anything interesting about the CID.
         match (self.my_id, order.customer_id) {
             (_, None) => {

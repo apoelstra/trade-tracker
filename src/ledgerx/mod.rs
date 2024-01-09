@@ -27,12 +27,11 @@ pub mod own_orders;
 pub mod price_tracker;
 
 use crate::terminal::ColorFormat;
-use crate::units::{Asset, Price, Quantity, Underlying};
+use crate::units::{Asset, Price, Quantity, Underlying, UtcTime};
 use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
-use time::OffsetDateTime;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
@@ -69,7 +68,7 @@ impl Interestingness {
     pub fn is_interesting(
         &self,
         opt: &crate::option::Option,
-        now: OffsetDateTime,
+        now: UtcTime,
         btc_price: Price,
         order_price: Price,
         order_size: Quantity,
@@ -182,7 +181,7 @@ impl LedgerX {
     /// Initially uses a price reference supplied at construction (probably coming
     /// from the BTCCharts data ultimately); later will use the midpoint of the LX
     /// current bid/ask for day-ahead swaps.
-    pub fn current_price(&self) -> (Price, OffsetDateTime) {
+    pub fn current_price(&self) -> (Price, UtcTime) {
         self.price_ref.reference()
     }
 
@@ -376,11 +375,7 @@ impl LedgerX {
     }
 
     /// Initializes the orderbook with the date from the book state API endpoint
-    pub fn initialize_orderbooks(
-        &mut self,
-        data: json::BookStateMessage,
-        timestamp: OffsetDateTime,
-    ) {
+    pub fn initialize_orderbooks(&mut self, data: json::BookStateMessage, timestamp: UtcTime) {
         // Delete existing data
         if let Some((contract, ref mut book_state)) = self.contracts.get_mut(&data.data.contract_id)
         {

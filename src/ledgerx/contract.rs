@@ -17,11 +17,10 @@
 //! Data Structures etc for the LedgerX API
 //!
 
-use crate::units::{Asset, BudgetAsset, TaxAsset, Underlying};
+use crate::units::{Asset, BudgetAsset, TaxAsset, Underlying, UtcTime};
 use crate::{ledgerx::json, option};
 use serde::Deserialize;
 use std::{convert::TryFrom, fmt};
-use time::OffsetDateTime;
 
 /// Type of contract
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -29,19 +28,19 @@ pub enum Type {
     /// A put or call option
     Option {
         /// Time at which exercise choice must be made
-        exercise_date: OffsetDateTime,
+        exercise_date: UtcTime,
         /// The underlying option
         opt: option::Option,
     },
     /// A next-day swap
     NextDay {
         /// The next day
-        expiry: OffsetDateTime,
+        expiry: UtcTime,
     },
     /// A future
     Future {
         /// Date at which the future expires
-        expiry: OffsetDateTime,
+        expiry: UtcTime,
     },
 }
 
@@ -85,12 +84,12 @@ impl fmt::Display for Contract {
             Type::NextDay { expiry } => {
                 fmt::Display::fmt(&self.underlying(), f)?;
                 f.write_str(" next-day ")?;
-                fmt::Display::fmt(&expiry.lazy_format("%F"), f)
+                fmt::Display::fmt(&expiry.format("%F"), f)
             }
             Type::Future { expiry } => {
                 fmt::Display::fmt(&self.underlying(), f)?;
                 f.write_str(" future ")?;
-                fmt::Display::fmt(&expiry.lazy_format("%F"), f)
+                fmt::Display::fmt(&expiry.format("%F"), f)
             }
         }
     }
@@ -172,7 +171,7 @@ impl Contract {
     }
 
     /// Expiry date
-    pub fn expiry(&self) -> OffsetDateTime {
+    pub fn expiry(&self) -> UtcTime {
         match self.ty {
             Type::Option { opt, .. } => opt.expiry,
             Type::NextDay { expiry, .. } => expiry,
@@ -227,6 +226,7 @@ impl Contract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::DateTime;
 
     #[test]
     fn parse_contract_put() {
@@ -238,13 +238,15 @@ mod tests {
                 id: ContractId(22256321),
                 active: true,
                 ty: Type::Option {
-                    exercise_date: OffsetDateTime::parse("2023-12-29 22:00:00+0000", "%F %T%z")
-                        .unwrap(),
+                    exercise_date: DateTime::parse_from_str("2023-12-29 22:00:00+0000", "%F %T%z")
+                        .unwrap()
+                        .into(),
                     opt: option::Option {
                         pc: option::PutCall::Put,
                         strike: crate::price!(4000),
-                        expiry: OffsetDateTime::parse("2023-12-29 21:00:00+0000", "%F %T%z")
-                            .unwrap(),
+                        expiry: DateTime::parse_from_str("2023-12-29 21:00:00+0000", "%F %T%z")
+                            .unwrap()
+                            .into(),
                     },
                 },
                 underlying: Underlying::Eth,
@@ -264,13 +266,15 @@ mod tests {
                 id: ContractId(22256298),
                 active: true,
                 ty: Type::Option {
-                    exercise_date: OffsetDateTime::parse("2023-12-29 22:00:00+0000", "%F %T%z")
-                        .unwrap(),
+                    exercise_date: DateTime::parse_from_str("2023-12-29 22:00:00+0000", "%F %T%z")
+                        .unwrap()
+                        .into(),
                     opt: option::Option {
                         pc: option::PutCall::Call,
                         strike: crate::price!(25000),
-                        expiry: OffsetDateTime::parse("2023-12-29 21:00:00+0000", "%F %T%z")
-                            .unwrap(),
+                        expiry: DateTime::parse_from_str("2023-12-29 21:00:00+0000", "%F %T%z")
+                            .unwrap()
+                            .into(),
                     },
                 },
                 underlying: Underlying::Btc,
@@ -291,7 +295,9 @@ mod tests {
                 id: ContractId(22256348),
                 active: false,
                 ty: Type::NextDay {
-                    expiry: OffsetDateTime::parse("2023-02-14 21:00:00+0000", "%F %T%z").unwrap(),
+                    expiry: DateTime::parse_from_str("2023-02-14 21:00:00+0000", "%F %T%z")
+                        .unwrap()
+                        .into(),
                 },
                 underlying: Underlying::Btc,
                 multiplier: 100,
@@ -311,7 +317,9 @@ mod tests {
                 id: ContractId(22256410),
                 active: true,
                 ty: Type::Future {
-                    expiry: OffsetDateTime::parse("2023-03-31 21:00:00+0000", "%F %T%z").unwrap(),
+                    expiry: DateTime::parse_from_str("2023-03-31 21:00:00+0000", "%F %T%z")
+                        .unwrap()
+                        .into(),
                 },
                 underlying: Underlying::Btc,
                 multiplier: 100,

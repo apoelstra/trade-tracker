@@ -21,9 +21,10 @@
 use crate::{
     csv,
     ledgerx::history::lot::{Close, CloseType, Lot, OpenType},
-    units::{Price, Quantity, TaxAsset, Underlying},
+    units::{Price, Quantity, TaxAsset, Underlying, UtcTime},
 };
 use anyhow::Context;
+use chrono::{Datelike as _, Timelike as _};
 use log::debug;
 use serde::Deserialize;
 use std::{cmp, collections::HashMap, fmt, ops};
@@ -63,11 +64,11 @@ impl fmt::Display for LotSelectionStrategy {
 
 /// Wrapper around a date that will output time to the nearest second in 3339 format
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug)]
-pub struct TaxDate(time::OffsetDateTime);
+pub struct TaxDate(UtcTime);
 
 impl TaxDate {
     /// Accessor for the internal timestamp
-    pub fn bare_time(&self) -> time::OffsetDateTime {
+    pub fn bare_time(&self) -> UtcTime {
         self.0
     }
 
@@ -78,7 +79,7 @@ impl TaxDate {
 }
 
 impl ops::Sub for TaxDate {
-    type Output = time::Duration;
+    type Output = chrono::Duration;
     fn sub(self, other: TaxDate) -> Self::Output {
         self.0 - other.0
     }
@@ -92,18 +93,19 @@ impl fmt::Display for TaxDate {
 
 impl csv::PrintCsv for TaxDate {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut date_utc = self.0.to_offset(time::UtcOffset::UTC);
-        // Our date library seems to always round seconds down, while LX does
-        // nearest-int rounding.
-        if date_utc.microsecond() > 500_000 {
-            date_utc += time::Duration::seconds(1);
+        let mut date_utc = self.0;
+        // The `time 0.2` library seems to always round seconds down, while LX does
+        // nearest-int rounding. Unsure about `chrono 0.4`; might as well keep this
+        // logic for the avoidance of doubt.
+        if date_utc.nanosecond() > 500_000_000 {
+            date_utc += chrono::Duration::seconds(1);
         }
-        write!(f, "{}Z", date_utc.lazy_format("%FT%H:%M:%S"),)
+        write!(f, "{}Z", date_utc.format("%FT%H:%M:%S"),)
     }
 }
 
-impl From<time::OffsetDateTime> for TaxDate {
-    fn from(t: time::OffsetDateTime) -> Self {
+impl From<UtcTime> for TaxDate {
+    fn from(t: UtcTime) -> Self {
         TaxDate(t)
     }
 }
@@ -327,11 +329,10 @@ impl PositionTracker {
         let asset = TaxAsset::Option { underlying, option };
         debug!("[position-tracker] expiry of asset {} size {}", asset, size);
         // Force expiry date to match LX goofiness
-        let expiry = option
-            .expiry
-            .date()
-            .with_time(time::time!(22:00))
-            .assume_utc();
+        let expiry: TaxDate = option.expiry.with_hour(22).unwrap().into();
+        assert_eq!(expiry.0.minute(), 0);
+        assert_eq!(expiry.0.second(), 0);
+        assert_eq!(expiry.0.nanosecond(), 0);
         let pos = match self.positions.get_mut(&asset) {
             Some(pos) => pos,
             None => {
@@ -390,11 +391,10 @@ impl PositionTracker {
             asset, size
         );
         // Force expiry date to match LX goofiness
-        let expiry = option
-            .expiry
-            .date()
-            .with_time(time::time!(22:00))
-            .assume_utc();
+        let expiry: TaxDate = option.expiry.with_hour(22).unwrap().into();
+        assert_eq!(expiry.0.minute(), 0);
+        assert_eq!(expiry.0.second(), 0);
+        assert_eq!(expiry.0.nanosecond(), 0);
         let pos = match self.positions.get_mut(&asset) {
             Some(pos) => pos,
             None => {
@@ -527,11 +527,10 @@ impl PositionTracker {
             // a taxable event occurs.
             date = expiry.into();
             if date.year() == 2021 {
-                date = expiry
-                    .date()
-                    .with_time(time::time!(21:00))
-                    .assume_utc()
-                    .into();
+                date = expiry.with_hour(21).unwrap().into();
+                assert_eq!(date.0.minute(), 0);
+                assert_eq!(date.0.second(), 0);
+                assert_eq!(date.0.nanosecond(), 0);
             }
             asset = TaxAsset::Bitcoin;
         }

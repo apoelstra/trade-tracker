@@ -17,7 +17,8 @@
 //! The different asset types that are supported by this library.
 //!
 
-use serde::{Deserialize, Deserializer};
+use chrono::Datelike as _;
+use serde::Deserialize;
 use std::fmt;
 
 /// The primary "asset" type which covers every kind of asset supported by
@@ -39,7 +40,7 @@ pub enum Asset {
     /// contexts)
     NextDay {
         underlying: Underlying,
-        expiry: time::OffsetDateTime,
+        expiry: crate::units::UtcTime,
     },
     /// A put or call option
     Option {
@@ -49,7 +50,7 @@ pub enum Asset {
     /// A future
     Future {
         underlying: Underlying,
-        expiry: time::OffsetDateTime,
+        expiry: crate::units::UtcTime,
     },
 }
 
@@ -85,7 +86,7 @@ pub enum TaxAsset {
     /// Next-Day Bitcoin
     NextDay {
         underlying: Underlying,
-        expiry: time::OffsetDateTime,
+        expiry: crate::units::UtcTime,
     },
     /// A put or call option
     Option {
@@ -134,7 +135,7 @@ impl fmt::Display for TaxAsset {
                     f,
                     "{} Mini {} {} {:#}",
                     underlying,
-                    option.expiry.lazy_format("%F"),
+                    option.expiry.format("%F"),
                     option.pc.as_str(),
                     option.strike,
                 )

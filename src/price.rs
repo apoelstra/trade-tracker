@@ -19,6 +19,7 @@
 
 use crate::units::Price;
 use anyhow::Context;
+use chrono::{Datelike as _, Timelike as _};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -32,8 +33,8 @@ use std::{
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Deserialize, Serialize)]
 pub struct BitcoinPrice {
     /// Timestamp that the price was recorded at
-    #[serde(with = "time::serde::timestamp")]
-    pub timestamp: time::OffsetDateTime,
+    #[serde(with = "chrono::serde::ts_seconds")]
+    pub timestamp: crate::units::UtcTime,
     /// Price in USD, to 12 decimal places
     #[serde(
         deserialize_with = "crate::units::deserialize_dollars",
@@ -46,7 +47,7 @@ impl BitcoinPrice {
     /// Turn a `Price` into a price at the current timestamp
     pub fn from_current(num: Price) -> BitcoinPrice {
         BitcoinPrice {
-            timestamp: time::OffsetDateTime::now_utc(),
+            timestamp: chrono::offset::Utc::now(),
             btc_price: num,
         }
     }
@@ -56,7 +57,8 @@ impl BitcoinPrice {
         let mut data = data.split(',');
 
         let date = match data.next() {
-            Some(date) => time::OffsetDateTime::from_unix_timestamp(i64::from_str(date)?),
+            Some(date) => crate::units::UtcTime::from_timestamp(i64::from_str(date)?, 0)
+                .ok_or_else(|| anyhow::Error::msg("out of range date".to_owned()))?,
             None => return Err(anyhow::Error::msg("CSV line had no timestamp")),
         };
         let price = match data.next() {
@@ -97,7 +99,7 @@ impl Historic {
     }
 
     /// Returns the most recent price as of a given time
-    pub fn price_at(&self, time: time::OffsetDateTime) -> BitcoinPrice {
+    pub fn price_at(&self, time: crate::units::UtcTime) -> BitcoinPrice {
         let result = self
             .data
             .most_recent(time)
@@ -126,8 +128,7 @@ impl Historic {
             let price = BitcoinPrice::from_csv(&entry)
                 .with_context(|| format!("decoding price \"{entry}\" at {lineno}"))?;
 
-            let half_hour =
-                12 * price.timestamp.time().hour() + price.timestamp.time().minute() / 5;
+            let half_hour = 12 * price.timestamp.hour() + price.timestamp.time().minute() / 5;
             if last_half_hour != half_hour {
                 last_half_hour = half_hour;
                 self.record(price);
@@ -189,8 +190,7 @@ impl Historic {
         let mut mo_entries = vec![];
         fs::create_dir_all(&datadir).context("creating pricedata directory")?;
         for entry in self.data.values() {
-            let year_mo =
-                100 * entry.timestamp.date().year() + entry.timestamp.date().month() as i32;
+            let year_mo = 100 * entry.timestamp.year() + entry.timestamp.month() as i32;
             if last_year_mo != year_mo {
                 if last_year_mo > 0 {
                     datadir.push(format!("{last_year_mo:06}.json"));

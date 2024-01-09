@@ -81,7 +81,7 @@ impl Logger {
     pub fn init(filenames: &LogFilenames) -> Result<(), anyhow::Error> {
         log::set_max_level(log::LevelFilter::Debug);
         log::set_boxed_logger(Box::new(Logger {
-            last_stdout_time: Mutex::new(chrono::offset::Utc::now()),
+            last_stdout_time: Mutex::new(UtcTime::now()),
             debug_log: Mutex::new(File::create(&filenames.debug_log)?),
             datafeed_log: Mutex::new(File::create(&filenames.datafeed_log)?),
             http_get_log: Mutex::new(File::create(&filenames.http_get_log)?),
@@ -109,7 +109,7 @@ impl log::Log for Logger {
                 let _ = writeln!(
                     self.http_get_log.lock().unwrap(),
                     "[{}] [{}] {}",
-                    chrono::offset::Utc::now(),
+                    UtcTime::now(),
                     record.level(),
                     record.args()
                 );
@@ -121,7 +121,7 @@ impl log::Log for Logger {
                 // TODO maybe we should log the price somewhere as a personal price reference?
                 *self.price.lock().unwrap() = format!("{}", record.args());
             } else {
-                let now = chrono::offset::Utc::now();
+                let now = UtcTime::now();
 
                 // If it's more important than info, log to stdout
                 if record.level() <= log::Level::Info {

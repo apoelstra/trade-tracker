@@ -33,11 +33,11 @@ pub mod units;
 
 use crate::cli::Command;
 pub use crate::timemap::TimeMap;
-use crate::units::Underlying;
+use crate::units::{Underlying, UtcTime};
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
 use chrono::offset::Utc;
-use chrono::{DateTime, Datelike as _};
+use chrono::Datelike as _;
 use log::{info, warn};
 use std::{
     fs, io,
@@ -83,7 +83,7 @@ fn newline() {
 }
 
 fn initialize_logging(
-    now: DateTime<Utc>,
+    now: UtcTime,
     command: &Command,
 ) -> Result<Option<logger::LogFilenames>, anyhow::Error> {
     let ret = match command {
@@ -158,7 +158,7 @@ fn main() -> Result<(), anyhow::Error> {
     data_path.pop(); // "pricedata"
 
     // Turn on logging
-    let now = Utc::now();
+    let now = UtcTime::now();
     let log_filenames = initialize_logging(now, &command).context("initializing logging")?;
 
     // Go
@@ -272,7 +272,7 @@ fn main() -> Result<(), anyhow::Error> {
                     "wss://api.ledgerx.com/ws?token={api_key}",
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
-                    let current_time = Utc::now();
+                    let current_time = UtcTime::now();
                     let current_price = tracker.current_price().0;
                     info!(target: "lx_datafeed", "{}", msg);
                     info!(target: "lx_btcprice", "{}", current_price);

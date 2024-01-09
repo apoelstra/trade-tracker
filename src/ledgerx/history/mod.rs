@@ -23,7 +23,6 @@ use crate::units::{
     BudgetAsset, DepositAsset, Price, Quantity, TaxAsset, Underlying, UnknownQuantity, UtcTime,
 };
 use anyhow::Context;
-use chrono::{Datelike as _, Timelike as _};
 use log::{debug, info, warn};
 use serde::Deserialize;
 use std::collections::{hash_map, BTreeMap, HashMap};
@@ -499,10 +498,7 @@ impl History {
 
             // LedgerX's data has the time forced to 22:00 even when DST makes this wrong
             let price_ref_date = if option.expiry.year() == 2021 {
-                assert_eq!(option.expiry.minute(), 0);
-                assert_eq!(option.expiry.second(), 0);
-                assert_eq!(option.expiry.nanosecond(), 0);
-                option.expiry.with_hour(22).unwrap().into()
+                option.expiry.forced_to_hour(22)
             } else {
                 option.expiry + chrono::Duration::hours(1)
             };

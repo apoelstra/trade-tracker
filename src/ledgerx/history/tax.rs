@@ -24,7 +24,6 @@ use crate::{
     units::{Price, Quantity, TaxAsset, Underlying, UtcTime},
 };
 use anyhow::Context;
-use chrono::{Datelike as _, Timelike as _};
 use log::debug;
 use serde::Deserialize;
 use std::{cmp, collections::HashMap, fmt, ops};
@@ -329,10 +328,7 @@ impl PositionTracker {
         let asset = TaxAsset::Option { underlying, option };
         debug!("[position-tracker] expiry of asset {} size {}", asset, size);
         // Force expiry date to match LX goofiness
-        let expiry: TaxDate = option.expiry.with_hour(22).unwrap().into();
-        assert_eq!(expiry.0.minute(), 0);
-        assert_eq!(expiry.0.second(), 0);
-        assert_eq!(expiry.0.nanosecond(), 0);
+        let expiry: TaxDate = option.expiry.forced_to_hour(22).into();
         let pos = match self.positions.get_mut(&asset) {
             Some(pos) => pos,
             None => {
@@ -391,10 +387,7 @@ impl PositionTracker {
             asset, size
         );
         // Force expiry date to match LX goofiness
-        let expiry: TaxDate = option.expiry.with_hour(22).unwrap().into();
-        assert_eq!(expiry.0.minute(), 0);
-        assert_eq!(expiry.0.second(), 0);
-        assert_eq!(expiry.0.nanosecond(), 0);
+        let expiry: TaxDate = option.expiry.forced_to_hour(22).into();
         let pos = match self.positions.get_mut(&asset) {
             Some(pos) => pos,
             None => {
@@ -527,10 +520,7 @@ impl PositionTracker {
             // a taxable event occurs.
             date = expiry.into();
             if date.year() == 2021 {
-                date = expiry.with_hour(21).unwrap().into();
-                assert_eq!(date.0.minute(), 0);
-                assert_eq!(date.0.second(), 0);
-                assert_eq!(date.0.nanosecond(), 0);
+                date = expiry.forced_to_hour(21).into();
             }
             asset = TaxAsset::Bitcoin;
         }

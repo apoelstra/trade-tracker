@@ -221,8 +221,8 @@ mod tests {
                     0x01, 0x4a, 0xa5, 0xad, 0x13, 0x56, 0x42, 0x72, 0xa7, 0x93, 0xc0, 0x58, 0x2a,
                     0x77, 0x60, 0x00,
                 ]),
-                timestamp: UtcTime::from_timestamp(1674839748, 016616735).unwrap(),
-                updated_timestamp: UtcTime::from_timestamp(1674839748, 016616735).unwrap(),
+                timestamp: UtcTime::from_unix_nanos_i64(1674839748016616735).unwrap(),
+                updated_timestamp: UtcTime::from_unix_nanos_i64(1674839748016616735).unwrap(),
             })
         );
     }

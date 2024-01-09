@@ -21,7 +21,6 @@ use crate::csv;
 use crate::ledgerx::history::tax::{GainType, TaxDate};
 use crate::option::{Call, Put};
 use crate::units::{Price, Quantity, TaxAsset, TaxAsset2022, UtcTime};
-use chrono::Timelike as _;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{

@@ -17,7 +17,6 @@
 //! The different asset types that are supported by this library.
 //!
 
-use chrono::Datelike as _;
 use serde::Deserialize;
 use std::fmt;
 

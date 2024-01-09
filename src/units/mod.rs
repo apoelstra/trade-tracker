@@ -22,14 +22,14 @@
 mod asset;
 mod price;
 mod quantity;
+mod utc_time;
 
 pub use asset::{Asset, BudgetAsset, DepositAsset, TaxAsset, TaxAsset2022, Underlying};
 pub use price::{
     deserialize_cents, deserialize_cents_opt, deserialize_dollars, serialize_dollars, Price,
 };
 pub use quantity::{Quantity, UnknownQuantity};
-
-pub type UtcTime = chrono::DateTime<chrono::offset::Utc>;
+pub use utc_time::{serde_ts_seconds, UtcTime};
 
 macro_rules! impl_ops_0 {
     ($outer:ty, $op:ident, $opfn:ident) => {

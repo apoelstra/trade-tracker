@@ -42,9 +42,9 @@ where
     D: Deserializer<'de>,
 {
     let s: i64 = Deserialize::deserialize(deser)?;
-    UtcTime::from_timestamp(s / 1_000_000_000, (s % 1_000_000_000) as u32).ok_or_else(|| {
+    UtcTime::from_unix_nanos_i64(s).map_err(|_| {
         de::Error::invalid_value(
-            de::Unexpected::Str(&s.to_string()),
+            de::Unexpected::Signed(s),
             &"a timestamp in range for the datetime type",
         )
     })

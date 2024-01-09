@@ -97,6 +97,6 @@ pub struct LotInfo {
     #[serde(deserialize_with = "crate::units::deserialize_cents")]
     pub price: Price,
     /// The ID of the lot in question
-    #[serde(with = "chrono::serde::ts_seconds")]
+    #[serde(with = "crate::units::serde_ts_seconds")]
     pub date: UtcTime,
 }

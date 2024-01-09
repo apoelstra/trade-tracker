@@ -85,11 +85,8 @@ impl str::FromStr for Option {
             return Err(format!("option {} is too short (len {})", s, s.len()));
         }
 
-        let expiry = chrono::NaiveDate::parse_from_str(&s[0..10], "%F")
-            .map_err(|e| format!("Parsing time in option {s}: {e}"))?
-            .and_hms_opt(21, 0, 0)
-            .unwrap()
-            .and_utc();
+        let expiry = UtcTime::parse_option_expiry(&s[0..10])
+            .map_err(|e| format!("Parsing time in option {s}: {e}"))?;
         let pc = match s.as_bytes()[10] {
             b'C' | b'c' => Call,
             b'P' | b'p' => Put,

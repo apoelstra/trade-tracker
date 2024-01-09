@@ -84,11 +84,11 @@ impl Reference {
         // we're missing data.
         if bid != Price::ZERO {
             self.last_best_bid = bid;
-            self.last_update = chrono::offset::Utc::now();
+            self.last_update = UtcTime::now();
         }
         if ask != Price::ZERO {
             self.last_best_ask = ask;
-            self.last_update = chrono::offset::Utc::now();
+            self.last_update = UtcTime::now();
         }
 
         self.log(format_args!(

@@ -96,6 +96,13 @@ impl UtcTime {
         Ok(UtcTime { inner: expiry })
     }
 
+    /// Parses the date from Coinbase API calls
+    pub fn parse_coinbase(s: &str) -> Result<Self, Error> {
+        Ok(UtcTime {
+            inner: chrono::DateTime::parse_from_rfc3339(s)?.into(),
+        })
+    }
+
     /// Returns a copy of the given timestamp, with the time component set to a specific hour
     pub fn forced_to_hour(&self, n: u32) -> Self {
         UtcTime {

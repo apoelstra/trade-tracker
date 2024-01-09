@@ -90,10 +90,7 @@ fn initialize_logging(
     let ret = match command {
         // Commands that interact with the LX API should have full logging, including
         // debug logs and sending all json replies to log files.
-        Command::Connect { .. }
-        | Command::History { .. }
-        | Command::TaxHistory { .. }
-        | Command::TmpAndrew => {
+        Command::Connect { .. } | Command::History { .. } | Command::TaxHistory { .. } => {
             let log_dir = format!("{}/log", env!("CARGO_MANIFEST_DIR"));
             if let Ok(metadata) = std::fs::metadata(&log_dir) {
                 if !metadata.is_dir() {
@@ -149,7 +146,8 @@ fn main() -> Result<(), anyhow::Error> {
     // Read price data history
     let history = match command {
         // unused when initializing price data, just pick something
-        Command::InitializePriceData { .. } => Ok(Historic::default()),
+        // Also unused for Connect, which uses a real-time ticker feed
+        Command::InitializePriceData { .. } | Command::Connect { .. } => Ok(Historic::default()),
         // For tax stuff we have to load historic data going back a bit
         Command::History { .. } | Command::TaxHistory { .. } => {
             Historic::read_json_from(&data_path, TAX_PRICE_MIN_YEAR)
@@ -251,7 +249,8 @@ fn main() -> Result<(), anyhow::Error> {
             let all_contracts: Vec<ledgerx::Contract> =
                 http::get_json_from_data_field("https://api.ledgerx.com/trading/contracts", None)?;
 
-            let current_price = history.price_at(now);
+            let coinbase_rx = crate::coinbase::spawn_ticker_thread();
+            let current_price = coinbase_rx.recv().expect("getting initial price reference");
             info!("BTC price: {}", current_price);
             info!("Risk-free rate: 4% (assumed)");
 
@@ -270,14 +269,20 @@ fn main() -> Result<(), anyhow::Error> {
             info!("Loaded contracts. Watching feed.");
 
             let mut last_update = now;
-            let mut last_price = current_price.btc_price;
+            let mut old_price = current_price;
+            let mut last_price = current_price;
             loop {
                 let mut sock = tungstenite::client::connect(format!(
                     "wss://api.ledgerx.com/ws?token={api_key}",
                 ))?;
                 while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
                     let current_time = UtcTime::now();
-                    let current_price = tracker.current_price().0;
+                    let mut current_price = last_price;
+                    while let Ok(price) = coinbase_rx.try_recv() {
+                        current_price = price;
+                    }
+                    last_price = current_price;
+                    tracker.set_current_price(current_price);
                     info!(target: "lx_datafeed", "{}", msg);
                     info!(target: "lx_btcprice", "{}", current_price);
 
@@ -326,13 +331,14 @@ fn main() -> Result<(), anyhow::Error> {
 
                     // Log the "standing" data every 6 hours or whenever the price moves a lot
                     if current_time - last_update > chrono::Duration::hours(6)
-                        || current_price < last_price.scale_approx(0.98)
-                        || current_price > last_price.scale_approx(1.02)
+                        || current_price.btc_price < old_price.btc_price.scale_approx(0.98)
+                        || current_price.btc_price > old_price.btc_price.scale_approx(1.02)
                     {
+                        info!("[heartbeat]");
                         tracker.log_open_orders();
                         tracker.log_interesting_contracts();
                         last_update = current_time;
-                        last_price = current_price;
+                        old_price = current_price;
                     }
                 } // while let
             } // loop
@@ -392,13 +398,6 @@ fn main() -> Result<(), anyhow::Error> {
                     &log_filenames.http_get_log,
                     &format!("{dir_path}/http_get.log"),
                 )?;
-            }
-        }
-        Command::TmpAndrew => {
-            let rx = crate::coinbase::spawn_ticker_thread();
-            loop {
-                let price_update = rx.recv().unwrap();
-                // TODO use the return value
             }
         }
     }

@@ -30,13 +30,9 @@ static DEFAULT_PRICE_FEED_URL: &str =
 pub enum Command {
     /// Read a CSV file downloaded from Bitcoincharts, storing all its price data (at
     /// a ten-minute resolution rather than all of it)
-    InitializePriceData {
-        csv: PathBuf,
-    },
+    InitializePriceData { csv: PathBuf },
     /// Ping bitcoincharts in real time to get recent price data
-    UpdatePriceData {
-        url: String,
-    },
+    UpdatePriceData { url: String },
     /// Return the latest stored price. Mainly useful as a test.
     LatestPrice {},
     /// Print a list of potential orders for a given option near a given volatility, at various
@@ -53,9 +49,7 @@ pub enum Command {
         price: Option<Price>,
     },
     /// Connect to LedgerX API and monitor activity in real-time
-    Connect {
-        api_key: String,
-    },
+    Connect { api_key: String },
     /// Connect to LedgerX API and download complete transaction history, for a given year if
     /// supplied. Outputs in CSV.
     History {
@@ -67,7 +61,6 @@ pub enum Command {
         api_key: String,
         config_file: PathBuf,
     },
-    TmpAndrew,
 }
 
 /// Master list of supported commands
@@ -89,7 +82,6 @@ static COMMANDS: &[(&str, &str, fn(&str, env::ArgsOs) -> Command)] = &[
     ("connect", "<api key>", connect),
     ("history", "<api key> <config file>", history),
     ("tax-history", "<api key> <config file>", tax_history),
-    ("tmp-andrew", "", tmp_andrew),
 ];
 
 /// Parse the "initialize-price-data" command
@@ -185,11 +177,6 @@ fn tax_history(invocation: &str, mut args: env::ArgsOs) -> Command {
     }
 }
 
-/// Parse the "tmp-andrew" command
-fn tmp_andrew(_: &str, _: env::ArgsOs) -> Command {
-    Command::TmpAndrew
-}
-
 impl Command {
     /// Parse the command-line arguments
     ///
@@ -235,7 +222,6 @@ impl Command {
             Command::Connect { .. } => "connect",
             Command::History { .. } => "history",
             Command::TaxHistory { .. } => "tax-history",
-            Command::TmpAndrew { .. } => "tmp-andrew",
         }
     }
 }

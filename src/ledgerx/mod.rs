@@ -24,8 +24,8 @@ pub mod datafeed;
 pub mod history;
 pub mod json;
 pub mod own_orders;
-pub mod price_tracker;
 
+use crate::price::BitcoinPrice;
 use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity, Underlying, UtcTime};
 use log::{debug, info, warn};
@@ -137,7 +137,7 @@ pub fn from_json_dot_data<'a, T: Deserialize<'a>>(
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LedgerX {
     contracts: HashMap<ContractId, (Contract, BookState)>,
-    price_ref: price_tracker::Reference,
+    price_ref: BitcoinPrice,
     own_orders: own_orders::Tracker,
     available_usd: Price,
     available_btc: bitcoin::Amount,
@@ -161,7 +161,7 @@ impl LedgerX {
         LedgerX {
             contracts: HashMap::new(),
             own_orders: own_orders::Tracker::new(),
-            price_ref: price_tracker::Reference::new(btc_price),
+            price_ref: btc_price,
             available_usd: Price::ZERO,
             available_btc: bitcoin::Amount::ZERO,
         }
@@ -179,10 +179,22 @@ impl LedgerX {
     /// Returns the current BTC price, as seen by the tracker
     ///
     /// Initially uses a price reference supplied at construction (probably coming
-    /// from the BTCCharts data ultimately); later will use the midpoint of the LX
-    /// current bid/ask for day-ahead swaps.
+    /// from the BTCCharts data ultimately). Should be updated with `set_current_price`.
+    /// If this is not updated at least once a minute, will panic.
     pub fn current_price(&self) -> (Price, UtcTime) {
-        self.price_ref.reference()
+        if UtcTime::now() - self.price_ref.timestamp > chrono::Duration::seconds(60) {
+            panic!(
+                "Price reference {} is more than 60 seconds old ({})",
+                self.price_ref,
+                UtcTime::now() - self.price_ref.timestamp,
+            );
+        }
+        (self.price_ref.btc_price, self.price_ref.timestamp)
+    }
+
+    /// Updates the price reference.
+    pub fn set_current_price(&mut self, price: BitcoinPrice) {
+        self.price_ref = price;
     }
 
     /// Go through the list of all open orders and log them all
@@ -307,8 +319,8 @@ impl LedgerX {
                 book.log_interesting_orders(
                     &opt,
                     now,
-                    self.price_ref.best_bid(),
-                    self.price_ref.best_ask(),
+                    self.current_price().0, // best bid
+                    self.current_price().0, // best ask
                     self.available_usd,
                     self.available_btc,
                 );
@@ -365,7 +377,8 @@ impl LedgerX {
         debug!("Inserting into contract {}: {}", contract.id(), order);
         if contract.asset() == Asset::Btc {
             // For day-ahead swaps update the current BTC price reference
-            self.price_ref.insert_order(order.clone());
+            // We don't use the LX orderbook as a price reference at all.
+            // self.price_ref.insert_order(order.clone());
             book_state.insert_order(order);
             UpdateResponse::AcceptedBtc
         } else {
@@ -381,7 +394,8 @@ impl LedgerX {
         {
             *book_state = BookState::new(contract.asset());
             if contract.asset() == Asset::Btc {
-                self.price_ref.clear_book();
+                // We don't use the LX orderbook as a price reference at all
+                //self.price_ref.clear_book();
             }
         }
         for order in data.data.book_states {

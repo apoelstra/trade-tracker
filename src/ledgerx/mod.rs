@@ -31,6 +31,7 @@ use crate::units::{Asset, Price, Quantity, Underlying, UtcTime};
 use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json;
+use std::cmp::min;
 use std::collections::HashMap;
 
 pub use book::BookState;
@@ -262,56 +263,87 @@ impl LedgerX {
                 let mut interesting = true;
 
                 interesting &= !opt.in_the_money(btc_price); // Only OTM options
-                interesting &= opt.expiry >= now; // only active options
+                interesting &= opt.expiry > now; // only active options
 
                 let ddelta80 = opt.bs_dual_delta(now, btc_price, 0.80);
                 interesting &= ddelta80.abs() < 0.05; // only options with <5% chance of ending ITM
 
-                // Compute yield from matching bids
-                let (clear_bid_size, clear_bid_yield) =
-                    book.clear_bids(&opt, self.available_usd, self.available_btc);
-                // Compute yield from matching best ask, with as much money as we can
                 let (ask_price, _) = book.best_ask();
-                let (ask_size, _) = opt.max_sale(ask_price, self.available_usd, self.available_btc);
-                let ask_yield = ask_price * ask_size;
+                let arr = opt.arr(now, btc_price, ask_price);
+                interesting &= arr > 0.05; // only options whose ARR at best ask is >6%
 
-                // only options where we could maybe make $100/wk
-                let yield_limit = Price::ONE_HUNDRED.scale_approx(opt.years_to_expiry(now) * 52.0);
-                interesting &= clear_bid_yield > yield_limit || ask_yield > yield_limit;
-                if interesting {
-                    opt.log_option_data(
-                        ColorFormat::light_purple("Interesting contract: "),
-                        now,
-                        btc_price,
-                    );
-                    if clear_bid_size.is_positive() {
-                        let clear_price = clear_bid_yield / clear_bid_size;
-                        opt.log_order_data(
-                            "      Order to clear: ",
+                if !interesting {
+                    return;
+                }
+                for (msg, available_usd, available_btc) in [
+                    (
+                        "Interesting contract given current funds",
+                        self.available_usd,
+                        self.available_btc,
+                    ),
+                    (
+                        "Interesting contract if funds were available",
+                        Price::MAX,
+                        bitcoin::Amount::MAX_MONEY,
+                    ),
+                ] {
+                    // Compute yield from matching bids
+                    let (clear_bid_size, clear_bid_yield) =
+                        book.clear_bids(&opt, available_usd, available_btc);
+                    // Compute yield from matching best ask, locking $10k, 1BTC, or however
+                    // much we have available. We deliberately don't use a lot because we
+                    // don't expect a lot will actually get executed (in a timely fashion
+                    // anyway).
+                    let ask_usd = min(available_usd, Price::ONE_THOUSAND.scale_approx(10.0));
+                    let ask_btc = min(available_btc, bitcoin::Amount::ONE_BTC);
+
+                    let (ask_size, _) = opt.max_sale(ask_price, ask_usd, ask_btc);
+                    let ask_yield = ask_price * ask_size;
+
+                    // only options where we could maybe make $100/wk
+                    let yield_limit =
+                        Price::ONE_HUNDRED.scale_approx(opt.years_to_expiry(now) * 52.0);
+                    let interesting =
+                        interesting & (clear_bid_yield > yield_limit || ask_yield > yield_limit);
+                    if interesting {
+                        info!("{}", msg);
+                        opt.log_option_data(
+                            ColorFormat::light_purple("Interesting contract: "),
                             now,
                             btc_price,
-                            clear_price,
-                            Some(clear_bid_size),
                         );
-                    }
+                        if clear_bid_size.is_positive() {
+                            let clear_price = clear_bid_yield / clear_bid_size;
+                            opt.log_order_data(
+                                "      Order to clear: ",
+                                now,
+                                btc_price,
+                                clear_price,
+                                Some(clear_bid_size),
+                            );
+                        }
 
-                    let (bid_price, bid_size) = book.best_bid();
-                    let (max_bid_size, _) =
-                        opt.max_sale(bid_price, self.available_usd, self.available_btc);
-                    opt.log_order_data(
-                        "            Best bid: ",
-                        now,
-                        btc_price,
-                        bid_price,
-                        Some(bid_size.min(max_bid_size)),
-                    );
-                    opt.log_order_data(
-                        " Best ask  (matched): ",
-                        now,
-                        btc_price,
-                        ask_price,
-                        Some(ask_size),
-                    );
+                        let (bid_price, bid_size) = book.best_bid();
+                        let (max_bid_size, _) =
+                            opt.max_sale(bid_price, available_usd, available_btc);
+                        opt.log_order_data(
+                            "            Best bid: ",
+                            now,
+                            btc_price,
+                            bid_price,
+                            Some(bid_size.min(max_bid_size)),
+                        );
+                        opt.log_order_data(
+                            " Best ask  (matched): ",
+                            now,
+                            btc_price,
+                            ask_price,
+                            Some(ask_size),
+                        );
+
+                        // We only want to log once, so break out of the loop.
+                        break;
+                    }
                 }
             }
             // Log open orders

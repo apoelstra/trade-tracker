@@ -38,6 +38,8 @@ impl Price {
     pub const ONE_HUNDRED: Self = Price(Decimal::ONE_HUNDRED);
     /// $1000
     pub const ONE_THOUSAND: Self = Price(Decimal::ONE_THOUSAND);
+    /// Maximum representable price
+    pub const MAX: Self = Price(Decimal::MAX);
 
     /// Converts the price to a floating-point value
     ///

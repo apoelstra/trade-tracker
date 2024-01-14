@@ -18,7 +18,8 @@
 //!
 
 use crate::ledgerx::{contract, datafeed::Order, Contract, CustomerId, MessageId};
-use crate::units::{Price, Quantity, UnknownQuantity, UtcTime};
+use crate::price::BitcoinPrice;
+use crate::units::{Price, Quantity, UnknownQuantity};
 use log::{info, warn};
 use std::collections::HashMap;
 
@@ -36,7 +37,7 @@ impl Tracker {
         Default::default()
     }
 
-    pub fn insert_order(&mut self, contract: &Contract, order: Order, price_ref: (Price, UtcTime)) {
+    pub fn insert_order(&mut self, contract: &Contract, order: Order, price_ref: BitcoinPrice) {
         // First log anything interesting about the CID.
         match (self.my_id, order.customer_id) {
             (_, None) => {
@@ -70,7 +71,11 @@ impl Tracker {
                     {}: {} @ {}\n\
                     ID {}\n\
                     BTC Price {}",
-                    contract, filled_size, order.filled_price, order.message_id, price_ref.0,
+                    contract,
+                    filled_size,
+                    order.filled_price,
+                    order.message_id,
+                    price_ref.btc_price,
                 );
                 let encoded = urlencoding::encode(&message);
                 let body = format!(
@@ -131,8 +136,14 @@ impl Tracker {
             match contract.ty() {
                 contract::Type::Option { opt, .. } => {
                     info!("{}order {}", msg, mid);
-                    opt.log_option_data(msg, price_ref.1, price_ref.0);
-                    opt.log_order_data(msg, price_ref.1, price_ref.0, price, Some(size));
+                    opt.log_option_data(msg, price_ref.timestamp, price_ref.btc_price);
+                    opt.log_order_data(
+                        msg,
+                        price_ref.timestamp,
+                        price_ref.btc_price,
+                        price,
+                        Some(size),
+                    );
                     info!("");
                 }
                 contract::Type::NextDay { .. } => {

@@ -106,15 +106,6 @@ impl LedgerX {
         self.available_btc = btc;
     }
 
-    /// Returns the current BTC price, as seen by the tracker
-    ///
-    /// Initially uses a price reference supplied at construction (probably coming
-    /// from the BTCCharts data ultimately). Should be updated with `set_current_price`.
-    /// If this is not updated at least once a minute, will panic.
-    pub fn current_price(&self) -> (Price, UtcTime) {
-        (self.price_ref.btc_price, self.price_ref.timestamp)
-    }
-
     /// Updates the price reference.
     pub fn set_current_price(&mut self, price: BitcoinPrice) {
         self.price_ref = price;
@@ -122,18 +113,21 @@ impl LedgerX {
 
     /// Go through the list of all open orders and log them all
     pub fn log_open_orders(&self) {
-        let price_ref = self.current_price();
         for order in self.own_orders.open_order_iter() {
             if let Some((contract, _)) = self.contracts.get(&order.contract_id) {
                 let size = order.size.with_asset_trade(contract.asset());
                 match contract.ty() {
                     contract::Type::Option { opt, .. } => {
                         info!("Open order {}:", order.message_id);
-                        opt.log_option_data("    ", price_ref.1, price_ref.0);
+                        opt.log_option_data(
+                            "    ",
+                            self.price_ref.timestamp,
+                            self.price_ref.btc_price,
+                        );
                         opt.log_order_data(
                             "    ",
-                            price_ref.1,
-                            price_ref.0,
+                            self.price_ref.timestamp,
+                            self.price_ref.btc_price,
                             order.price,
                             Some(size),
                         );
@@ -304,7 +298,6 @@ impl LedgerX {
 
     /// Inserts a new order into the book
     pub fn insert_order(&mut self, order: datafeed::Order) -> UpdateResponse {
-        let price_ref = self.current_price(); // need this now for borrowck reasons
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => {
@@ -325,7 +318,7 @@ impl LedgerX {
         // Before doing anything else, track this if it's an own-order
         if order.customer_id.is_some() {
             self.own_orders
-                .insert_order(contract, order.clone(), price_ref);
+                .insert_order(contract, order.clone(), self.price_ref);
         }
 
         // Insert the order into the main book.

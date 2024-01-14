@@ -106,9 +106,10 @@ fn initialize_logging(
             let log_name = command.log_name();
             let log_time = now.format("%F_%H-%M-%S");
             let filenames = logger::LogFilenames {
-                debug_log: format!("{log_dir}/{log_name}_{log_time}_debug.log"),
-                datafeed_log: format!("{log_dir}/{log_name}_{log_time}_datafeed.log"),
-                http_get_log: format!("{log_dir}/{log_name}_{log_time}_http.log"),
+                coinbase_log: format!("{log_dir}/{log_name}-coinbase_{log_time}.log"),
+                debug_log: format!("{log_dir}/{log_name}-debug_{log_time}.log"),
+                datafeed_log: format!("{log_dir}/{log_name}-datafeed_{log_time}.log"),
+                http_get_log: format!("{log_dir}/{log_name}-http_{log_time}.log"),
             };
             logger::Logger::init(&filenames).with_context(|| {
                 format!(

@@ -148,7 +148,7 @@ impl Option {
     /// "interest".
     pub fn arr(&self, now: UtcTime, btc_price: Price, self_price: Price) -> f64 {
         let yte = self.years_to_expiry(now);
-        assert!(yte > 0.0);
+        assert!(yte > 0.0, "Tried to compute ARR for {} at {}", self, now,);
         match self.pc {
             Put => {
                 // For 100 put contracts, we lock up strike_price much cash

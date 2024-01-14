@@ -32,6 +32,7 @@ use std::sync::Mutex;
 
 /// Convenience struct for all the filenames that we need
 pub struct LogFilenames {
+    pub coinbase_log: String,
     pub debug_log: String,
     pub datafeed_log: String,
     pub http_get_log: String,
@@ -66,6 +67,8 @@ pub struct Logger {
     last_stdout_time: Mutex<UtcTime>,
     /// Log for general output (excluding json-encoded data)
     ///
+    /// Log to dump messages from Coinbase to
+    coinbase_log: Mutex<File>,
     /// Info and greater logs will also be put to stderr
     debug_log: Mutex<File>,
     /// Log to just dump websocket messages to
@@ -82,6 +85,7 @@ impl Logger {
         log::set_max_level(log::LevelFilter::Debug);
         log::set_boxed_logger(Box::new(Logger {
             last_stdout_time: Mutex::new(UtcTime::now()),
+            coinbase_log: Mutex::new(File::create(&filenames.coinbase_log)?),
             debug_log: Mutex::new(File::create(&filenames.debug_log)?),
             datafeed_log: Mutex::new(File::create(&filenames.datafeed_log)?),
             http_get_log: Mutex::new(File::create(&filenames.http_get_log)?),
@@ -113,6 +117,10 @@ impl log::Log for Logger {
                     record.level(),
                     record.args()
                 );
+            } else if record.target() == "cb_datafeed" {
+                // Messages targeted for the Coinbase go to the Coinbase log with no
+                // additional processing (no timestamps etc)
+                let _ = writeln!(self.coinbase_log.lock().unwrap(), "{}", record.args());
             } else if record.target() == "lx_datafeed" {
                 // Messages targeted for the datafeed go to the datafeed log with no
                 // additional processing (no timestamps etc)

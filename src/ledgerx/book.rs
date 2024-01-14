@@ -19,9 +19,7 @@
 
 use super::{datafeed, MessageId};
 use crate::option::{Call, Put};
-use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity, UtcTime};
-use log::info;
 use std::collections::BTreeMap;
 
 /// Book state for a specific contract
@@ -128,6 +126,17 @@ impl BookState {
         (ret_contr, ret_usd)
     }
 
+    /// Yield an iterator over all bids, from best to worst
+    pub fn bids(&self) -> impl Iterator<Item = &Order> {
+        self.bids.iter().map(|(_, order)| order).rev()
+    }
+
+    /// Yield an iterator over all asks, from best to worst
+    pub fn asks(&self) -> impl Iterator<Item = &Order> {
+        self.asks.iter().map(|(_, order)| order)
+    }
+
+    /*
     pub fn log_interesting_orders(
         &self,
         opt: &crate::option::Option,
@@ -187,6 +196,7 @@ impl BookState {
             );
         }
     }
+    */
 }
 
 /// An order, as recorded in the orderbook
@@ -202,6 +212,7 @@ pub struct Order {
     pub timestamp: UtcTime,
 }
 
+/*
 fn log_bid_if_interesting(
     order: &Order,
     opt: &crate::option::Option,
@@ -308,3 +319,4 @@ fn log_ask_if_interesting(
         }
     }
 }
+*/

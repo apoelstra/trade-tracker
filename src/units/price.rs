@@ -59,6 +59,20 @@ impl Price {
         Price(Decimal::try_from(p).unwrap_or_default())
     }
 
+    /// Computes a weighted average of two prices
+    pub fn average(self, self_qty: Quantity, other: Self, other_qty: Quantity) -> Self {
+        let total = self_qty + other_qty;
+        // Since qunatities are nonnegative, the only way total can be
+        // zero is if both inputs are zero, in which case their average
+        // is also zero.
+        if total == Quantity::Zero {
+            return Price::ZERO;
+        }
+
+        let sum = (self * self_qty) + (other * other_qty);
+        sum / total
+    }
+
     /// Multiplies the price by a given scaling factor
     ///
     /// Because this uses floating-point numbers it will not give an exact

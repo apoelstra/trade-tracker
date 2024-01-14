@@ -18,6 +18,7 @@
 
 use crate::price::BitcoinPrice;
 use crate::units::UtcTime;
+use log::info;
 use serde::{de, Deserialize, Deserializer};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
@@ -77,6 +78,7 @@ pub fn spawn_ticker_thread() -> Receiver<BitcoinPrice> {
 
         let mut last_price: Option<BitcoinPrice> = None;
         while let Ok(tungstenite::protocol::Message::Text(msg)) = coinbase_sock.0.read_message() {
+            info!(target: "cb_datafeed", "{}", msg);
             match serde_json::from_str(&msg).unwrap() {
                 CoinbaseMsg::Subscriptions { channels } => {
                     assert_eq!(channels.len(), 1);

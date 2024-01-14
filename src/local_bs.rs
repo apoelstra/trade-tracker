@@ -23,7 +23,7 @@
 /// See <http://jtoll.com/post/duel-of-the-deltas/>
 ///
 /// Note importantly that this is *only true in the absense of dividends*, mainly
-/// because the `black_scholes` library assumes no divends. This is directly
+/// because the `black_scholes` library assumes no dividends. This is directly
 /// computing `N(d2)` but the correct formula is `exp(-qt)N(d2)` where `q` is the
 /// dividend rate.
 ///

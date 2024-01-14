@@ -22,93 +22,22 @@ pub mod contract;
 pub mod csv;
 pub mod datafeed;
 pub mod history;
+pub mod interesting;
 pub mod json;
 pub mod own_orders;
 
+use self::interesting::BidStats;
 use crate::price::BitcoinPrice;
 use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity, Underlying, UtcTime};
 use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json;
-use std::cmp::min;
 use std::collections::HashMap;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
 pub use datafeed::{CustomerId, MessageId};
-
-/// Thresholds of interestingness
-#[derive(Copy, Clone, Debug)]
-pub struct Interestingness {
-    pub min_arr: f64,
-    pub min_vol: f64,
-    pub max_loss80: f64,
-    pub min_size: Quantity,
-    pub min_yield_per_week: Price,
-}
-
-/// Threshold for a bid to be interesting enough for us to snipe
-pub static BID_INTERESTING: Interestingness = Interestingness {
-    min_arr: 0.05,
-    min_vol: 0.5,
-    max_loss80: 0.20,
-    min_size: Quantity::Contracts(1),
-    min_yield_per_week: Price::TWENTY_FIVE,
-};
-/// Threshold for a ask to be interesting enough for us to match
-pub static ASK_INTERESTING: Interestingness = Interestingness {
-    min_arr: 0.10,
-    min_vol: 0.75,
-    max_loss80: 0.10,
-    min_size: Quantity::Contracts(1),
-    min_yield_per_week: Price::TWENTY_FIVE,
-};
-
-impl Interestingness {
-    pub fn is_interesting(
-        &self,
-        opt: &crate::option::Option,
-        now: UtcTime,
-        btc_price: Price,
-        order_price: Price,
-        order_size: Quantity,
-    ) -> bool {
-        // Easy check: size
-        if order_size < self.min_size {
-            return false;
-        }
-        let min_yield = self
-            .min_yield_per_week
-            .scale_approx(opt.years_to_expiry(now) * 52.0);
-        if order_price * order_size < min_yield {
-            return false;
-        }
-        // Next, if the option is "free money" we consider it uninteresting for
-        // now. We will do a manual free-money check where it makessense.
-        let vol = match opt.bs_iv(now, btc_price, order_price) {
-            Ok(vol) => vol,
-            Err(_) => return false,
-        };
-
-        let arr = opt.arr(now, btc_price, order_price);
-        let loss80 = opt.bs_loss80(now, btc_price, order_price).abs();
-
-        if opt.in_the_money(btc_price) {
-            return false;
-        } // Ignore ITM bids, we don't really have a strategy for shorting ITMs
-        if arr < self.min_arr {
-            return false;
-        } // ignore low-yield bids
-        if loss80 > self.max_loss80 {
-            return false;
-        } // ignore bids with high likelihood of loss
-        if vol < self.min_vol {
-            return false;
-        }
-        true
-    }
-}
 
 /// LedgerX API error
 pub enum Error {
@@ -183,13 +112,6 @@ impl LedgerX {
     /// from the BTCCharts data ultimately). Should be updated with `set_current_price`.
     /// If this is not updated at least once a minute, will panic.
     pub fn current_price(&self) -> (Price, UtcTime) {
-        if UtcTime::now() - self.price_ref.timestamp > chrono::Duration::seconds(60) {
-            panic!(
-                "Price reference {} is more than 60 seconds old ({})",
-                self.price_ref,
-                UtcTime::now() - self.price_ref.timestamp,
-            );
-        }
         (self.price_ref.btc_price, self.price_ref.timestamp)
     }
 
@@ -246,116 +168,108 @@ impl LedgerX {
         // self.log_interesting_contract. This is wasteful but what are you gonna do.
         let cids: Vec<ContractId> = self.contracts.keys().copied().collect();
         for cid in cids {
-            self.log_interesting_contract(cid);
+            if let Some((c, book)) = self.contracts.get(&cid) {
+                self.log_interesting_contract(c, book);
+            }
         }
     }
 
     /// Log a single interesting contract
-    fn log_interesting_contract(&self, cid: ContractId) {
-        let (btc_price, now) = self.current_price();
-        if let Some((c, book)) = self.contracts.get(&cid) {
-            // Only log BTC contracts
-            if c.underlying() != Underlying::Btc {
-                return;
-            }
-            // Log the contract itself
-            if let Some(opt) = c.as_option() {
-                let mut interesting = true;
+    fn log_interesting_contract(&self, c: &Contract, book: &BookState) {
+        let btc_price = self.price_ref;
+        let now = UtcTime::now();
+        // Extract option, assuming it matches the relevant parameters
+        // (is an option, hasn't expired, BTC not ETH, etc)
+        let opt = match interesting::extract_option(c, self.price_ref) {
+            Some(opt) => opt,
+            None => return,
+        };
 
-                interesting &= !opt.in_the_money(btc_price); // Only OTM options
-                interesting &= opt.expiry > now; // only active options
+        // Compute the yield threshold below which the absolute return
+        // is too low to be worth logging (though it may be worth acting
+        // on autonomously). We set this to $25/day which is roughly $750/mo
+        // for now.
+        let dte = opt.years_to_expiry(now) * 365.0;
+        let yield_threshold = Price::TWENTY_FIVE.scale_approx(dte);
 
-                let ddelta80 = opt.bs_dual_delta(now, btc_price, 0.80);
-                interesting &= ddelta80.abs() < 0.05; // only options with <5% chance of ending ITM
+        // We will do two passes: one with our actual funds and another for
+        // "hypothetical" trades, which merely logs stuff that might be
+        // interesting for IRC or whatever.
+        for (msg, available_usd, available_btc) in [
+            (
+                "Interesting contract given current funds",
+                self.available_usd,
+                self.available_btc,
+            ),
+            (
+                "Interesting contract if funds were available",
+                Price::MAX,
+                bitcoin::Amount::MAX_MONEY,
+            ),
+        ] {
+            let mut best_bid = match BidStats::from_order(btc_price, c, Price::ZERO, Quantity::Zero)
+            {
+                Some(stat) => stat,
+                None => break,
+            };
+            let mut acc = best_bid;
 
-                let (ask_price, _) = book.best_ask();
-                let arr = opt.arr(now, btc_price, ask_price);
-                interesting &= arr > 0.05; // only options whose ARR at best ask is >6%
-
-                if !interesting {
-                    return;
+            for bid in book.bids() {
+                let stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
+                    Some(stat) => stat,
+                    None => break,
+                };
+                // Once one order is uninteresting, the rest will be.
+                if stat.interestingness() <= interesting::Interestingness::No {
+                    break;
                 }
-                for (msg, available_usd, available_btc) in [
-                    (
-                        "Interesting contract given current funds",
-                        self.available_usd,
-                        self.available_btc,
-                    ),
-                    (
-                        "Interesting contract if funds were available",
-                        Price::MAX,
-                        bitcoin::Amount::MAX_MONEY,
-                    ),
-                ] {
-                    // Compute yield from matching bids
-                    let (clear_bid_size, clear_bid_yield) =
-                        book.clear_bids(&opt, available_usd, available_btc);
-                    // Compute yield from matching best ask, locking $10k, 1BTC, or however
-                    // much we have available. We deliberately don't use a lot because we
-                    // don't expect a lot will actually get executed (in a timely fashion
-                    // anyway).
-                    let ask_usd = min(available_usd, Price::ONE_THOUSAND.scale_approx(10.0));
-                    let ask_btc = min(available_btc, bitcoin::Amount::ONE_BTC);
 
-                    let (ask_size, _) = opt.max_sale(ask_price, ask_usd, ask_btc);
-                    let ask_yield = ask_price * ask_size;
-
-                    // only options where we could maybe make $100/wk
-                    let yield_limit =
-                        Price::ONE_HUNDRED.scale_approx(opt.years_to_expiry(now) * 52.0);
-                    let interesting =
-                        interesting & (clear_bid_yield > yield_limit || ask_yield > yield_limit);
-                    if interesting {
-                        info!("{}", msg);
-                        opt.log_option_data(
-                            ColorFormat::light_purple("Interesting contract: "),
-                            now,
-                            btc_price,
-                        );
-                        if clear_bid_size.is_positive() {
-                            let clear_price = clear_bid_yield / clear_bid_size;
-                            opt.log_order_data(
-                                "      Order to clear: ",
-                                now,
-                                btc_price,
-                                clear_price,
-                                Some(clear_bid_size),
-                            );
-                        }
-
-                        let (bid_price, bid_size) = book.best_bid();
-                        let (max_bid_size, _) =
-                            opt.max_sale(bid_price, available_usd, available_btc);
-                        opt.log_order_data(
-                            "            Best bid: ",
-                            now,
-                            btc_price,
-                            bid_price,
-                            Some(bid_size.min(max_bid_size)),
-                        );
-                        opt.log_order_data(
-                            " Best ask  (matched): ",
-                            now,
-                            btc_price,
-                            ask_price,
-                            Some(ask_size),
-                        );
-
-                        // We only want to log once, so break out of the loop.
-                        break;
-                    }
+                // Skip 0-size bids which sometimes show up on LX
+                if bid.size.is_zero() {
+                    continue;
                 }
+
+                if best_bid.order_size().is_zero() {
+                    best_bid = stat;
+                }
+                acc += stat;
+
+                // TODO check total_value() for yield floor
+                // TODO constrain by available funds
             }
-            // Log open orders
-            if let contract::Type::Option { opt, .. } = c.ty() {
-                book.log_interesting_orders(
-                    &opt,
+
+            // Once we've looped through the order book, log what we found.
+            if best_bid.order_size().is_positive() && acc.total_value() > yield_threshold {
+                // Log the non-order-specific contract data.
+                info!("{}", msg);
+                opt.log_option_data(
+                    ColorFormat::light_purple("Interesting contract: "),
                     now,
-                    self.current_price().0, // best bid
-                    self.current_price().0, // best ask
-                    self.available_usd,
-                    self.available_btc,
+                    btc_price.btc_price,
                 );
+
+                if best_bid.total_value() > yield_threshold {
+                    opt.log_order_data(
+                        "            Best Bid: ",
+                        now,
+                        btc_price.btc_price,
+                        best_bid.order_price(),
+                        Some(best_bid.order_size()),
+                    );
+                }
+                if best_bid != acc {
+                    opt.log_order_data(
+                        "     Accum. Good Bid: ",
+                        now,
+                        btc_price.btc_price,
+                        acc.order_price(),
+                        Some(acc.order_size()),
+                    );
+                }
+
+                // Break the first time that we log anything, so that we don't double-log
+                // orders (first with cash limits, second without)
+                break;
             }
         }
     }
@@ -433,6 +347,8 @@ impl LedgerX {
         for order in data.data.book_states {
             self.insert_order(datafeed::Order::from((order, timestamp)));
         }
-        self.log_interesting_contract(data.data.contract_id);
+        if let Some((c, book)) = self.contracts.get(&data.data.contract_id) {
+            self.log_interesting_contract(c, book)
+        }
     }
 }

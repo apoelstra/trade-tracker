@@ -65,7 +65,7 @@ impl Price {
         // Since qunatities are nonnegative, the only way total can be
         // zero is if both inputs are zero, in which case their average
         // is also zero.
-        if total == Quantity::Zero {
+        if total.is_zero() {
             return Price::ZERO;
         }
 

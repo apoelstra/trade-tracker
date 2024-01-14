@@ -24,6 +24,7 @@ use serde::Deserialize;
 use std::{cmp, fmt, iter, ops};
 
 /// A tradeable quantity of some object
+// FIXME should not be deriving PartialEq/Eq since equality for this type is not structural
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Quantity {
     /// A unitless zero
@@ -81,6 +82,12 @@ impl Quantity {
             Quantity::Cents(_) => panic!("tried to convert USD to Bitcoin"),
             Quantity::Zero => bitcoin::SignedAmount::ZERO,
         }
+    }
+
+    /// Shorthand for `qty.abs().btc_equivalent().to_unsigned().unwrap()`
+    pub fn abs_btc_equivalent(&self) -> bitcoin::Amount {
+        // unwrap OK since we are guaranteed to have a nonnegative amount
+        self.btc_equivalent().to_unsigned().unwrap()
     }
 
     /// Whether this is a nonnegative number

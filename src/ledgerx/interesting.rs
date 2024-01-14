@@ -251,8 +251,47 @@ impl<T: OrderType> OrderStats<T> {
             .expect("computing IV for ITM option in place where OTM is assumed")
     }
 
-    // TODO add cash yield and BTC yield accessors, and "constrain to" modifier
-    // for low available funds
+    /// Reduce the order size by the available funds, taking LX fees into account.
+    pub fn limit_to_funds(&mut self, available_usd: Price, available_btc: bitcoin::Amount) {
+        self.order_size = self.order_size.min(
+            self.option
+                .max_sale(self.order_price, available_usd, available_btc)
+                .0,
+        );
+    }
+
+    /// Amount of cash that will be locked up by taking the short side of this order.
+    ///
+    /// For calls, simply returns zero. For puts, it returns the net cash lockup,
+    /// which is the total amount of collateral minus the yield of the sale. It
+    /// may therefore return a negative amount, in the case that somebody is
+    /// bidding more for a put than they'd be able to sell the coin for. This
+    /// is free money but nonetheless people offer it on LX from time to time.
+    ///
+    /// Note that the price of the sale is $25 less than you might expect because
+    /// LX charges a 25c/option fee. (It doesn't do this always, e.g. when this
+    /// would cause the sale price to go negative or too close to zero, but we
+    /// assume it does because we're so rarely messing with contracts for which
+    /// the fees matter.)
+    pub fn lockup_usd(&self) -> Price {
+        match self.option.pc {
+            option::PutCall::Call => Price::ZERO,
+            option::PutCall::Put => {
+                (self.option.strike - self.order_price + Price::TWENTY_FIVE) * self.order_size.abs()
+            }
+        }
+    }
+
+    /// Amount of BTC that will be locked up by taking the short side of this order.
+    ///
+    /// For puts, simply returns zero. For calls, returns the order size converted
+    /// to BTC.
+    pub fn lockup_btc(&self) -> bitcoin::Amount {
+        match self.option.pc {
+            option::PutCall::Put => bitcoin::Amount::ZERO,
+            option::PutCall::Call => self.order_size.abs_btc_equivalent(),
+        }
+    }
 
     /// Accessor for the total value of the order
     pub fn total_value(&self) -> Price {

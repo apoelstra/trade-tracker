@@ -195,7 +195,7 @@ impl LedgerX {
         // We will do two passes: one with our actual funds and another for
         // "hypothetical" trades, which merely logs stuff that might be
         // interesting for IRC or whatever.
-        for (msg, available_usd, available_btc) in [
+        for (msg, mut available_usd, mut available_btc) in [
             (
                 "Interesting contract given current funds",
                 self.available_usd,
@@ -215,7 +215,7 @@ impl LedgerX {
             let mut acc = best_bid;
 
             for bid in book.bids() {
-                let stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
+                let mut stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
                     Some(stat) => stat,
                     None => break,
                 };
@@ -229,13 +229,22 @@ impl LedgerX {
                     continue;
                 }
 
+                // Adjust for available funds
+                if available_usd < stat.lockup_usd() || available_btc < stat.lockup_btc() {
+                    stat.limit_to_funds(available_usd, available_btc);
+                }
+                available_usd -= stat.lockup_usd();
+                available_btc -= stat.lockup_btc();
+
                 if best_bid.order_size().is_zero() {
                     best_bid = stat;
                 }
                 acc += stat;
 
-                // TODO check total_value() for yield floor
-                // TODO constrain by available funds
+                // Once we're out of money no point in continuing to loop through bids
+                if available_usd == Price::ZERO || available_btc == bitcoin::Amount::ZERO {
+                    break;
+                }
             }
 
             // Once we've looped through the order book, log what we found.

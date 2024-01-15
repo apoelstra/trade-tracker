@@ -75,9 +75,9 @@ impl Moneyness {
 fn check_price_ref(now: UtcTime, btc_price: BitcoinPrice) -> bool {
     if now - btc_price.timestamp > chrono::Duration::minutes(5) {
         warn!(
-            "Price reference {} is more than 5 minutes old ({})",
+            "Price reference {} is more than 5 minutes old ({:2.3} minutes)",
             btc_price,
-            UtcTime::now() - btc_price.timestamp,
+            ((UtcTime::now() - btc_price.timestamp).num_milliseconds() as f64) / 60_000.0,
         );
         false
     } else {
@@ -141,11 +141,6 @@ pub fn extract_option(contract: &Contract, btc_price: BitcoinPrice) -> Option<op
     }
     // Reject if our price reference is stale (but do this last to try to reduce log spam)
     if !check_price_ref(now, btc_price) {
-        warn!(
-            "Price reference {} is more than 5 minutes old ({})",
-            btc_price,
-            UtcTime::now() - btc_price.timestamp,
-        );
         return None;
     }
 

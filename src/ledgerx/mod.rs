@@ -186,93 +186,87 @@ impl LedgerX {
         let dte = opt.years_to_expiry(now) * 365.0;
         let yield_threshold = Price::TWENTY_FIVE.scale_approx(dte);
 
-        // We will do two passes: one with our actual funds and another for
-        // "hypothetical" trades, which merely logs stuff that might be
-        // interesting for IRC or whatever.
-        for (msg, mut available_usd, mut available_btc) in [
-            (
-                "Interesting contract given current funds",
-                self.available_usd,
-                self.available_btc,
-            ),
-            (
-                "Interesting contract if funds were available",
-                Price::MAX,
-                bitcoin::Amount::MAX_MONEY,
-            ),
-        ] {
-            let mut best_bid = match BidStats::from_order(btc_price, c, Price::ZERO, Quantity::Zero)
-            {
+        // Iterate through all open bids.
+        let mut available_usd = self.available_usd;
+        let mut available_btc = self.available_btc;
+
+        let mut best_bid = match BidStats::from_order(btc_price, c, Price::ZERO, Quantity::Zero) {
+            Some(stat) => stat,
+            None => return,
+        };
+        let mut acc = best_bid;
+        let mut acc_current_funds = best_bid;
+
+        for bid in book.bids() {
+            let mut stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
                 Some(stat) => stat,
                 None => break,
             };
-            let mut acc = best_bid;
-
-            for bid in book.bids() {
-                let mut stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
-                    Some(stat) => stat,
-                    None => break,
-                };
-                // Once one order is uninteresting, the rest will be.
-                if stat.interestingness() <= interesting::Interestingness::No {
-                    break;
-                }
-
-                // Skip 0-size bids which sometimes show up on LX
-                if bid.size.is_zero() {
-                    continue;
-                }
-
-                // Adjust for available funds
-                if available_usd < stat.lockup_usd() || available_btc < stat.lockup_btc() {
-                    stat.limit_to_funds(available_usd, available_btc);
-                }
-                available_usd -= stat.lockup_usd();
-                available_btc -= stat.lockup_btc();
-
-                if best_bid.order_size().is_zero() {
-                    best_bid = stat;
-                }
-                acc += stat;
-
-                // Once we're out of money no point in continuing to loop through bids
-                if available_usd == Price::ZERO || available_btc == bitcoin::Amount::ZERO {
-                    break;
-                }
+            // Once one order is uninteresting, the rest will be.
+            if stat.interestingness() <= interesting::Interestingness::No {
+                break;
             }
 
-            // Once we've looped through the order book, log what we found.
-            if best_bid.order_size().is_positive() && acc.total_value() > yield_threshold {
-                // Log the non-order-specific contract data.
-                info!("{}", msg);
-                opt.log_option_data(
-                    ColorFormat::light_purple("Interesting contract: "),
+            // Skip 0-size bids which sometimes show up on LX
+            if bid.size.is_zero() {
+                continue;
+            }
+
+            // Record unadjusted values
+            if best_bid.order_size().is_zero() {
+                best_bid = stat;
+            }
+            acc += stat;
+
+            // Adjust for available funds
+            if available_usd < stat.lockup_usd() || available_btc < stat.lockup_btc() {
+                stat.limit_to_funds(available_usd, available_btc);
+            }
+            available_usd -= stat.lockup_usd();
+            available_btc -= stat.lockup_btc();
+            acc_current_funds += stat;
+
+            // Once we're out of money no point in continuing to loop through bids
+            if available_usd == Price::ZERO || available_btc == bitcoin::Amount::ZERO {
+                break;
+            }
+        }
+
+        // Once we've looped through the order book, log what we found.
+        if best_bid.order_size().is_positive() && acc.total_value() > yield_threshold {
+            // Log the non-order-specific contract data.
+            opt.log_option_data(
+                ColorFormat::light_purple("Interesting contract: "),
+                now,
+                btc_price.btc_price,
+            );
+
+            if best_bid.total_value() > yield_threshold {
+                opt.log_order_data(
+                    "            Best Bid: ",
                     now,
                     btc_price.btc_price,
+                    best_bid.order_price(),
+                    Some(best_bid.order_size()),
                 );
-
-                if best_bid.total_value() > yield_threshold {
-                    opt.log_order_data(
-                        "            Best Bid: ",
-                        now,
-                        btc_price.btc_price,
-                        best_bid.order_price(),
-                        Some(best_bid.order_size()),
-                    );
-                }
-                if best_bid != acc {
-                    opt.log_order_data(
-                        "     Accum. Good Bid: ",
-                        now,
-                        btc_price.btc_price,
-                        acc.order_price(),
-                        Some(acc.order_size()),
-                    );
-                }
-
-                // Break the first time that we log anything, so that we don't double-log
-                // orders (first with cash limits, second without)
-                break;
+            }
+            if best_bid != acc {
+                opt.log_order_data(
+                    "     Accum. Good Bid: ",
+                    now,
+                    btc_price.btc_price,
+                    acc.order_price(),
+                    Some(acc.order_size()),
+                );
+            }
+            if acc_current_funds != acc {
+                opt.log_order_data(
+                    "With available funds: ",
+                    now,
+                    btc_price.btc_price,
+                    acc_current_funds.order_price(),
+                    Some(acc_current_funds.order_size()),
+                );
             }
         }
     }

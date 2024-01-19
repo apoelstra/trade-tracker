@@ -59,7 +59,7 @@ enum CoinbaseMsg {
 
 pub fn spawn_ticker_thread() -> Receiver<BitcoinPrice> {
     let (tx, rx) = channel();
-    thread::spawn(move || {
+    thread::spawn(move || loop {
         let mut coinbase_sock =
             tungstenite::client::connect(format!("wss://ws-feed.exchange.coinbase.com"))
                 .expect("failed to connect to Coinbase");
@@ -114,6 +114,7 @@ pub fn spawn_ticker_thread() -> Receiver<BitcoinPrice> {
                 }
             }
         }
+        info!("Restarting connection to coinbase.");
     });
     rx
 }

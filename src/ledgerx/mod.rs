@@ -157,11 +157,7 @@ impl LedgerX {
 
     /// Go through the list of all contracts we're tracking and log the interesting ones
     pub fn log_interesting_contracts(&mut self) {
-        // The borrowck forces us to collect all the contract IDs into a vector,
-        // because we can't have a live self.contracts.keys() iterator while calling
-        // self.log_interesting_contract. This is wasteful but what are you gonna do.
-        let cids: Vec<ContractId> = self.contracts.keys().copied().collect();
-        for cid in cids {
+        for cid in self.contracts.keys() {
             if let Some((c, book)) = self.contracts.get(&cid) {
                 self.log_interesting_contract(c, book);
             }

@@ -116,6 +116,11 @@ impl Price {
     pub fn to_int(&self) -> i64 {
         self.0.to_i64().unwrap()
     }
+
+    /// Convert the value to an integer number of cents, truncating any sub-cent part
+    pub fn to_cents(&self) -> i64 {
+        (self.0 * Decimal::ONE_HUNDRED).to_i64().unwrap()
+    }
 }
 
 impl From<Decimal> for Price {

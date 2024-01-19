@@ -19,7 +19,7 @@
 
 use crate::units::{Asset, BudgetAsset, TaxAsset, Underlying, UtcTime};
 use crate::{ledgerx::json, option};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, fmt};
 
 /// Type of contract
@@ -44,7 +44,7 @@ pub enum Type {
     },
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Deserialize, Serialize)]
 pub struct ContractId(usize);
 
 impl From<usize> for ContractId {

@@ -24,7 +24,6 @@ use log::{info, warn};
 use std::collections::HashMap;
 
 /// Own-order tracker
-
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Tracker {
     my_id: Option<CustomerId>,

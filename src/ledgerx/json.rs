@@ -17,8 +17,8 @@
 //! Some utility methods for parsing json from the LX API
 //!
 
-use crate::units::{Price, Underlying, UtcTime};
-use serde::{de, Deserialize, Deserializer};
+use crate::units::{Price, Quantity, Underlying, UtcTime};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::convert::TryFrom;
 
 fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<UtcTime>, D::Error>
@@ -305,10 +305,102 @@ pub struct BookState {
     pub size: i64,
 }
 
+/// A "create order" API call
+#[derive(PartialEq, Eq, Serialize, Debug)]
+pub struct CreateOrder {
+    /// Order type; must always be "limit"
+    order_type: &'static str,
+    /// ID of the contract to trade
+    contract_id: super::ContractId,
+    /// Whether this is a bid or ask
+    is_ask: bool,
+    /// Swap purpose; either "bf_hedge", "non_bf_hedge" or "undisclosed".
+    ///
+    /// Best to always set this to "undisclosed". See CFTC guidance on what this means at
+    /// https://www.cftc.gov/IndustryOversight/MarketSurveillance/SpeculativeLimits/index.htm
+    ///
+    /// From that page, it appears that "bona fide hedgers" may be exempt from some
+    /// trading limits the CFTC has in place to reduce speculation. But all the limits,
+    /// as of January 2024, are for real assets, not Bitcoin. So making a claim here
+    /// either way seems like it'd just encourage scrutiny without gaining you anything.
+    swap_purpose: &'static str,
+    /// Size of the order, in contracts
+    size: i64,
+    /// Price of the order, in cents
+    price: i64,
+}
+
+impl CreateOrder {
+    /// Constructs a new bid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the contract is not an option (futures I never intend to trade, and
+    /// BTC I don't currently intend to trade automatically and am uncertain how to
+    /// specify the quantity in the JSON API), or if the quantity is inconsistent
+    /// with the contract (meaning: it is neither Zero nor a number of contracts).
+    pub fn new_bid(contract: &super::Contract, qty: Quantity, price: Price) -> Self {
+        Self::new_internal(contract, qty, price, false)
+    }
+
+    /// Constructs a new ask.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the contract is not an option (futures I never intend to trade, and
+    /// BTC I don't currently intend to trade automatically and am uncertain how to
+    /// specify the quantity in the JSON API), or if the quantity is inconsistent
+    /// with the contract (meaning: it is neither Zero nor a number of contracts).
+    pub fn new_ask(contract: &super::Contract, qty: Quantity, price: Price) -> Self {
+        Self::new_internal(contract, qty, price, true)
+    }
+
+    fn new_internal(contract: &super::Contract, qty: Quantity, price: Price, is_ask: bool) -> Self {
+        if !matches!(contract.ty(), super::contract::Type::Option { .. }) {
+            panic!("Tried to create bid for non-option contract {}", contract);
+        }
+        let size = match qty {
+            Quantity::Contracts(n) => n,
+            _ => panic!(
+                "Tried to create option bid with invalid quantity type {}",
+                qty
+            ),
+        };
+        CreateOrder {
+            order_type: "limit",
+            contract_id: contract.id(),
+            is_ask,
+            swap_purpose: "undisclosed",
+            size,
+            price: price.to_cents(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs, io, io::BufRead};
+
+    #[test]
+    fn fixed_option_order() {
+        let contract: crate::ledgerx::Contract = serde_json::from_str(
+            "{\"active\":true,\"collateral_asset\":\"USD\",\"date_exercise\":\"2023-12-29 22:00:00+0000\",\"date_expires\":\"2023-12-29 21:00:00+0000\",\"date_live\":\"2023-01-12 05:00:00+0000\",\"derivative_type\":\"options_contract\",\"id\":22256323,\"is_call\":false,\"is_ecp_only\":false,\"is_next_day\":false,\"label\":\"ETH-29DEC2023-5000-Put\",\"min_increment\":10,\"multiplier\":10,\"name\":null,\"open_interest\":null,\"strike_price\":500000,\"type\":\"put\",\"underlying_asset\":\"ETH\"}",
+        ).expect("parsing contract");
+
+        CreateOrder::new_bid(&contract, Quantity::Contracts(100), Price::ONE_HUNDRED);
+        assert_eq!(
+            CreateOrder::new_ask(&contract, Quantity::Contracts(100), Price::ONE_HUNDRED),
+            CreateOrder {
+                order_type: "limit",
+                contract_id: contract.id(),
+                is_ask: true,
+                swap_purpose: "undisclosed",
+                size: 100,
+                price: 10000,
+            },
+        );
+    }
 
     #[test]
     fn fixed_vector_contracts() {

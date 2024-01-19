@@ -1,5 +1,5 @@
 // Trade Tracker
-// Written in 2021 by
+// Written in 2024 by
 //   Andrew Poelstra <tradetracker@wpsoftware.net>
 //
 // To the extent possible under law, the author(s) have dedicated all

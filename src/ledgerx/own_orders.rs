@@ -76,22 +76,7 @@ impl Tracker {
                     order.message_id,
                     price_ref.btc_price,
                 );
-                let encoded = urlencoding::encode(&message);
-                let body = format!(
-                    "apikey=71d4fa4bfa2a49c69ebb470594be2e079b05006d\
-                    &application=lx-trade-tracker\
-                    &event=filled-trade\
-                    &description={encoded}"
-                );
-                if let Err(e) = minreq::post("https://api.prowlapp.com/publicapi/add")
-                    .with_timeout(10)
-                    .with_header("Content-type", "application/x-www-form-urlencoded")
-                    .with_body(body.clone())
-                    .send()
-                {
-                    warn!("Sending message to Prowl failed: {}", e);
-                    warn!("{}", body);
-                }
+                crate::http::post_to_prowl(&message);
                 ("Filled ", filled_size, order.filled_price)
             } else if let Some(old_order) = self.map.remove(&order.message_id) {
                 (

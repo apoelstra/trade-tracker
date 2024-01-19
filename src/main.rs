@@ -330,16 +330,27 @@ fn main() -> Result<(), anyhow::Error> {
                         tracker.initialize_orderbooks(reply, current_time);
                     }
 
-                    // Log the "standing" data every 6 hours or whenever the price moves a lot
-                    if current_time - last_update > chrono::Duration::hours(6)
-                        || current_price.btc_price < old_price.btc_price.scale_approx(0.98)
-                        || current_price.btc_price > old_price.btc_price.scale_approx(1.02)
+                    // Log the "standing" data every 2 hours or whenever the price moves a lot.
+                    // Also reset all open orders at this time.
+                    if current_time - last_update > chrono::Duration::seconds(60) // FIXME return
+                                                                                  // to 2 hours
+                                                                                  // when testing
+                                                                                  // is done
+                        || current_price.btc_price < old_price.btc_price.scale_approx(0.99)
+                        || current_price.btc_price > old_price.btc_price.scale_approx(1.01)
                     {
                         info!("[heartbeat]");
                         tracker.log_open_orders();
                         tracker.log_interesting_contracts();
                         last_update = current_time;
                         old_price = current_price;
+
+                        if let Err(e) = http::lx_cancel_all_orders(&api_key) {
+                            http::post_to_prowl(&format!(
+                                "Tried to cancel all orders and failed: {e}"
+                            ));
+                            panic!("Tried to cancel all orders and failed: {}", e);
+                        }
                     }
                 } // while let
             } // loop

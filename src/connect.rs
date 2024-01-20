@@ -27,6 +27,7 @@ use std::sync::mpsc::channel;
 use std::thread;
 
 /// A message to the main loop
+#[derive(Debug)]
 pub enum Message {
     /// A new message from the LX websocket
     LedgerX(datafeed::Object),
@@ -38,6 +39,10 @@ pub enum Message {
     PriceReference(crate::price::BitcoinPrice),
     /// "Heartbeat" to wakes up the main thread for housekeeping
     Heartbeat,
+    /// If heartbeats come in too quickly they are accumulated into a "delayed
+    /// heartbeat", as a rate-limiting mechanism. This is because heartbeats
+    /// happen on a timer but are also triggered by orderbook actions.
+    DelayedHeartbeat { delay_til: UtcTime, ready: bool },
 }
 
 /// Starts the main loop and a couple utility threads. Returns a single `Sender`
@@ -124,6 +129,7 @@ pub fn main_loop(api_key: String) -> ! {
             .context("looking up list of contracts")
             .expect("retrieving and parsing json from contract endpoint");
 
+    let mut last_heartbeat_time = UtcTime::now() - chrono::Duration::hours(48);
     let mut heartbeat_price_ref = initial_price;
     let mut current_price = initial_price;
 
@@ -228,8 +234,23 @@ pub fn main_loop(api_key: String) -> ! {
                     tx.send(Message::Heartbeat).unwrap();
                 }
             }
-            Message::Heartbeat => {
-                info!("[heartbeat]");
+            Message::Heartbeat | Message::DelayedHeartbeat { ready: true, .. } => {
+                info!("[heartbeat {:?}]", msg);
+                if now - last_heartbeat_time < chrono::Duration::minutes(1) {
+                    // If a delayed heartbeat comes in too rapidly, we just drop
+                    // it. If a normal heartbeat comes in too quickly, we drop it
+                    // but queue a delayed heartbeat in 75 seconds.
+                    if let Message::Heartbeat = msg {
+                        let delay_til = now + chrono::Duration::seconds(75);
+                        tx.send(Message::DelayedHeartbeat {
+                            delay_til,
+                            ready: false,
+                        })
+                        .unwrap();
+                    }
+                    continue;
+                }
+                last_heartbeat_time = now;
 
                 heartbeat_price_ref = current_price;
                 tracker.log_open_orders();
@@ -242,6 +263,14 @@ pub fn main_loop(api_key: String) -> ! {
                 // may push "open order" requests onto the message queue, which
                 // we execute obediently.
                 tracker.open_standing_orders(&tx);
+            }
+            Message::DelayedHeartbeat { delay_til, .. } => {
+                thread::sleep(std::time::Duration::from_millis(250));
+                tx.send(Message::DelayedHeartbeat {
+                    delay_til,
+                    ready: now > delay_til,
+                })
+                .unwrap();
             }
         }
     }

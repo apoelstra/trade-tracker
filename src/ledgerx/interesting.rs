@@ -305,6 +305,17 @@ impl<T: OrderType> OrderStats<T> {
 }
 
 impl OrderStats<Bid> {
+    /// "Casts" the bid order to an ask order
+    pub fn corresponding_ask(&self) -> OrderStats<Ask> {
+        OrderStats {
+            btc_price: self.btc_price,
+            option: self.option,
+            order_price: self.order_price,
+            order_size: self.order_size,
+            order_type: PhantomData,
+        }
+    }
+
     /// The interestingness of a bid.
     ///
     /// Since our current strategy exclusivly involves selling options, this
@@ -333,6 +344,17 @@ impl OrderStats<Bid> {
 }
 
 impl OrderStats<Ask> {
+    /// "Casts" the ask order to a bid order
+    pub fn corresponding_bid(&self) -> OrderStats<Bid> {
+        OrderStats {
+            btc_price: self.btc_price,
+            option: self.option,
+            order_price: self.order_price,
+            order_size: self.order_size,
+            order_type: PhantomData,
+        }
+    }
+
     /// The interestingness of a bid.
     ///
     /// Since our current strategy exclusivly involves selling options, this
@@ -341,14 +363,7 @@ impl OrderStats<Ask> {
     pub fn interestingness(&self) -> Interestingness {
         // We just pass through the interestingness check on the equivalent
         // bid and invert it.
-        let equiv_bid: OrderStats<Bid> = OrderStats {
-            btc_price: self.btc_price,
-            option: self.option,
-            order_price: self.order_price,
-            order_size: self.order_size,
-            order_type: PhantomData,
-        };
-        equiv_bid.interestingness().invert()
+        self.corresponding_bid().interestingness().invert()
     }
 
     /// Attempts to construct a standing ask order with reasonable stats.

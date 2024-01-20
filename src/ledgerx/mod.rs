@@ -248,6 +248,8 @@ impl LedgerX {
         let mut acc = best_bid;
         let mut acc_current_funds = best_bid;
 
+        let mut asks = vec![];
+
         for bid in book.bids() {
             let mut stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
                 Some(stat) => stat,
@@ -276,6 +278,12 @@ impl LedgerX {
             available_usd -= stat.lockup_usd();
             available_btc -= stat.lockup_btc();
             acc_current_funds += stat;
+
+            if stat.interestingness() >= interesting::Interestingness::Take
+                && stat.order_size().is_positive()
+            {
+                asks.push(stat.corresponding_ask());
+            }
 
             // Once we're out of money no point in continuing to loop through bids
             if available_usd == Price::ZERO || available_btc == bitcoin::Amount::ZERO {
@@ -318,6 +326,16 @@ impl LedgerX {
                     acc_current_funds.order_price(),
                     Some(acc_current_funds.order_size()),
                 );
+            }
+            for ask in asks {
+                opt.log_order_data(
+                    ColorFormat::white("     Selling to take: "),
+                    now,
+                    btc_price.btc_price,
+                    ask.order_price(),
+                    Some(ask.order_size()),
+                );
+                // TODO actually take these
             }
         }
     }

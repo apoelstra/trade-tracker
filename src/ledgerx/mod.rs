@@ -272,7 +272,7 @@ impl LedgerX {
     /// Some checks will be done as to whether this is an "interesting" option
     /// at the current price, and if so, we print a log message.
     pub fn add_contract(&mut self, c: Contract) {
-        info!("Add contract {}: {}", c.id(), c.label());
+        debug!("Add contract {}: {}", c.id(), c.label());
         let asset = c.asset();
         self.contracts.insert(c.id(), (c, BookState::new(asset)));
     }

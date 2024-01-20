@@ -260,7 +260,7 @@ impl Option {
         }
     }
 
-    /// Compute the price of the option at a given loss80.
+    /// Compute the price of the option at a given absolute loss80.
     ///
     /// If the returned price would be unrealistically high, returns None.
     /// However, if the price would be below a dollar, just returns a dollar,
@@ -281,7 +281,7 @@ impl Option {
         loop {
             assert!(price > Price::ZERO);
 
-            let actual = self.bs_loss80(now, btc_price, price);
+            let actual = self.bs_loss80(now, btc_price, price).abs();
             let ratio = actual / loss80;
             if ratio > 1.01 {
                 if price == max {

@@ -182,22 +182,24 @@ impl LedgerX {
                         None => continue,
                     };
 
+                    let msg;
+                    if stats.order_size().is_positive() {
+                        msg = ColorFormat::white("Sell to open: ");
+                        order_count += 1;
+                        // TODO actually make the order!
+                    } else {
+                        msg = ColorFormat::pale_yellow("  Would sell: ");
+                    }
+
+                    opt.log_option_data(&msg, now, self.price_ref.btc_price);
                     opt.log_order_data(
-                        "Would open ask at: ",
+                        &msg,
                         now,
                         self.price_ref.btc_price,
                         stats.order_price(),
                         Some(stats.order_size()),
                     );
-
-                    if stats.order_size().is_positive() {
-                        // TODO actually make the order!
-                    } else {
-                        info!("(but won't since we have no capital)");
-                    }
                     info!("");
-
-                    order_count += 1;
                 }
             }
         }

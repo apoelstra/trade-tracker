@@ -269,7 +269,10 @@ fn main() -> Result<(), anyhow::Error> {
             }
             info!("Loaded contracts. Watching feed.");
 
-            let mut last_update = now - chrono::Duration::hours(48);
+            // Set the "last update" to 2 hours, less 2 minutes, in the past. This means
+            // that the tracker has a couple minutes to start up and then will trigger
+            // an initial update.
+            let mut last_update = now - chrono::Duration::minutes(118);
             let mut old_price = current_price;
             let mut last_price = current_price;
             loop {

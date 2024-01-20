@@ -362,18 +362,35 @@ impl OrderStats<Ask> {
         let btc = btc_price.btc_price;
         let now = UtcTime::now();
 
-        // Start with an 80% IV
-        let mut price = opt.bs_price(now, btc, 0.8);
+        // Start with an 85% IV
+        let mut price = opt.bs_price(now, btc, 0.85);
+        // Immediately, if an 80% price is under a dollar, this option is
+        // basically untradeable (is presumably way OTM and about to expire)
+        // so don't bother. This should be caught by the ARR check below
+        // but better to do an early sanity check than to depend on the
+        // math working with extreme values.
+        if price < Price::ONE {
+            return None;
+        }
         // If the option has a >5% chance of landing in the money, increase
         // the price until it has a 5% chance of losing money, assuming 80%
         // volatility.
-        if opt.bs_dual_delta(now, btc, 0.8) >= 0.05 {
+        if opt.bs_dual_delta(now, btc, 0.8).abs() >= 0.05 {
             price = cmp::max(price, opt.bs_loss80_price(now, btc, 0.05)?);
         }
-        // For puts, do the same with ARR
-        if opt.pc == option::PutCall::Put {
-            price = cmp::max(price, opt.bs_arr_price(now, btc, 0.1)?);
-        }
+        // For puts, we want at least an 8% return. For calls, 2% is fine
+        // because we're posting BTC which won't earn anything anyway.
+        price = cmp::max(
+            price,
+            opt.bs_arr_price(
+                now,
+                btc,
+                match opt.pc {
+                    crate::option::PutCall::Call => 0.02,
+                    crate::option::PutCall::Put => 0.08,
+                },
+            )?,
+        );
         // Then check that the IV isn't more than 200% after doing all
         // that other junk. (If the IV returns an error, that means that
         // we are pricing the option greater than the underlying lol.)

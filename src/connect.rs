@@ -30,6 +30,8 @@ use std::thread;
 pub enum Message {
     /// A new message from the LX websocket
     LedgerX(datafeed::Object),
+    /// A request to open an order.
+    OpenOrder(ledgerx::json::CreateOrder),
     /// A new book state has been retrieved from the contract lookup thread.
     BookState(ledgerx::json::BookStateMessage),
     /// An update from a price reference websocket
@@ -190,6 +192,17 @@ pub fn main_loop(api_key: String) -> ! {
                     }
                 }
             }
+            Message::OpenOrder(order) => {
+                if let Err(e) =
+                    http::post_json("https://trade.ledgerx.com/api/orders", &api_key, &order)
+                {
+                    // A failed order open is just a warning; all our orders
+                    // are asks at not-quite-reasonable prices and if we fail
+                    // to open one it's maybe a lost profit opportunity but
+                    // not an emergency.
+                    warn!("Failed to open order {}: {}", order, e);
+                }
+            }
             Message::BookState(book_state) => {
                 tracker.initialize_orderbooks(book_state, now);
             }
@@ -216,8 +229,10 @@ pub fn main_loop(api_key: String) -> ! {
                     http::post_to_prowl(&format!("Tried to cancel all orders and failed: {e}"));
                     panic!("Tried to cancel all orders and failed: {}", e);
                 }
-                // THIS LINE is currently the entirety of my trading algo.
-                tracker.open_standing_orders();
+                // THIS LINE is currently the entirety of my trading algo. It
+                // may push "open order" requests onto the message queue, which
+                // we execute obediently.
+                tracker.open_standing_orders(&tx);
             }
         }
     }

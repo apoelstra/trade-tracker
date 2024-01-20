@@ -35,6 +35,7 @@ use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
+use std::sync::mpsc::Sender;
 
 pub use book::BookState;
 pub use contract::{Contract, ContractId};
@@ -166,7 +167,7 @@ impl LedgerX {
     ///    probably flag me for it).
     ///
     /// If these conditions can't be simultaneously met, no order is opened.
-    pub fn open_standing_orders(&mut self) {
+    pub fn open_standing_orders(&mut self, tx: &Sender<crate::connect::Message>) {
         let mut order_count = 0;
         let now = UtcTime::now();
         for cid in self.contracts.keys() {
@@ -187,8 +188,9 @@ impl LedgerX {
                     if stats.order_size().is_positive() {
                         msg = ColorFormat::white("Sell to open: ");
                         order_count += 1;
-                        let _ = CreateOrder::new_ask(c, stats.order_size(), stats.order_price());
-                        // TODO actually send the order!
+                        let order =
+                            CreateOrder::new_ask(c, stats.order_size(), stats.order_price());
+                        tx.send(crate::connect::Message::OpenOrder(order)).unwrap();
                     } else {
                         msg = ColorFormat::pale_yellow("  Would sell: ");
                     }

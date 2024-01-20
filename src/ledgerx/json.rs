@@ -20,6 +20,7 @@
 use crate::units::{Price, Quantity, Underlying, UtcTime};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::convert::TryFrom;
+use std::fmt;
 
 fn deserialize_datetime<'de, D>(deser: D) -> Result<Option<UtcTime>, D::Error>
 where
@@ -374,6 +375,16 @@ impl CreateOrder {
             size,
             price: price.to_cents(),
         }
+    }
+}
+
+impl fmt::Display for CreateOrder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "[ {}: {} @ {} ]",
+            self.contract_id, self.size, self.price,
+        )
     }
 }
 

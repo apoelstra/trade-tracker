@@ -160,11 +160,20 @@ pub fn main_loop(api_key: String) -> ! {
                     datafeed::Object::Other => { /* ignore */ }
                     datafeed::Object::BookTop { .. } => { /* ignore */ }
                     datafeed::Object::Order(order) => {
-                        if let ledgerx::UpdateResponse::UnknownContract(order) =
-                            tracker.insert_order(order)
-                        {
-                            warn!("unknown contract ID {}", order.contract_id);
-                            warn!("full order data {}", order);
+                        match tracker.insert_order(order) {
+                            ledgerx::OrderResponse::OursOk
+                            | ledgerx::OrderResponse::OtherTracked
+                            | ledgerx::OrderResponse::OtherUntracked => {
+                                // Don't do anything
+                            }
+                            ledgerx::OrderResponse::OursFilled => {
+                                info!("Triggering heartbeat since an order was filled.");
+                                tx.send(Message::Heartbeat).unwrap();
+                            }
+                            ledgerx::OrderResponse::UnknownContract(order) => {
+                                warn!("unknown contract ID {}", order.contract_id);
+                                warn!("full order data {}", order);
+                            }
                         }
                     }
                     datafeed::Object::AvailableBalances { usd, btc } => {

@@ -76,15 +76,18 @@ pub struct LedgerX {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub enum UpdateResponse {
-    /// Update was accepted; no new interesting info
-    Accepted,
+pub enum OrderResponse {
+    /// This order was our own
+    OursOk,
+    /// This order was our own and it was filled!
+    OursFilled,
+    /// Update was accepted into order book; no new interesting info
+    OtherTracked,
+    /// Order was ignored because it was a non-BTC order or otherwise
+    /// categorically ignored.
+    OtherUntracked,
     /// Order was ignored because we didn't know the contract
     UnknownContract(datafeed::Order),
-    /// Order was ignored because it wasn't a bitcoin order
-    NonBtcOrder,
-    /// Update was accepted and was for a day-ahead sway
-    AcceptedBtc,
 }
 
 impl LedgerX {
@@ -360,7 +363,7 @@ impl LedgerX {
     }
 
     /// Inserts a new order into the book
-    pub fn insert_order(&mut self, order: datafeed::Order) -> UpdateResponse {
+    pub fn insert_order(&mut self, order: datafeed::Order) -> OrderResponse {
         let (contract, book_state) = match self.contracts.get_mut(&order.contract_id) {
             Some(c) => (&mut c.0, &mut c.1),
             None => {
@@ -368,7 +371,7 @@ impl LedgerX {
                     "Received order mid {} for unknown contract {}",
                     order.message_id, order.contract_id,
                 );
-                return UpdateResponse::UnknownContract(order);
+                return OrderResponse::UnknownContract(order);
             }
         };
         if contract.underlying() != Underlying::Btc {
@@ -376,25 +379,24 @@ impl LedgerX {
                 "Ignoring order mid {} for non-BTC contract {}",
                 order.message_id, order.contract_id,
             );
-            return UpdateResponse::NonBtcOrder;
+            return OrderResponse::OtherUntracked;
         }
+        // Insert into order book
+        debug!("Inserting into contract {}: {}", contract.id(), order);
         // Before doing anything else, track this if it's an own-order
         if order.customer_id.is_some() {
-            self.own_orders
-                .insert_order(contract, order.clone(), self.price_ref);
-        }
-
-        // Insert the order into the main book.
-        debug!("Inserting into contract {}: {}", contract.id(), order);
-        if contract.asset() == Asset::Btc {
-            // For day-ahead swaps update the current BTC price reference
-            // We don't use the LX orderbook as a price reference at all.
-            // self.price_ref.insert_order(order.clone());
-            book_state.insert_order(order);
-            UpdateResponse::AcceptedBtc
+            book_state.insert_order(order.clone()); // line duplicated for borrowck
+            if self
+                .own_orders
+                .insert_order(contract, order, self.price_ref)
+            {
+                OrderResponse::OursOk
+            } else {
+                OrderResponse::OursFilled
+            }
         } else {
-            book_state.insert_order(order);
-            UpdateResponse::Accepted
+            book_state.insert_order(order); // line duplicated for borrowck
+            OrderResponse::OtherTracked
         }
     }
 

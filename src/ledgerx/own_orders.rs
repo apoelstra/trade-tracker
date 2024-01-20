@@ -36,7 +36,16 @@ impl Tracker {
         Default::default()
     }
 
-    pub fn insert_order(&mut self, contract: &Contract, order: Order, price_ref: BitcoinPrice) {
+    /// Inserts the order into the own-order tracker.
+    ///
+    /// Returns a boolean indicating whether this was an order fill (true) or
+    /// something else (false).
+    pub fn insert_order(
+        &mut self,
+        contract: &Contract,
+        order: Order,
+        price_ref: BitcoinPrice,
+    ) -> bool {
         // First log anything interesting about the CID.
         match (self.my_id, order.customer_id) {
             (_, None) => {
@@ -59,6 +68,7 @@ impl Tracker {
             }
         }
 
+        let mut ret = false;
         let mid = order.message_id;
         let (msg, size, price) = if order.size == UnknownQuantity::from(0) {
             // A deletion or fill?
@@ -77,6 +87,7 @@ impl Tracker {
                     price_ref.btc_price,
                 );
                 crate::http::post_to_prowl(&message);
+                ret = true;
                 ("Filled ", filled_size, order.filled_price)
             } else if let Some(old_order) = self.map.remove(&order.message_id) {
                 (
@@ -138,6 +149,7 @@ impl Tracker {
                 }
             }
         }
+        ret
     }
 
     /// Get an iterator over all open orders

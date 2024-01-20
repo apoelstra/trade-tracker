@@ -27,6 +27,7 @@ pub mod json;
 pub mod own_orders;
 
 use self::interesting::{AskStats, BidStats};
+use self::json::CreateOrder;
 use crate::price::BitcoinPrice;
 use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity, Underlying, UtcTime};
@@ -186,7 +187,8 @@ impl LedgerX {
                     if stats.order_size().is_positive() {
                         msg = ColorFormat::white("Sell to open: ");
                         order_count += 1;
-                        // TODO actually make the order!
+                        let _ = CreateOrder::new_ask(c, stats.order_size(), stats.order_price());
+                        // TODO actually send the order!
                     } else {
                         msg = ColorFormat::pale_yellow("  Would sell: ");
                     }

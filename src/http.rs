@@ -55,6 +55,45 @@ pub fn get_json<D: serde::de::DeserializeOwned>(
     serde_json::from_slice(&bytes).with_context(|| format!("parsing json from {url}"))
 }
 
+/// Make a HTTP POST request with a JSON-serialized message
+pub fn post_json<S: serde::Serialize>(
+    url: &str,
+    api_key: &str,
+    data: S,
+) -> Result<(), anyhow::Error> {
+    let data = serde_json::to_vec(&data).with_context(|| format!("serializing json for {url}"))?;
+    info!(
+        target: "lx_http_get",
+        "{}: POST request to {}: {}",
+        chrono::offset::Utc::now(),
+        url,
+        std::str::from_utf8(&data).unwrap_or("[non-utf8]"),
+    );
+
+    let req = minreq::post(url)
+        .with_header("Authorization", format!("JWT {api_key}"))
+        .with_timeout(10)
+        .with_body(data);
+    let resp = req.send().with_context(|| format!("POST data to {url}"))?;
+
+    if let Ok(s) = resp.as_str() {
+        info!(target: "lx_http_get", "{}", s);
+    } else {
+        warn!(target: "lx_http_get", "Non-UTF8 reply: {}", hex::encode(resp.as_bytes()));
+    }
+
+    if resp.status_code == 200 {
+        Ok(())
+    } else {
+        Err(anyhow::Error::msg(format!(
+            "bad status code {} for call to {url}",
+            resp.status_code
+        )))
+    }
+}
+
+/// Make a HTTP GET request and JSON-parse the result
+
 /// Make a HTTP GET request and JSON-parse the result
 pub fn get_json_from_data_field<D: serde::de::DeserializeOwned>(
     url: &str,

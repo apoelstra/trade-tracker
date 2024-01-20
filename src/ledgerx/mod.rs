@@ -26,7 +26,7 @@ pub mod interesting;
 pub mod json;
 pub mod own_orders;
 
-use self::interesting::BidStats;
+use self::interesting::{AskStats, BidStats};
 use crate::price::BitcoinPrice;
 use crate::terminal::ColorFormat;
 use crate::units::{Asset, Price, Quantity, Underlying, UtcTime};
@@ -153,6 +153,55 @@ impl LedgerX {
                 );
             }
         }
+    }
+
+    /// Go through the list of all contracts we're tracking and open standing orders on them.
+    ///
+    /// This function is the core (arguably, the entirety) of our trading algo. Currently
+    /// it opens limit asks on each contract subject to various constraints:
+    ///
+    /// 1. It must have a sufficiently high IV and ARR, and sufficiently low loss80.
+    /// 2. The IV must not be too high (otherwise the order is just dumb and LX will
+    ///    probably flag me for it).
+    ///
+    /// If these conditions can't be simultaneously met, no order is opened.
+    pub fn open_standing_orders(&mut self) {
+        let mut order_count = 0;
+        let now = UtcTime::now();
+        for cid in self.contracts.keys() {
+            if let Some((c, _)) = self.contracts.get(&cid) {
+                if let Some(stats) = AskStats::standing_order(
+                    self.price_ref,
+                    c,
+                    self.available_usd,
+                    self.available_btc,
+                ) {
+                    // for now just log
+                    let opt = match interesting::extract_option(c, self.price_ref) {
+                        Some(opt) => opt,
+                        None => continue,
+                    };
+
+                    opt.log_order_data(
+                        "Would open ask at: ",
+                        now,
+                        self.price_ref.btc_price,
+                        stats.order_price(),
+                        Some(stats.order_size()),
+                    );
+
+                    if stats.order_size().is_positive() {
+                        // TODO actually make the order!
+                    } else {
+                        info!("(but won't since we have no capital)");
+                    }
+                    info!("");
+
+                    order_count += 1;
+                }
+            }
+        }
+        info!("Opened {} orders.", order_count);
     }
 
     /// Go through the list of all contracts we're tracking and log the interesting ones

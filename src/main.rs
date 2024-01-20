@@ -269,7 +269,7 @@ fn main() -> Result<(), anyhow::Error> {
             }
             info!("Loaded contracts. Watching feed.");
 
-            let mut last_update = now;
+            let mut last_update = now - chrono::Duration::hours(48);
             let mut old_price = current_price;
             let mut last_price = current_price;
             loop {
@@ -332,16 +332,15 @@ fn main() -> Result<(), anyhow::Error> {
 
                     // Log the "standing" data every 2 hours or whenever the price moves a lot.
                     // Also reset all open orders at this time.
-                    if current_time - last_update > chrono::Duration::seconds(60) // FIXME return
-                                                                                  // to 2 hours
-                                                                                  // when testing
-                                                                                  // is done
+                    if current_time - last_update > chrono::Duration::hours(2)
                         || current_price.btc_price < old_price.btc_price.scale_approx(0.99)
                         || current_price.btc_price > old_price.btc_price.scale_approx(1.01)
                     {
                         info!("[heartbeat]");
                         tracker.log_open_orders();
                         tracker.log_interesting_contracts();
+                        // THIS LINE is currently the entirety of my trading algo.
+                        tracker.open_standing_orders();
                         last_update = current_time;
                         old_price = current_price;
 

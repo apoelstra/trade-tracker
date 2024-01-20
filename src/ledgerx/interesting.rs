@@ -350,4 +350,44 @@ impl OrderStats<Ask> {
         };
         equiv_bid.interestingness().invert()
     }
+
+    /// Attempts to construct a standing ask order with reasonable stats.
+    pub fn standing_order(
+        btc_price: BitcoinPrice,
+        contract: &Contract,
+        available_usd: Price,
+        available_btc: bitcoin::Amount,
+    ) -> Option<Self> {
+        let opt = extract_option(contract, btc_price)?;
+        let btc = btc_price.btc_price;
+        let now = UtcTime::now();
+
+        // Start with an 80% IV
+        let mut price = opt.bs_price(now, btc, 0.8);
+        // If the option has a >5% chance of landing in the money, increase
+        // the price until it has a 5% chance of losing money, assuming 80%
+        // volatility.
+        if opt.bs_dual_delta(now, btc, 0.8) >= 0.05 {
+            price = cmp::max(price, opt.bs_loss80_price(now, btc, 0.05)?);
+        }
+        // For puts, do the same with ARR
+        if opt.pc == option::PutCall::Put {
+            price = cmp::max(price, opt.bs_arr_price(now, btc, 0.1)?);
+        }
+        // Then check that the IV isn't more than 200% after doing all
+        // that other junk. (If the IV returns an error, that means that
+        // we are pricing the option greater than the underlying lol.)
+        if opt.bs_iv(now, btc, price).ok()? > 2.0 {
+            None
+        } else {
+            let mut stats = Self::from_order(
+                btc_price,
+                contract,
+                price,
+                Quantity::Contracts(1_000_000_000),
+            )?;
+            stats.limit_to_funds(available_usd, available_btc);
+            Some(stats)
+        }
+    }
 }

@@ -225,6 +225,81 @@ impl Option {
         Price::from_approx_f64_or_zero(price_64)
     }
 
+    /// Compute the price of the option at a given ARR.
+    ///
+    /// If the returned price would be unrealistically high, returns none.
+    pub fn bs_arr_price(
+        &self,
+        now: UtcTime,
+        btc_price: Price,
+        arr: f64,
+    ) -> std::option::Option<Price> {
+        if arr == 0.0 {
+            return Some(Price::ZERO);
+        }
+
+        let max = Price::ONE.scale_approx((1 << 25).into());
+        let mut price = max;
+        let mut adj = price.half();
+        loop {
+            assert!(price > Price::ZERO);
+
+            let actual = self.arr(now, btc_price, price);
+            let ratio = actual / arr;
+            if ratio.is_nan() || ratio > 1.01 {
+                price -= adj;
+            } else if ratio < 0.99 {
+                if price == max {
+                    return None;
+                }
+                price += adj;
+            } else {
+                return Some(price);
+            }
+            adj = adj.half();
+        }
+    }
+
+    /// Compute the price of the option at a given loss80.
+    ///
+    /// If the returned price would be unrealistically high, returns None.
+    /// However, if the price would be below a dollar, just returns a dollar,
+    /// on the assumption that it's okay to undershoot the loss80.
+    pub fn bs_loss80_price(
+        &self,
+        now: UtcTime,
+        btc_price: Price,
+        loss80: f64,
+    ) -> std::option::Option<Price> {
+        if loss80 == 0.0 {
+            panic!("Cannot target a literal zero loss.");
+        }
+
+        let max = Price::ONE.scale_approx((1 << 25).into());
+        let mut price = max;
+        let mut adj = price.half();
+        loop {
+            assert!(price > Price::ZERO);
+
+            let actual = self.bs_loss80(now, btc_price, price);
+            let ratio = actual / loss80;
+            if ratio > 1.01 {
+                if price == max {
+                    return None;
+                }
+                price += adj;
+            } else if ratio.is_nan() || ratio < 0.99 {
+                if price < Price::ONE {
+                    return Some(Price::ONE);
+                }
+                price -= adj;
+            } else {
+                return Some(price);
+            }
+            adj = adj.half();
+        }
+    }
+
     /// Compute the IV of the option at a given price
     pub fn bs_iv(&self, now: UtcTime, btc_price: Price, price: Price) -> Result<f64, f64> {
         match self.pc {

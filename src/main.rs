@@ -19,6 +19,7 @@
 
 pub mod cli;
 pub mod coinbase;
+pub mod connect;
 pub mod csv;
 pub mod file;
 pub mod http;
@@ -34,20 +35,14 @@ pub mod units;
 
 use crate::cli::Command;
 pub use crate::timemap::TimeMap;
-use crate::units::{Underlying, UtcTime};
+use crate::units::UtcTime;
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
 use chrono::offset::Utc;
 use chrono::Datelike as _;
-use log::{info, warn};
-use std::{
-    fs, io,
-    str::FromStr,
-    sync::mpsc::{channel, Receiver, Sender},
-    thread,
-};
+use log::info;
+use std::{fs, io, str::FromStr};
 
-use ledgerx::{datafeed, LedgerX};
 use price::Historic;
 
 /// Don't bother loading historical price data from before this date
@@ -247,115 +242,7 @@ fn main() -> Result<(), anyhow::Error> {
             }
         }
         Command::Connect { api_key } => {
-            let all_contracts: Vec<ledgerx::Contract> =
-                http::get_json_from_data_field("https://api.ledgerx.com/trading/contracts", None)?;
-
-            let coinbase_rx = crate::coinbase::spawn_ticker_thread();
-            let current_price = coinbase_rx.recv().expect("getting initial price reference");
-            info!("BTC price: {}", current_price);
-            info!("Risk-free rate: 4% (assumed)");
-
-            let mut tracker = LedgerX::new(current_price);
-            let (cid_tx, book_state_rx) = spawn_contract_lookup_thread(api_key.clone());
-            for contr in all_contracts {
-                // For expired or non-BTC options, fetch the full book. Otherwise
-                // just record the contract's existence.
-                if contr.active() && contr.underlying() == Underlying::Btc {
-                    cid_tx
-                        .send(contr.id())
-                        .expect("book-states endpoint thread has not panicked");
-                }
-                tracker.add_contract(contr);
-            }
-            info!("Loaded contracts. Watching feed.");
-
-            // Set the "last update" to 2 hours, less 2 minutes, in the past. This means
-            // that the tracker has a couple minutes to start up and then will trigger
-            // an initial update.
-            let mut last_update = now - chrono::Duration::minutes(118);
-            let mut old_price = current_price;
-            let mut last_price = current_price;
-            loop {
-                let mut sock = tungstenite::client::connect(format!(
-                    "wss://api.ledgerx.com/ws?token={api_key}",
-                ))?;
-                while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
-                    let current_time = UtcTime::now();
-                    let mut current_price = last_price;
-                    while let Ok(price) = coinbase_rx.try_recv() {
-                        current_price = price;
-                    }
-                    last_price = current_price;
-                    tracker.set_current_price(current_price);
-                    info!(target: "lx_datafeed", "{}", msg);
-                    info!(target: "lx_btcprice", "{}", current_price);
-
-                    let obj: datafeed::Object = serde_json::from_str(&msg)
-                        .with_context(|| "parsing json from trading/contracts endpoint")?;
-                    match obj {
-                        datafeed::Object::Other => { /* ignore */ }
-                        datafeed::Object::BookTop { .. } => { /* ignore */ }
-                        datafeed::Object::Order(order) => {
-                            if let ledgerx::UpdateResponse::UnknownContract(order) =
-                                tracker.insert_order(order)
-                            {
-                                warn!("unknown contract ID {}", order.contract_id);
-                                warn!("full msg {}", msg);
-                            }
-                        }
-                        datafeed::Object::AvailableBalances { usd, btc } => {
-                            tracker.set_balances(usd, btc);
-                        }
-                        datafeed::Object::ContractAdded(contr) => {
-                            cid_tx
-                                .send(contr.id())
-                                .expect("book-states endpoint thread has not panicked");
-                            tracker.add_contract(contr);
-                        }
-                        datafeed::Object::ContractRemoved(cid) => {
-                            tracker.remove_contract(cid);
-                        }
-                        datafeed::Object::ChatMessage {
-                            message,
-                            initiator,
-                            counterparty,
-                            chat_id,
-                        } => {
-                            info!(
-                                "New message (chat {}) between {} and {}: {}",
-                                chat_id, initiator, counterparty, message
-                            );
-                        }
-                    }
-
-                    // Initialize any pending contracts
-                    while let Ok(reply) = book_state_rx.try_recv() {
-                        tracker.initialize_orderbooks(reply, current_time);
-                    }
-
-                    // Log the "standing" data every 2 hours or whenever the price moves a lot.
-                    // Also reset all open orders at this time.
-                    if current_time - last_update > chrono::Duration::hours(2)
-                        || current_price.btc_price < old_price.btc_price.scale_approx(0.99)
-                        || current_price.btc_price > old_price.btc_price.scale_approx(1.01)
-                    {
-                        info!("[heartbeat]");
-                        tracker.log_open_orders();
-                        tracker.log_interesting_contracts();
-                        // THIS LINE is currently the entirety of my trading algo.
-                        tracker.open_standing_orders();
-                        last_update = current_time;
-                        old_price = current_price;
-
-                        if let Err(e) = http::lx_cancel_all_orders(&api_key) {
-                            http::post_to_prowl(&format!(
-                                "Tried to cancel all orders and failed: {e}"
-                            ));
-                            panic!("Tried to cancel all orders and failed: {}", e);
-                        }
-                    }
-                } // while let
-            } // loop
+            connect::main_loop(api_key);
         }
         Command::History {
             ref api_key,
@@ -417,26 +304,4 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
-}
-
-fn spawn_contract_lookup_thread(
-    api_key: String,
-) -> (
-    Sender<ledgerx::ContractId>,
-    Receiver<ledgerx::json::BookStateMessage>,
-) {
-    let (tx_cid, rx_cid) = channel();
-    let (tx_resp, rx_resp) = channel();
-    thread::spawn(move || {
-        for contract_id in rx_cid.iter() {
-            let reply: ledgerx::json::BookStateMessage = http::get_json(
-                &format!("https://trade.ledgerx.com/api/book-states/{contract_id}"),
-                Some(&api_key),
-            )
-            .context("getting data from trading/contracts endpoint")
-            .expect("parsing json from book-states endpoint");
-            tx_resp.send(reply).unwrap();
-        }
-    });
-    (tx_cid, rx_resp)
 }

@@ -20,7 +20,7 @@ use crate::price::BitcoinPrice;
 use crate::units::UtcTime;
 use log::info;
 use serde::{de, Deserialize, Deserializer};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::Sender;
 use std::thread;
 
 fn deserialize_datetime<'de, D>(deser: D) -> Result<UtcTime, D::Error>
@@ -57,8 +57,7 @@ enum CoinbaseMsg {
 }
 //{"type":"subscriptions","channels":[{"name":"ticker","product_ids":["BTC-USD"]}]}
 
-pub fn spawn_ticker_thread() -> Receiver<BitcoinPrice> {
-    let (tx, rx) = channel();
+pub fn spawn_ticker_thread(tx: Sender<crate::connect::Message>) {
     thread::spawn(move || loop {
         let mut coinbase_sock =
             tungstenite::client::connect(format!("wss://ws-feed.exchange.coinbase.com"))
@@ -110,13 +109,13 @@ pub fn spawn_ticker_thread() -> Receiver<BitcoinPrice> {
                         }
                     }
                     last_price = Some(new_price);
-                    tx.send(new_price).unwrap();
+                    tx.send(crate::connect::Message::PriceReference(new_price))
+                        .unwrap();
                 }
             }
         }
         info!("Restarting connection to coinbase.");
     });
-    rx
 }
 
 #[cfg(test)]

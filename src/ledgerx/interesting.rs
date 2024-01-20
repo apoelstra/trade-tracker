@@ -391,10 +391,10 @@ impl OrderStats<Ask> {
                 },
             )?,
         );
-        // Then check that the IV isn't more than 200% after doing all
+        // Then check that the IV isn't more than 160% after doing all
         // that other junk. (If the IV returns an error, that means that
         // we are pricing the option greater than the underlying lol.)
-        if opt.bs_iv(now, btc, price).ok()? > 2.0 {
+        if opt.bs_iv(now, btc, price).ok()? > 1.6 {
             None
         } else {
             let mut stats = Self::from_order(

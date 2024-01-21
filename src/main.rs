@@ -17,6 +17,8 @@
 //! Personal-use barely-maintained tool for keeping track of trades
 //!
 
+#![allow(clippy::manual_range_contains)] // this lint is bullshit
+
 pub mod cli;
 pub mod coinbase;
 pub mod connect;

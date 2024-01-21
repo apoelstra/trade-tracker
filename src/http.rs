@@ -110,7 +110,7 @@ pub fn get_json_from_data_field<D: serde::de::DeserializeOwned>(
 }
 
 pub fn post_to_prowl(data: &str) {
-    let encoded = urlencoding::encode(&data);
+    let encoded = urlencoding::encode(data);
     let body = format!(
         "apikey=71d4fa4bfa2a49c69ebb470594be2e079b05006d\
         &application=lx-trade-tracker\

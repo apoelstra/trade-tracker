@@ -344,7 +344,7 @@ impl PositionTracker {
             .add(
                 size,
                 Price::ZERO,
-                expiry.into(),
+                expiry,
                 OpenType::Unknown,
                 CloseType::Expiry,
                 None,
@@ -405,7 +405,7 @@ impl PositionTracker {
             .add(
                 size,
                 price,
-                expiry.into(),
+                expiry,
                 OpenType::Unknown,
                 CloseType::Exercise,
                 None,
@@ -463,7 +463,7 @@ impl PositionTracker {
                 .add(
                     btc_qty,
                     btc_price,
-                    expiry.into(),
+                    expiry,
                     OpenType::BuyToOpen,
                     if close.quantity().is_positive() {
                         CloseType::BuyBack

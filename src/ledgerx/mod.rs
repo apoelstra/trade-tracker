@@ -174,7 +174,7 @@ impl LedgerX {
         let mut order_count = 0;
         let now = UtcTime::now();
         for cid in self.contracts.keys() {
-            if let Some((c, _)) = self.contracts.get(&cid) {
+            if let Some((c, _)) = self.contracts.get(cid) {
                 if let Some(stats) = AskStats::standing_order(
                     self.price_ref,
                     c,
@@ -216,7 +216,7 @@ impl LedgerX {
     /// Go through the list of all contracts we're tracking and log the interesting ones
     pub fn log_interesting_contracts(&mut self) {
         for cid in self.contracts.keys() {
-            if let Some((c, book)) = self.contracts.get(&cid) {
+            if let Some((c, book)) = self.contracts.get(cid) {
                 self.log_interesting_contract(c, book);
             }
         }

@@ -86,7 +86,7 @@ impl Tracker {
                     order.message_id,
                     price_ref.btc_price,
                 );
-                crate::http::post_to_prowl(&message);
+                crate::http::post_to_prowl(message);
                 ret = true;
                 ("Filled ", filled_size, order.filled_price)
             } else if let Some(old_order) = self.map.remove(&order.message_id) {

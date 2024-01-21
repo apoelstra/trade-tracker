@@ -25,21 +25,21 @@ use serde::Deserialize;
 
 #[derive(Debug)]
 pub enum Error {
-    ParseError(ParseError),
+    Parse(ParseError),
     ParseNum(num::ParseIntError),
     UnixTimeOutOfRange(i64),
 }
 
 impl From<ParseError> for Error {
     fn from(e: ParseError) -> Error {
-        Error::ParseError(e)
+        Error::Parse(e)
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::ParseError(ref e) => e.fmt(f),
+            Error::Parse(ref e) => e.fmt(f),
             Error::ParseNum(ref e) => e.fmt(f),
             Error::UnixTimeOutOfRange(n) => {
                 write!(f, "timestamp {n} out of range for UNIX timestamp")
@@ -51,7 +51,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn cause(&self) -> Option<&dyn std::error::Error> {
         match *self {
-            Error::ParseError(ref e) => Some(e),
+            Error::Parse(ref e) => Some(e),
             Error::ParseNum(ref e) => Some(e),
             Error::UnixTimeOutOfRange(_) => None,
         }

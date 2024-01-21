@@ -73,9 +73,17 @@ pub fn spawn_ticker_thread(tx: Sender<crate::connect::Message>) {
             "{\"type\":\"subscribe\",\"product_ids\": [\"BTC-USD\"],\"channels\": [\"ticker\"]}".to_string()
         )).unwrap();
 
-        //{"type":"ticker","sequence":70942923614,"product_id":"BTC-USD","price":"43974.45","open_24h":"43907.27","volume_24h":"5439.41242986","low_24h":"43724.94","high_24h":"44510.01","volume_30d":"382489.32783775","best_bid":"43974.44","best_bid_size":"0.00743054","best_ask":"43974.45","best_ask_size":"0.21670607","side":"buy","time":"2024-01-07T22:55:34.347040Z","trade_id":592171029,"last_size":"0.00002997"}
-
-        let mut last_price: Option<BitcoinPrice> = None;
+        // We maintain a "shutdown price reference" which is updated whenever the price
+        // moves by more than 5% in either direction. If such a movement happens too
+        // quickly then we do an emergency shutdown.
+        //
+        // This algorithm is not great: it allows, for example, the price to drop 4% (not
+        // triggering an update to the reference) and then increase 8% (staying within 5%
+        // of the reference despite actually moving much more). However, the goal of this
+        // is mainly to detect bad data from the ticker, which should show up as a massive
+        // instantaneous price movement. Natural volatility, as long as it doesn't go
+        // wildly out of range, is fine and probably even good for us.
+        let mut shutdown_price_ref: Option<BitcoinPrice> = None;
         while let Ok(tungstenite::protocol::Message::Text(msg)) = coinbase_sock.0.read_message() {
             info!(target: "cb_datafeed", "{}", msg);
             match serde_json::from_str(&msg).unwrap() {
@@ -94,21 +102,25 @@ pub fn spawn_ticker_thread(tx: Sender<crate::connect::Message>) {
                         btc_price: mid,
                         timestamp: time,
                     };
-                    if let Some(last_price) = last_price {
-                        // Sanity check: no 2% jumps in 3 seconds
-                        if new_price.timestamp - last_price.timestamp > chrono::Duration::seconds(3)
+
+                    let ref_price = shutdown_price_ref.unwrap_or(new_price);
+                    let ratio = new_price.btc_price / ref_price.btc_price;
+                    // 5% in 5 minutes is an "emergency shutdown" situation. Either the
+                    // price feed has glitched out or the price is doing something wild
+                    // and we don't want to be automatically trading anyway.
+                    if ratio < 0.95 || ratio > 1.05 {
+                        if new_price.timestamp - ref_price.timestamp
+                            > chrono::Duration::seconds(300)
                         {
-                            if new_price.btc_price < last_price.btc_price.scale_approx(0.98)
-                                || new_price.btc_price > last_price.btc_price.scale_approx(1.02)
-                            {
-                                panic!(
-                                    "Price moved more than 2% in 10 seconds ({} to {})",
-                                    last_price, new_price,
-                                );
-                            }
+                            tx.send(crate::connect::Message::EmergencyShutdown {
+                                msg: format!(
+                                    "Rapid price movement: from {ref_price} to {new_price}"
+                                ),
+                            })
+                            .unwrap();
                         }
+                        shutdown_price_ref = Some(new_price);
                     }
-                    last_price = Some(new_price);
                     tx.send(crate::connect::Message::PriceReference(new_price))
                         .unwrap();
                 }

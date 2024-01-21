@@ -43,6 +43,9 @@ pub enum Message {
     /// heartbeat", as a rate-limiting mechanism. This is because heartbeats
     /// happen on a timer but are also triggered by orderbook actions.
     DelayedHeartbeat { delay_til: UtcTime, ready: bool },
+    /// Something bad has happened elsewhere in the program and we need to
+    /// cancel all open orders and shut down.
+    EmergencyShutdown { msg: String },
 }
 
 /// Starts the main loop and a couple utility threads. Returns a single `Sender`
@@ -271,6 +274,14 @@ pub fn main_loop(api_key: String) -> ! {
                     ready: now > delay_til,
                 })
                 .unwrap();
+            }
+            Message::EmergencyShutdown { msg } => {
+                http::post_to_prowl(&format!("Emergency shutdown: {msg}"));
+                if let Err(e) = http::lx_cancel_all_orders(&api_key) {
+                    http::post_to_prowl(&format!("Tried to cancel all orders and failed: {e}"));
+                    panic!("Tried to cancel all orders and failed: {}", e);
+                }
+                panic!("Emergency shutdown: {}", msg);
             }
         }
     }

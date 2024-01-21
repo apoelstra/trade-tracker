@@ -69,7 +69,7 @@ impl BookState {
 
     /// Return the price and size of the best bid, or (0, 0) if there is none
     pub fn best_bid(&self) -> (Price, Quantity) {
-        if let Some((_, last)) = self.bids.iter().rev().next() {
+        if let Some((_, last)) = self.bids.iter().next_back() {
             (last.price, last.size)
         } else {
             (Price::ZERO, Quantity::Zero)
@@ -128,12 +128,12 @@ impl BookState {
 
     /// Yield an iterator over all bids, from best to worst
     pub fn bids(&self) -> impl Iterator<Item = &Order> {
-        self.bids.iter().map(|(_, order)| order).rev()
+        self.bids.values().rev()
     }
 
     /// Yield an iterator over all asks, from best to worst
     pub fn asks(&self) -> impl Iterator<Item = &Order> {
-        self.asks.iter().map(|(_, order)| order)
+        self.asks.values()
     }
 }
 

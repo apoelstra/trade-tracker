@@ -107,8 +107,7 @@ impl<V> TimeMap<V> {
     pub fn most_recent(&self, as_of: UtcTime) -> Option<(UtcTime, &V)> {
         self.map
             .range(..(as_of, 0))
-            .rev()
-            .next()
+            .next_back()
             .map(|((k, _), v)| (*k, v))
     }
 

@@ -48,6 +48,15 @@ pub enum Message {
     EmergencyShutdown { msg: String },
 }
 
+// Helper function to attempt cancelling all orders, sending a text
+// and panicking if this fails.
+fn cancel_all_orders(api_key: &str) {
+    if let Err(e) = http::lx_cancel_all_orders(api_key) {
+        http::post_to_prowl(&format!("Tried to cancel all orders and failed: {e}"));
+        panic!("Tried to cancel all orders and failed: {}", e);
+    }
+}
+
 /// Starts the main loop and a couple utility threads. Returns a single `Sender`
 /// for control messages.
 ///
@@ -258,10 +267,7 @@ pub fn main_loop(api_key: String) -> ! {
                 heartbeat_price_ref = current_price;
                 tracker.log_open_orders();
                 tracker.log_interesting_contracts();
-                if let Err(e) = http::lx_cancel_all_orders(&api_key) {
-                    http::post_to_prowl(&format!("Tried to cancel all orders and failed: {e}"));
-                    panic!("Tried to cancel all orders and failed: {}", e);
-                }
+                cancel_all_orders(&api_key);
                 // THIS LINE is currently the entirety of my trading algo. It
                 // may push "open order" requests onto the message queue, which
                 // we execute obediently.
@@ -277,14 +283,13 @@ pub fn main_loop(api_key: String) -> ! {
             }
             Message::EmergencyShutdown { msg } => {
                 http::post_to_prowl(&format!("Emergency shutdown: {msg}"));
-                if let Err(e) = http::lx_cancel_all_orders(&api_key) {
-                    http::post_to_prowl(&format!("Tried to cancel all orders and failed: {e}"));
-                    panic!("Tried to cancel all orders and failed: {}", e);
-                }
+                cancel_all_orders(&api_key);
                 panic!("Emergency shutdown: {}", msg);
             }
         }
     }
 
+    http::post_to_prowl("Main loop stopped receiving messages; shutting down.");
+    cancel_all_orders(&api_key);
     panic!("Main loop stopped receiving messages.");
 }

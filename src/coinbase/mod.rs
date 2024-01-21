@@ -59,9 +59,8 @@ enum CoinbaseMsg {
 
 pub fn spawn_ticker_thread(tx: Sender<crate::connect::Message>) {
     thread::spawn(move || loop {
-        let mut coinbase_sock =
-            tungstenite::client::connect(format!("wss://ws-feed.exchange.coinbase.com"))
-                .expect("failed to connect to Coinbase");
+        let mut coinbase_sock = tungstenite::client::connect("wss://ws-feed.exchange.coinbase.com")
+            .expect("failed to connect to Coinbase");
         // Subscribe to public BTC-USD ticker. This is not an authenticated socket
         // and the Coinbase docs suggest that if you are being serious that you
         // should instead use the "level2" channel, which does require authentication

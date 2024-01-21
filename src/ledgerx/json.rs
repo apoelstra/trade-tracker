@@ -30,10 +30,16 @@ where
 
     let s: Option<&str> = Deserialize::deserialize(deser)?;
     match s {
-        Some(s) => Ok(Some(DateTime::parse_from_str(s, "%F %T%z").map_err(|_| {
-            de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in %F %T%z format")
-        })?)
-        .map(From::from)),
+        Some(s) => Ok(Some(
+            DateTime::parse_from_str(s, "%F %T%z")
+                .map_err(|_| {
+                    de::Error::invalid_value(
+                        de::Unexpected::Str(s),
+                        &"a datetime in %F %T%z format",
+                    )
+                })?
+                .into(),
+        )),
         None => Ok(None),
     }
 }

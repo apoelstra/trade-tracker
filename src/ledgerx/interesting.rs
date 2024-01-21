@@ -333,6 +333,7 @@ impl OrderStats<Bid> {
             return Interestingness::No;
         }
         // If the order has very good stats, we want to take it
+        #[allow(clippy::collapsible_if)]
         if self.loss80() < 0.05 && self.iv() > 0.85 {
             if self.option.pc == option::PutCall::Call || self.arr() > 0.05 {
                 return Interestingness::Take;

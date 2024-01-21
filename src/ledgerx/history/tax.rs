@@ -168,6 +168,7 @@ impl Position {
     ///
     /// Returns a vector of close events, if any, and a copy of the new lot,
     /// if any.
+    #[allow(clippy::too_many_arguments)]
     fn add(
         &mut self,
         mut quantity: Quantity,

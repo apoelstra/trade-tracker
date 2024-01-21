@@ -138,9 +138,7 @@ pub fn lx_cancel_all_orders(api_key: &str) -> Result<(), anyhow::Error> {
         .with_header("Authorization", format!("JWT {api_key}"))
         .with_timeout(10);
 
-    let resp = req
-        .send()
-        .with_context(|| format!("Request data from api/orders"))?;
+    let resp = req.send().with_context(|| "Request data from api/orders")?;
 
     info!(
         target: "lx_http_get",

@@ -390,9 +390,9 @@ impl LedgerX {
                 .own_orders
                 .insert_order(contract, order, self.price_ref)
             {
-                OrderResponse::OursOk
-            } else {
                 OrderResponse::OursFilled
+            } else {
+                OrderResponse::OursOk
             }
         } else {
             book_state.insert_order(order); // line duplicated for borrowck

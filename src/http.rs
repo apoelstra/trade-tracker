@@ -72,6 +72,8 @@ pub fn post_json<S: serde::Serialize>(
 
     let req = minreq::post(url)
         .with_header("Authorization", format!("JWT {api_key}"))
+        .with_header("accept", "application/json")
+        .with_header("content-type", "application/json")
         .with_timeout(10)
         .with_body(data);
     let resp = req.send().with_context(|| format!("POST data to {url}"))?;

@@ -338,7 +338,7 @@ pub struct CreateOrder {
 }
 
 impl CreateOrder {
-    /// Constructs a new bid.
+    /// Constructs a new bid with the given price, rounded down to the nearest dollar.
     ///
     /// # Panics
     ///
@@ -347,10 +347,11 @@ impl CreateOrder {
     /// specify the quantity in the JSON API), or if the quantity is inconsistent
     /// with the contract (meaning: it is neither Zero nor a number of contracts).
     pub fn new_bid(contract: &super::Contract, qty: Quantity, price: Price) -> Self {
+        let price = price.round_down();
         Self::new_internal(contract, qty, price, false)
     }
 
-    /// Constructs a new ask.
+    /// Constructs a new ask with the given price, rounded up to the nearest dollar.
     ///
     /// # Panics
     ///
@@ -359,6 +360,7 @@ impl CreateOrder {
     /// specify the quantity in the JSON API), or if the quantity is inconsistent
     /// with the contract (meaning: it is neither Zero nor a number of contracts).
     pub fn new_ask(contract: &super::Contract, qty: Quantity, price: Price) -> Self {
+        let price = price.round_up();
         Self::new_internal(contract, qty, price, true)
     }
 

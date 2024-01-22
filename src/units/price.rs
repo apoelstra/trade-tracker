@@ -73,6 +73,16 @@ impl Price {
         sum / total
     }
 
+    /// Rounds up to the nearest dollar
+    pub fn round_up(&self) -> Self {
+        self.0.ceil().into()
+    }
+
+    /// Rounds down to the nearest dollar
+    pub fn round_down(&self) -> Self {
+        self.0.floor().into()
+    }
+
     /// Multiplies the price by a given scaling factor
     ///
     /// Because this uses floating-point numbers it will not give an exact

@@ -103,6 +103,16 @@ impl UtcTime {
         })
     }
 
+    /// Finds the most recent Monday to the given date.
+    ///
+    /// On Monday, returns itself.
+    pub fn last_monday(&self) -> Self {
+        let offset = self.inner.weekday().num_days_from_monday();
+        UtcTime {
+            inner: self.inner - chrono::Duration::days(offset.into()),
+        }
+    }
+
     /// Returns a copy of the given timestamp, with the time component set to a specific hour
     pub fn forced_to_hour(&self, n: u32) -> Self {
         UtcTime {

@@ -394,15 +394,25 @@ impl OrderStats<Ask> {
         if opt.bs_dual_delta(now, btc, 0.8).abs() >= 0.05 {
             price = cmp::max(price, opt.bs_loss80_price(now, btc, 0.05)?);
         }
-        // For puts, we want at least an 8% return. For calls, 2% is fine
+        // For puts, we want at least an 8% return. For calls, 3% is fine
         // because we're posting BTC which won't earn anything anyway.
+        //
+        // Specifically when computing ARR, which represents "is this trade
+        // even worth doing" or "is it worth the opportunity cost of being
+        // unable to trade while the collateral is locked", we take round
+        // our reference "now" date backward to the most recent Monday.
+        // This eliminates weird effects near Friday were low-DTE options
+        // seem worthwhile even if they're only worth a couple bucks, and
+        // more generally reflects the fact that a 10% ARR on Thursday
+        // can't actually be "annualized" in any meaningful sense, since
+        // such yields are only available on Thursdays.
         price = cmp::max(
             price,
             opt.bs_arr_price(
-                now,
+                now.last_monday(),
                 btc,
                 match opt.pc {
-                    crate::option::PutCall::Call => 0.02,
+                    crate::option::PutCall::Call => 0.03,
                     crate::option::PutCall::Put => 0.08,
                 },
             )?,

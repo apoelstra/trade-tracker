@@ -46,6 +46,7 @@ struct Deposit {
     amount: UnknownQuantity,
     asset: DepositAsset,
     address: String,
+    #[serde(deserialize_with = "crate::units::deserialize_datetime")]
     created_at: UtcTime,
 }
 
@@ -68,6 +69,7 @@ impl Deposits {
 struct Withdrawal {
     amount: UnknownQuantity,
     asset: DepositAsset,
+    #[serde(deserialize_with = "crate::units::deserialize_datetime")]
     created_at: UtcTime,
 }
 
@@ -96,6 +98,7 @@ enum Side {
 #[derive(Deserialize, Debug)]
 struct Trade {
     contract_id: String,
+    #[serde(deserialize_with = "crate::units::deserialize_datetime")]
     execution_time: UtcTime,
     #[serde(deserialize_with = "crate::units::deserialize_cents")]
     filled_price: Price,

@@ -29,7 +29,7 @@ pub use price::{
     deserialize_cents, deserialize_cents_opt, deserialize_dollars, serialize_dollars, Price,
 };
 pub use quantity::{Quantity, UnknownQuantity};
-pub use utc_time::{serde_ts_seconds, UtcTime};
+pub use utc_time::{deserialize_datetime, serde_ts_seconds, UtcTime};
 
 macro_rules! impl_ops_0 {
     ($outer:ty, $op:ident, $opfn:ident) => {

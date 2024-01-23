@@ -21,7 +21,7 @@ use chrono::offset::Utc;
 use chrono::{DateTime, Datelike as _, ParseError, Timelike as _};
 use core::str::FromStr as _;
 use core::{fmt, num, ops};
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 
 #[derive(Debug)]
 pub enum Error {
@@ -219,10 +219,20 @@ impl ops::Sub for UtcTime {
     }
 }
 
+pub fn deserialize_datetime<'de, D>(deser: D) -> Result<UtcTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deser)?;
+    UtcTime::parse_coinbase(s).map_err(|_| {
+        de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in %FT%T%z format")
+    })
+}
+
 pub mod serde_ts_seconds {
     use super::*;
 
-    use serde::{de, Deserializer, Serialize, Serializer};
+    use serde::{Serialize, Serializer};
 
     pub fn deserialize<'de, D>(deser: D) -> Result<UtcTime, D::Error>
     where

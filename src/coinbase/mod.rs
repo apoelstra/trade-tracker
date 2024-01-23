@@ -19,19 +19,9 @@
 use crate::price::BitcoinPrice;
 use crate::units::UtcTime;
 use log::info;
-use serde::{de, Deserialize, Deserializer};
+use serde::Deserialize;
 use std::sync::mpsc::Sender;
 use std::thread;
-
-fn deserialize_datetime<'de, D>(deser: D) -> Result<UtcTime, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: &str = Deserialize::deserialize(deser)?;
-    UtcTime::parse_coinbase(s).map_err(|_| {
-        de::Error::invalid_value(de::Unexpected::Str(s), &"a datetime in %FT%T%z format")
-    })
-}
 
 #[derive(Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", tag = "type")]
@@ -48,7 +38,7 @@ enum CoinbaseMsg {
         best_bid: crate::units::Price,
         #[serde(deserialize_with = "crate::units::deserialize_dollars")]
         best_ask: crate::units::Price,
-        #[serde(deserialize_with = "deserialize_datetime")]
+        #[serde(deserialize_with = "crate::units::deserialize_datetime")]
         time: UtcTime,
     },
     Subscriptions {

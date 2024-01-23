@@ -373,6 +373,7 @@ impl OrderStats<Ask> {
         contract: &Contract,
         available_usd: Price,
         available_btc: bitcoin::Amount,
+        best_ask: Price,
     ) -> Option<Self> {
         let opt = extract_option(contract, btc_price)?;
         let btc = btc_price.btc_price;
@@ -420,7 +421,13 @@ impl OrderStats<Ask> {
         // Then check that the IV isn't more than 160% after doing all
         // that other junk. (If the IV returns an error, that means that
         // we are pricing the option greater than the underlying lol.)
-        if opt.bs_iv(now, btc, price).ok()? > 1.6 {
+        //
+        // In the case that we're better than the best ask on the book,
+        // assume that LX is not going to flag us for opening shithead
+        // orders, and in this case we'll accept IVs up to 400%. (Beyond
+        // that there's no point because nobody would ever take it.)
+        let iv = opt.bs_iv(now, btc, price).ok()?;
+        if iv > 1.6 || (price <= best_ask && iv > 4.0) {
             None
         } else {
             let mut stats = Self::from_order(

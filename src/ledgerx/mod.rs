@@ -174,12 +174,13 @@ impl LedgerX {
         let mut order_count = 0;
         let now = UtcTime::now();
         for cid in self.contracts.keys() {
-            if let Some((c, _)) = self.contracts.get(cid) {
+            if let Some((c, book)) = self.contracts.get(cid) {
                 if let Some(stats) = AskStats::standing_order(
                     self.price_ref,
                     c,
                     self.available_usd,
                     self.available_btc,
+                    book.best_ask().0,
                 ) {
                     // for now just log
                     let opt = match interesting::extract_option(c, self.price_ref) {

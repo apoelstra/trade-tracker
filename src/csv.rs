@@ -50,7 +50,7 @@ impl PrintCsv for DateOnly {
 pub struct DateTime(pub UtcTime);
 impl PrintCsv for DateTime {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0.format("%FT%T.%NZ"))
+        write!(f, "{}", self.0.format("%FT%T.%fZ"))
     }
 }
 

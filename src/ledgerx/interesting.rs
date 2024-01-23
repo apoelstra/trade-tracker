@@ -401,16 +401,16 @@ impl OrderStats<Ask> {
         // Specifically when computing ARR, which represents "is this trade
         // even worth doing" or "is it worth the opportunity cost of being
         // unable to trade while the collateral is locked", we take round
-        // our reference "now" date backward to the most recent Monday.
-        // This eliminates weird effects near Friday were low-DTE options
-        // seem worthwhile even if they're only worth a couple bucks, and
-        // more generally reflects the fact that a 10% ARR on Thursday
-        // can't actually be "annualized" in any meaningful sense, since
-        // such yields are only available on Thursdays.
+        // our reference "now" date backward to the most recent Friday.
+        // This eliminates weird effects where we are "annualizing" the
+        // return on low-DTE options whose high numeric returns are only
+        // available on specific days of the week. (For weekly options,
+        // now that LX is closed on weekends, it is impossible to get a
+        // return on Saturday and Sunday, so annualizing is always wrong!)
         price = cmp::max(
             price,
             opt.bs_arr_price(
-                now.last_monday(),
+                now.last_friday(),
                 btc,
                 match opt.pc {
                     crate::option::PutCall::Call => 0.03,

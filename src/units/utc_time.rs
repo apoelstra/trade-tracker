@@ -103,11 +103,19 @@ impl UtcTime {
         })
     }
 
-    /// Finds the most recent Monday to the given date.
+    /// Finds the most recent Friday to the given date.
     ///
-    /// On Monday, returns itself.
-    pub fn last_monday(&self) -> Self {
-        let offset = self.inner.weekday().num_days_from_monday();
+    /// On Friday, returns a week ago..
+    pub fn last_friday(&self) -> Self {
+        let offset = match self.inner.weekday() {
+            chrono::Weekday::Sat => 1,
+            chrono::Weekday::Sun => 2,
+            chrono::Weekday::Mon => 3,
+            chrono::Weekday::Tue => 4,
+            chrono::Weekday::Wed => 5,
+            chrono::Weekday::Thu => 6,
+            chrono::Weekday::Fri => 7,
+        };
         UtcTime {
             inner: self.inner - chrono::Duration::days(offset.into()),
         }

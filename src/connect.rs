@@ -115,7 +115,7 @@ pub fn main_loop(api_key: String) -> ! {
     // Clock thread
     let heartbeat_tx = tx.clone();
     thread::spawn(move || loop {
-        thread::sleep(std::time::Duration::from_secs(30 * 60));
+        thread::sleep(std::time::Duration::from_secs(120 * 60));
         heartbeat_tx.send(Message::Heartbeat).unwrap();
     });
 

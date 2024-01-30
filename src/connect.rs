@@ -90,12 +90,12 @@ pub fn main_loop(api_key: String) -> ! {
                 Ok(sock) => break sock,
                 Err(e) => {
                     warn!(
-                        "Failed to connect to LedgerX. Will wait 30 seconds. Error: {}",
+                        "Failed to connect to LedgerX. Will wait 5 minutes. Error: {}",
                         e
                     );
                 }
             }
-            thread::sleep(std::time::Duration::from_secs(30));
+            thread::sleep(std::time::Duration::from_secs(300));
         };
         while let Ok(tungstenite::protocol::Message::Text(msg)) = sock.0.read_message() {
             info!(target: "lx_datafeed", "{}", msg);

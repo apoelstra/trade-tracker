@@ -177,6 +177,38 @@ pub struct DataFeedMeta {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct UsdBalanceDetails {
+    #[serde(deserialize_with = "crate::units::deserialize_cents")]
+    pub available_balance: Price,
+    #[serde(deserialize_with = "crate::units::deserialize_cents")]
+    pub position_locked: Price,
+    #[serde(deserialize_with = "crate::units::deserialize_cents")]
+    pub settlement_locked: Price,
+    #[serde(deserialize_with = "crate::units::deserialize_cents")]
+    pub deliverable_locked: Price,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct BtcBalanceDetails {
+    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    pub available_balance: bitcoin::Amount,
+    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    pub position_locked: bitcoin::Amount,
+    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    pub settlement_locked: bitcoin::Amount,
+    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    pub deliverable_locked: bitcoin::Amount,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct GetBalancesResponse {
+    #[serde(rename = "USD")]
+    pub usd: UsdBalanceDetails,
+    #[serde(rename = "BTC")]
+    pub btc: BtcBalanceDetails,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct Balances {
     #[serde(rename = "USD", deserialize_with = "crate::units::deserialize_cents")]
     pub usd: Price,

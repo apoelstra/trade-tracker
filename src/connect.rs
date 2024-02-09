@@ -273,8 +273,30 @@ pub fn main_loop(api_key: String) -> ! {
                     continue;
                 }
                 last_heartbeat_time = now;
-
                 heartbeat_price_ref = current_price;
+
+                // Update balances to make sure we're in sync with LX
+                let balances: ledgerx::json::GetBalancesResponse = http::get_json_from_data_field(
+                    "https://api.ledgerx.com/funds/balances",
+                    Some(&api_key),
+                )
+                .context("looking up current balances")
+                .expect("retrieving and parsing json from contract endpoint");
+                info!(
+                    "Balance details (available/position locked/settlement locked/deliverable locked): {}/{}/{}/{}, {}/{}/{}/{}",
+                    balances.usd.available_balance,
+                    balances.usd.position_locked,
+                    balances.usd.settlement_locked,
+                    balances.usd.deliverable_locked,
+                    balances.btc.available_balance,
+                    balances.btc.position_locked,
+                    balances.btc.settlement_locked,
+                    balances.btc.deliverable_locked,
+                );
+                tracker.set_balances(
+                    balances.usd.available_balance,
+                    balances.btc.available_balance,
+                );
 
                 if market_is_open(now) {
                     tracker.log_open_orders();

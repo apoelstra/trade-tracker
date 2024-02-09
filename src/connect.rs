@@ -26,6 +26,16 @@ use log::{info, warn};
 use std::sync::mpsc::channel;
 use std::thread;
 
+// Because of DST we can't be super precise about when the market is actually
+// open, without importing a timezone database and doing a bunch of crap. So
+// we just swag that it's open from 1300 to 2100.
+fn market_is_open(now: UtcTime) -> bool {
+    let nyt = now.new_york_time();
+    let open = chrono::NaiveTime::from_hms_opt(9, 30, 0).unwrap();
+    let close = chrono::NaiveTime::from_hms_opt(16, 0, 0).unwrap();
+    nyt >= open && nyt < close
+}
+
 /// A message to the main loop
 #[derive(Debug)]
 pub enum Message {
@@ -265,13 +275,19 @@ pub fn main_loop(api_key: String) -> ! {
                 last_heartbeat_time = now;
 
                 heartbeat_price_ref = current_price;
-                tracker.log_open_orders();
-                tracker.log_interesting_contracts(&tx);
-                cancel_all_orders(&api_key);
-                // THIS LINE is currently the entirety of my trading algo. It
-                // may push "open order" requests onto the message queue, which
-                // we execute obediently.
-                tracker.open_standing_orders(&tx);
+
+                if market_is_open(now) {
+                    tracker.log_open_orders();
+                    tracker.log_interesting_contracts(&tx);
+                    cancel_all_orders(&api_key);
+                    // THIS LINE is currently the entirety of my trading algo. It
+                    // may push "open order" requests onto the message queue, which
+                    // we execute obediently.
+                    tracker.open_standing_orders(&tx);
+                } else {
+                    info!("Market closed.");
+                    tracker.clear_orderbooks();
+                }
             }
             Message::DelayedHeartbeat { delay_til, .. } => {
                 thread::sleep(std::time::Duration::from_millis(250));

@@ -103,6 +103,52 @@ impl UtcTime {
         })
     }
 
+    /// Returns the current time in New York
+    pub fn new_york_time(&self) -> chrono::NaiveTime {
+        // Rather than dealing with a bunch of "2AM on the second sunday" bullshit,
+        // we just assume that DST happens at midnight UTC (which is 9 or 10PM in
+        // New York so the market is never open) and just fix the dates. Hopefully
+        // by the time this table runs out we have dropped DST.
+
+        // The following table was obtained from ChatGPT. I hand-compared it to
+        // a computation in gnumeric using the table copied on 024-02-09 from
+        // https://en.wikipedia.org/wiki/Daylight_saving_time_in_the_United_States
+        // which only went to 2027, but let me sanity-check the pattern.
+        let est_tz = chrono::offset::FixedOffset::west_opt(5 * 3600).unwrap();
+        let edt_tz = chrono::offset::FixedOffset::west_opt(4 * 3600).unwrap();
+        let tz = match self.inner.year() {
+            2024 if self.inner.ordinal0() < 69 || self.inner.ordinal0() >= 307 => est_tz,
+            2025 if self.inner.ordinal0() < 67 || self.inner.ordinal0() >= 305 => est_tz,
+            2026 if self.inner.ordinal0() < 66 || self.inner.ordinal0() >= 304 => est_tz,
+            2027 if self.inner.ordinal0() < 72 || self.inner.ordinal0() >= 310 => est_tz,
+            2028 if self.inner.ordinal0() < 71 || self.inner.ordinal0() >= 309 => est_tz,
+            2029 if self.inner.ordinal0() < 69 || self.inner.ordinal0() >= 307 => est_tz,
+            2030 if self.inner.ordinal0() < 68 || self.inner.ordinal0() >= 306 => est_tz,
+            2031 if self.inner.ordinal0() < 67 || self.inner.ordinal0() >= 305 => est_tz,
+            2032 if self.inner.ordinal0() < 73 || self.inner.ordinal0() >= 311 => est_tz,
+            2033 if self.inner.ordinal0() < 71 || self.inner.ordinal0() >= 309 => est_tz,
+            2034 if self.inner.ordinal0() < 70 || self.inner.ordinal0() >= 308 => est_tz,
+            2035 if self.inner.ordinal0() < 69 || self.inner.ordinal0() >= 307 => est_tz,
+            2036 if self.inner.ordinal0() < 68 || self.inner.ordinal0() >= 306 => est_tz,
+            2037 if self.inner.ordinal0() < 66 || self.inner.ordinal0() >= 304 => est_tz,
+            2038 if self.inner.ordinal0() < 72 || self.inner.ordinal0() >= 310 => est_tz,
+            2040 if self.inner.ordinal0() < 70 || self.inner.ordinal0() >= 308 => est_tz,
+            2041 if self.inner.ordinal0() < 68 || self.inner.ordinal0() >= 306 => est_tz,
+            2042 if self.inner.ordinal0() < 67 || self.inner.ordinal0() >= 305 => est_tz,
+            2043 if self.inner.ordinal0() < 66 || self.inner.ordinal0() >= 304 => est_tz,
+            2044 if self.inner.ordinal0() < 72 || self.inner.ordinal0() >= 310 => est_tz,
+            2045 if self.inner.ordinal0() < 70 || self.inner.ordinal0() >= 308 => est_tz,
+            2046 if self.inner.ordinal0() < 69 || self.inner.ordinal0() >= 307 => est_tz,
+            2047 if self.inner.ordinal0() < 68 || self.inner.ordinal0() >= 306 => est_tz,
+            2048 if self.inner.ordinal0() < 67 || self.inner.ordinal0() >= 305 => est_tz,
+            2049 => panic!("you need to update the DST table in src/units/utc_time.rs"),
+            2050 => panic!("you need to update the DST table in src/units/utc_time.rs"),
+            2051 => panic!("you need to update the DST table in src/units/utc_time.rs"),
+            _ => edt_tz,
+        };
+        self.inner.with_timezone(&tz).time()
+    }
+
     /// Finds the most recent Friday to the given date.
     ///
     /// On Friday, returns a week ago..

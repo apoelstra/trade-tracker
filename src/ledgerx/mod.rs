@@ -407,6 +407,11 @@ impl LedgerX {
         }
     }
 
+    /// Deletes all open orders at the end of the day
+    pub fn clear_orderbooks(&mut self) {
+        self.contracts = HashMap::new();
+    }
+
     /// Initializes the orderbook with the date from the book state API endpoint
     pub fn initialize_orderbooks(
         &mut self,

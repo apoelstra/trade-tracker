@@ -48,7 +48,7 @@ impl log::Log for StdoutOnly {
 
     fn log(&self, record: &log::Record) {
         // Unless we have debug logging on, discard datafeed/json messages
-        if log::max_level() > log::LevelFilter::Debug && record.target() == "lx_getjson" {
+        if log::max_level() > log::LevelFilter::Debug && record.target() == "lx_http_get" {
             return;
         }
         if self.enabled(record.metadata()) {
@@ -160,7 +160,7 @@ impl log::Log for Logger {
                 let _ = writeln!(
                     self.debug_log.lock().unwrap(),
                     "{} [{}] {}",
-                    now.format("%F %T%N%z"),
+                    now.format("%F %T.%f%z"),
                     record.level(),
                     record.args(),
                 );
@@ -169,6 +169,7 @@ impl log::Log for Logger {
     }
 
     fn flush(&self) {
+        let _ = self.coinbase_log.lock().unwrap().flush();
         let _ = self.debug_log.lock().unwrap().flush();
         let _ = self.datafeed_log.lock().unwrap().flush();
         let _ = self.http_get_log.lock().unwrap().flush();

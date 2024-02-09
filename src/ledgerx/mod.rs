@@ -131,10 +131,12 @@ impl LedgerX {
     ) {
         *available_usd -= usd;
         *available_btc -= btc;
-        info!(
-            "Preemptively docking balances by ${}, {} to ${}, {}",
-            usd, btc, available_usd, available_btc
-        );
+        if usd != Price::ZERO || btc != bitcoin::Amount::ZERO {
+            info!(
+                "Preemptively docking balances by ${}, {} to ${}, {}",
+                usd, btc, available_usd, available_btc
+            );
+        }
     }
 
     /// Updates the price reference.

@@ -215,16 +215,21 @@ impl LedgerX {
     }
 
     /// Go through the list of all contracts we're tracking and log the interesting ones
-    pub fn log_interesting_contracts(&mut self) {
+    pub fn log_interesting_contracts(&mut self, tx: &Sender<crate::connect::Message>) {
         for cid in self.contracts.keys() {
             if let Some((c, book)) = self.contracts.get(cid) {
-                self.log_interesting_contract(c, book);
+                self.log_interesting_contract(c, book, tx);
             }
         }
     }
 
     /// Log a single interesting contract
-    fn log_interesting_contract(&self, c: &Contract, book: &BookState) {
+    fn log_interesting_contract(
+        &self,
+        c: &Contract,
+        book: &BookState,
+        tx: &Sender<crate::connect::Message>,
+    ) {
         let btc_price = self.price_ref;
         let now = UtcTime::now();
         // Extract option, assuming it matches the relevant parameters
@@ -339,7 +344,8 @@ impl LedgerX {
                     ask.order_price(),
                     Some(ask.order_size()),
                 );
-                // TODO actually take these
+                let order = CreateOrder::new_ask(c, ask.order_size(), ask.order_price());
+                tx.send(crate::connect::Message::OpenOrder(order)).unwrap();
             }
         }
     }
@@ -402,7 +408,12 @@ impl LedgerX {
     }
 
     /// Initializes the orderbook with the date from the book state API endpoint
-    pub fn initialize_orderbooks(&mut self, data: json::BookStateMessage, timestamp: UtcTime) {
+    pub fn initialize_orderbooks(
+        &mut self,
+        data: json::BookStateMessage,
+        timestamp: UtcTime,
+        tx: &Sender<crate::connect::Message>,
+    ) {
         // Delete existing data
         if let Some((contract, ref mut book_state)) = self.contracts.get_mut(&data.data.contract_id)
         {
@@ -416,7 +427,7 @@ impl LedgerX {
             self.insert_order(datafeed::Order::from((order, timestamp)));
         }
         if let Some((c, book)) = self.contracts.get(&data.data.contract_id) {
-            self.log_interesting_contract(c, book)
+            self.log_interesting_contract(c, book, tx)
         }
     }
 }

@@ -231,7 +231,7 @@ pub fn main_loop(api_key: String) -> ! {
                 }
             }
             Message::BookState(book_state) => {
-                tracker.initialize_orderbooks(book_state, now);
+                tracker.initialize_orderbooks(book_state, now, &tx);
             }
             Message::PriceReference(price) => {
                 info!(target: "lx_btcprice", "{}", price);
@@ -266,7 +266,7 @@ pub fn main_loop(api_key: String) -> ! {
 
                 heartbeat_price_ref = current_price;
                 tracker.log_open_orders();
-                tracker.log_interesting_contracts();
+                tracker.log_interesting_contracts(&tx);
                 cancel_all_orders(&api_key);
                 // THIS LINE is currently the entirety of my trading algo. It
                 // may push "open order" requests onto the message queue, which

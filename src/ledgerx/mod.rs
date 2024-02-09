@@ -111,6 +111,32 @@ impl LedgerX {
         self.available_btc = btc;
     }
 
+    /// Reduces the available balances on the assumption that a recently-opened
+    /// order will be taken.
+    ///
+    /// Takes current balances as &mut pointers rather than taking &mut self
+    /// because of borrowck dumbness. But you should always call this by passing
+    /// `&mut self.available_usd, &mut self.available_btc`.
+    ///
+    /// If this is wrong, then the system will be in an incorrect state until
+    /// the next call to [`set_balances`]. It may therefore fail to make trades
+    /// that it should. But because it will have an incorrectly low view of
+    /// the current balances, this is "harmless" in that it won't try to make
+    /// trades it shouldn't.
+    pub fn preemptively_dock_balances(
+        available_usd: &mut Price,
+        available_btc: &mut bitcoin::Amount,
+        usd: Price,
+        btc: bitcoin::Amount,
+    ) {
+        *available_usd -= usd;
+        *available_btc -= btc;
+        info!(
+            "Preemptively docking balances by ${}, {} to ${}, {}",
+            usd, btc, available_usd, available_btc
+        );
+    }
+
     /// Updates the price reference.
     pub fn set_current_price(&mut self, price: BitcoinPrice) {
         self.price_ref = price;
@@ -218,25 +244,35 @@ impl LedgerX {
     pub fn log_interesting_contracts(&mut self, tx: &Sender<crate::connect::Message>) {
         for cid in self.contracts.keys() {
             if let Some((c, book)) = self.contracts.get(cid) {
-                self.log_interesting_contract(c, book, tx);
+                let (usd, btc) = self.log_interesting_contract(c, book, tx);
+                // Pre-emptively dock our balances based on
+                Self::preemptively_dock_balances(
+                    &mut self.available_usd,
+                    &mut self.available_btc,
+                    usd,
+                    btc,
+                );
             }
         }
     }
 
     /// Log a single interesting contract
+    ///
+    /// This function may do more than log -- it may attempt to match bids that are
+    /// interesting. In this case, it returns the total USD and BTC committed.
     fn log_interesting_contract(
         &self,
         c: &Contract,
         book: &BookState,
         tx: &Sender<crate::connect::Message>,
-    ) {
+    ) -> (Price, bitcoin::Amount) {
         let btc_price = self.price_ref;
         let now = UtcTime::now();
         // Extract option, assuming it matches the relevant parameters
         // (is an option, hasn't expired, BTC not ETH, etc)
         let opt = match interesting::extract_option(c, self.price_ref) {
             Some(opt) => opt,
-            None => return,
+            None => return (Price::ZERO, bitcoin::Amount::ZERO),
         };
 
         // Compute the yield threshold below which the absolute return
@@ -252,12 +288,12 @@ impl LedgerX {
 
         let mut best_bid = match BidStats::from_order(btc_price, c, Price::ZERO, Quantity::Zero) {
             Some(stat) => stat,
-            None => return,
+            None => return (Price::ZERO, bitcoin::Amount::ZERO),
         };
         let mut acc = best_bid;
         let mut acc_current_funds = best_bid;
 
-        let mut asks = vec![];
+        let mut asks_to_make = vec![];
 
         for bid in book.bids() {
             let mut stat = match BidStats::from_order(btc_price, c, bid.price, bid.size) {
@@ -291,7 +327,7 @@ impl LedgerX {
             if stat.interestingness() >= interesting::Interestingness::Take
                 && stat.order_size().is_positive()
             {
-                asks.push(stat.corresponding_ask());
+                asks_to_make.push(stat.corresponding_ask());
             }
 
             // Once we're out of money no point in continuing to loop through bids
@@ -301,6 +337,8 @@ impl LedgerX {
         }
 
         // Once we've looped through the order book, log what we found.
+        let mut ret_usd = Price::ZERO;
+        let mut ret_btc = bitcoin::Amount::ZERO;
         if best_bid.order_size().is_positive() && acc.total_value() > yield_threshold {
             // Log the non-order-specific contract data.
             opt.log_option_data(
@@ -336,7 +374,7 @@ impl LedgerX {
                     Some(acc_current_funds.order_size()),
                 );
             }
-            for ask in asks {
+            for ask in asks_to_make {
                 opt.log_order_data(
                     ColorFormat::white("     Selling to take: "),
                     now,
@@ -346,8 +384,11 @@ impl LedgerX {
                 );
                 let order = CreateOrder::new_ask(c, ask.order_size(), ask.order_price());
                 tx.send(crate::connect::Message::OpenOrder(order)).unwrap();
+                ret_usd += ask.lockup_usd();
+                ret_btc += ask.lockup_btc();
             }
         }
+        (ret_usd, ret_btc)
     }
 
     /// Add a new contract to the tracker
@@ -432,7 +473,14 @@ impl LedgerX {
             self.insert_order(datafeed::Order::from((order, timestamp)));
         }
         if let Some((c, book)) = self.contracts.get(&data.data.contract_id) {
-            self.log_interesting_contract(c, book, tx)
+            let (usd, btc) = self.log_interesting_contract(c, book, tx);
+            // Pre-emptively dock our balances based on
+            Self::preemptively_dock_balances(
+                &mut self.available_usd,
+                &mut self.available_btc,
+                usd,
+                btc,
+            );
         }
     }
 }

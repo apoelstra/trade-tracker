@@ -172,7 +172,7 @@ impl Positions {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-enum Event {
+pub enum Event {
     UsdDeposit {
         amount: Quantity,
     },
@@ -542,6 +542,11 @@ impl History {
                 );
             }
         }
+    }
+
+    /// Iterator over all events that have happened in the history
+    pub fn events(&self) -> impl Iterator<Item = (UtcTime, &Event)> {
+        self.events.iter()
     }
 
     /// Dump the contents of the history in CSV format

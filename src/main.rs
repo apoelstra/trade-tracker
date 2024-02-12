@@ -42,7 +42,7 @@ use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
 use chrono::offset::Utc;
 use chrono::Datelike as _;
-use log::info;
+use log::{info, warn};
 use std::{fs, io, str::FromStr};
 
 use price::Historic;
@@ -131,6 +131,27 @@ fn initialize_logging(
     info!("Price data pulled from http://api.bitcoincharts.com/v1/trades.csv?symbol=bitstampUSD -- call `update-price-data` to update");
     newline();
     Ok(ret)
+}
+
+fn parse_config_file(
+    config_file: &std::path::Path,
+) -> Result<(sha256::Hash, ledgerx::history::Configuration), anyhow::Error> {
+    // Parse config file
+    let config_name = config_file.to_string_lossy();
+    let input = fs::File::open(config_file)
+        .with_context(|| format!("opening config file {config_name}"))?;
+    let bufread = io::BufReader::new(input);
+    let config: ledgerx::history::Configuration = serde_json::from_reader(bufread)
+        .with_context(|| format!("parsing config file {config_name}"))?;
+    // Read it again to get its hash
+    let input = fs::File::open(config_file)
+        .with_context(|| format!("opening config file {config_name}"))?;
+    let mut bufread = io::BufReader::new(input);
+    let mut hash_eng = sha256::Hash::engine();
+    io::copy(&mut bufread, &mut hash_eng)
+        .with_context(|| format!("copying {config_name} into hash engine"))?;
+
+    Ok((sha256::Hash::from_engine(hash_eng), config))
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -243,8 +264,20 @@ fn main() -> Result<(), anyhow::Error> {
                 price += center.scale_approx(1.0 / 40.0);
             }
         }
-        Command::Connect { api_key } => {
-            connect::main_loop(api_key);
+        Command::Connect {
+            api_key,
+            config_file,
+        } => {
+            // Parse config file
+            if let Some(config_file) = config_file {
+                let (config_hash, config) = parse_config_file(&config_file)?;
+                let hist = ledgerx::history::History::from_api(&api_key, &config, config_hash)
+                    .context("getting history from LX API")?;
+                connect::main_loop(api_key, Some(hist));
+            } else {
+                warn!("No configuration file passed; assuming fresh account/no history.");
+                connect::main_loop(api_key, None);
+            }
         }
         Command::History {
             ref api_key,
@@ -258,27 +291,10 @@ fn main() -> Result<(), anyhow::Error> {
             // If this unwrap fails it's a bug.
             let log_filenames = log_filenames.unwrap();
             // Parse config file
-            let config_name = config_file.to_string_lossy();
-            let input = fs::File::open(config_file)
-                .with_context(|| format!("opening config file {config_name}"))?;
-            let bufread = io::BufReader::new(input);
-            let config: ledgerx::history::Configuration = serde_json::from_reader(bufread)
-                .with_context(|| format!("parsing config file {config_name}"))?;
-            // Read it again to get its hash
-            let input = fs::File::open(config_file)
-                .with_context(|| format!("opening config file {config_name}"))?;
-            let mut bufread = io::BufReader::new(input);
-            let mut hash_eng = sha256::Hash::engine();
-            io::copy(&mut bufread, &mut hash_eng)
-                .with_context(|| format!("copying {config_name} into hash engine"))?;
-            drop(bufread);
+            let (config_hash, config) = parse_config_file(config_file)?;
             // Query LX to get all historic trade data
-            let hist = ledgerx::history::History::from_api(
-                api_key,
-                &config,
-                sha256::Hash::from_engine(hash_eng),
-            )
-            .context("getting history from LX API")?;
+            let hist = ledgerx::history::History::from_api(api_key, &config, config_hash)
+                .context("getting history from LX API")?;
             // ...and output
             if let Command::History { .. } = command {
                 hist.print_csv(&history);
@@ -293,6 +309,7 @@ fn main() -> Result<(), anyhow::Error> {
                     format!("Creating directory {dir_path} to put tax output into")
                 })?;
                 info!("Creating directory {} to hold output.", dir_path);
+                let config_name = config_file.to_string_lossy();
                 file::copy_file(&config_name, &format!("{dir_path}/configuration.json"))?;
                 hist.print_tax_csv(&dir_path, &history)
                     .context("printing tax CSV")?;

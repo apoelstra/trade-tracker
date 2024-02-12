@@ -22,7 +22,7 @@ use crate::ledgerx::{Contract, Underlying};
 use crate::option;
 use crate::price::BitcoinPrice;
 use crate::units::{Price, Quantity, UtcTime};
-use log::warn;
+use log::{debug, warn};
 use std::marker::PhantomData;
 use std::{cmp, fmt, ops};
 
@@ -381,6 +381,19 @@ impl OrderStats<Ask> {
 
         // Start with an 85% IV
         let mut price = opt.bs_price(now, btc, 0.85);
+
+        // SPECIAL CASE (should remove in the future) for 30k puts we are
+        // willing to take a much lower IV, since we want to buy coins at
+        // this price.
+        if opt.pc == crate::option::PutCall::Put && opt.strike.to_approx_f64() == 30_000.0 {
+            let old_price = price;
+            price = opt.bs_price(now, btc, 0.50);
+            debug!(
+                "Special-casing 30k puts; starting with price {} rather than {}",
+                price, old_price
+            );
+        }
+
         // Immediately, if an 80% price is under a dollar, this option is
         // basically untradeable (is presumably way OTM and about to expire)
         // so don't bother. This should be caught by the ARR check below
@@ -389,11 +402,21 @@ impl OrderStats<Ask> {
         if price < Price::ONE {
             return None;
         }
-        // If the option has a >5% chance of landing in the money, increase
-        // the price until it has a 5% chance of losing money, assuming 80%
-        // volatility.
-        if opt.bs_dual_delta(now, btc, 0.8).abs() >= 0.05 {
-            price = cmp::max(price, opt.bs_loss80_price(now, btc, 0.05)?);
+
+        // SPECIAL CASE (should remove in the future) for 30k puts we are
+        // willing to take a much higher risk of assignment, since we want to buy coins at
+        // this price.
+        if opt.pc == crate::option::PutCall::Put && opt.strike.to_approx_f64() == 30_000.0 {
+            if opt.bs_dual_delta(now, btc, 0.8).abs() >= 0.25 {
+                price = cmp::max(price, opt.bs_loss80_price(now, btc, 0.05)?);
+            }
+        } else {
+            // If the option has a >5% chance of landing in the money, increase
+            // the price until it has a 5% chance of losing money, assuming 80%
+            // volatility.
+            if opt.bs_dual_delta(now, btc, 0.8).abs() >= 0.05 {
+                price = cmp::max(price, opt.bs_loss80_price(now, btc, 0.05)?);
+            }
         }
         // For puts, we want at least an 8% return. For calls, 3% is fine
         // because we're posting BTC which won't earn anything anyway.

@@ -20,7 +20,7 @@
 
 use crate::http;
 use crate::ledgerx::{self, datafeed, LedgerX};
-use crate::units::{Underlying, UtcTime};
+use crate::units::{Price, Quantity, Underlying, UtcTime};
 use anyhow::Context as _;
 use log::{info, warn};
 use std::sync::mpsc::channel;
@@ -73,7 +73,7 @@ fn cancel_all_orders(api_key: &str) {
 /// # Panics
 ///
 /// Will panic if anything goes wrong during startup.
-pub fn main_loop(api_key: String) -> ! {
+pub fn main_loop(api_key: String, history: Option<ledgerx::history::History>) -> ! {
     let (tx, rx) = channel();
 
     // Before doing anything else, connect to a price reference and
@@ -144,6 +144,104 @@ pub fn main_loop(api_key: String) -> ! {
             contract_tx.send(Message::BookState(reply)).unwrap();
         }
     });
+
+    // Get history to determine past BTC transactions. We attempt to "undo" any
+    // BTC sales by selling puts at a discount, and we use this history to
+    // determine how best to do that.
+    //
+    // This is not rational in terms of total account value (which optimally
+    // would require a memoryless strategy), but is rational if our goal is to
+    // minimize the amount if time we spend holding fewer bitcoins than we
+    // started with.
+    //
+    let mut net_btc = bitcoin::SignedAmount::ZERO;
+    let mut net_usd = Price::ZERO;
+    let mut recent_net_btc = bitcoin::SignedAmount::ZERO;
+    let mut recent_net_usd = Price::ZERO;
+    let mut min_average_price = Price::MAX;
+    if let Some(hist) = history {
+        for (time, event) in hist.events() {
+            use crate::ledgerx::history::Event;
+            use crate::units::BudgetAsset;
+
+            let delta_btc;
+            let delta_usd;
+            match event {
+                Event::Trade {
+                    asset, price, size, ..
+                } => {
+                    delta_usd = -*price * *size;
+                    if BudgetAsset::from(*asset) == BudgetAsset::Btc {
+                        delta_btc = size.btc_equivalent();
+                    } else {
+                        delta_btc = bitcoin::SignedAmount::ZERO;
+                    }
+                }
+                Event::Assignment {
+                    option,
+                    underlying,
+                    size,
+                    ..
+                } => {
+                    if *underlying == Underlying::Btc {
+                        match option.pc {
+                            crate::option::PutCall::Call => {
+                                delta_usd = option.strike * *size;
+                                delta_btc = size.btc_equivalent() * -1;
+                            }
+                            crate::option::PutCall::Put => {
+                                delta_usd = -option.strike * *size;
+                                delta_btc = size.btc_equivalent();
+                            }
+                        }
+                    } else {
+                        delta_usd = Price::ZERO;
+                        delta_btc = bitcoin::SignedAmount::ZERO;
+                    }
+                }
+                _ => {
+                    delta_usd = Price::ZERO;
+                    delta_btc = bitcoin::SignedAmount::ZERO;
+                }
+            }
+            net_usd += delta_usd;
+            net_btc += delta_btc;
+            if UtcTime::now() - time < chrono::Duration::days(500) {
+                recent_net_usd += delta_usd;
+                recent_net_btc += delta_btc;
+            }
+
+            if net_btc != bitcoin::SignedAmount::ZERO {
+                let average = net_usd / Quantity::from(net_btc).abs();
+                if average < min_average_price {
+                    info!(
+                        "At {} sold {} for {} (average price {})",
+                        time, net_btc, net_usd, average
+                    );
+                    min_average_price = average;
+                }
+            }
+        }
+    }
+
+    if net_btc != bitcoin::SignedAmount::ZERO {
+        info!(
+            "History: sold a total of {} for {} (average price {})",
+            net_btc,
+            net_usd,
+            net_usd / Quantity::from(net_btc).abs()
+        );
+    }
+    if recent_net_btc != bitcoin::SignedAmount::ZERO {
+        info!(
+            "History: in last 500 days sold {} for {} (average price {})",
+            recent_net_btc,
+            recent_net_usd,
+            recent_net_usd / Quantity::from(recent_net_btc).abs()
+        );
+    }
+
+    // ...and output
 
     // Setup
     let all_contracts: Vec<ledgerx::Contract> =

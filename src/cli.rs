@@ -49,7 +49,10 @@ pub enum Command {
         price: Option<Price>,
     },
     /// Connect to LedgerX API and monitor activity in real-time
-    Connect { api_key: String },
+    Connect {
+        api_key: String,
+        config_file: Option<PathBuf>,
+    },
     /// Connect to LedgerX API and download complete transaction history, for a given year if
     /// supplied. Outputs in CSV.
     History {
@@ -146,6 +149,7 @@ fn iv(invocation: &str, mut args: env::ArgsOs) -> Command {
 fn connect(invocation: &str, mut args: env::ArgsOs) -> Command {
     Command::Connect {
         api_key: parse_os_string_required(args.next(), "API key", invocation),
+        config_file: args.next().map(From::from),
     }
 }
 

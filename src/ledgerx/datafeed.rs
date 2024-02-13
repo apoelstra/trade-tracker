@@ -83,8 +83,8 @@ impl fmt::Display for Order {
         write!(
             f,
             ", timestamp {} updated {})",
-            self.timestamp.format("%FT%H:%M:%S.%N%z"),
-            self.updated_timestamp.format("%FT%H:%M:%S.%N%%z"),
+            self.timestamp.format("%FT%H:%M:%S.%f%z"),
+            self.updated_timestamp.format("%FT%H:%M:%S.%f%%z"),
         )
     }
 }

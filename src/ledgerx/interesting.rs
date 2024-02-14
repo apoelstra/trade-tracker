@@ -394,15 +394,6 @@ impl OrderStats<Ask> {
             );
         }
 
-        // Immediately, if an 80% price is under a dollar, this option is
-        // basically untradeable (is presumably way OTM and about to expire)
-        // so don't bother. This should be caught by the ARR check below
-        // but better to do an early sanity check than to depend on the
-        // math working with extreme values.
-        if price < Price::ONE {
-            return None;
-        }
-
         // SPECIAL CASE (should remove in the future) for 30k puts we are
         // willing to take a much higher risk of assignment, since we want to buy coins at
         // this price.

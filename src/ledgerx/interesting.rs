@@ -441,18 +441,17 @@ impl OrderStats<Ask> {
                 },
             )?,
         );
-        // Then check that the IV isn't more than 160% after doing all
+        // Then check that the IV isn't more than 250% after doing all
         // that other junk. (If the IV returns an error, that means that
         // we are pricing the option greater than the underlying lol.)
         //
-        // In the case that we're better than the best ask on the book,
-        // assume that LX is not going to flag us for opening shithead
-        // orders, and in this case we'll accept IVs up to 400%. (Beyond
-        // that there's no point because nobody would ever take it.)
+        // In the case that our price is less than $1k, assume LedgerX
+        // won't flag us for shithead orders and let that go.
+        //
+        // Similarly if our price is less than the best ask, that's also
+        // not a shithead order.
         let iv = opt.bs_iv(now, btc, price).ok()?;
-        if iv > 1.6 || (price <= best_ask && iv > 4.0) {
-            None
-        } else {
+        if price < Price::ONE_THOUSAND || price <= best_ask || iv < 2.5 {
             let mut stats = Self::from_order(
                 btc_price,
                 contract,
@@ -461,6 +460,8 @@ impl OrderStats<Ask> {
             )?;
             stats.limit_to_funds(available_usd, available_btc);
             Some(stats)
+        } else {
+            None
         }
     }
 }

@@ -101,7 +101,7 @@ impl PrintCsv for crate::units::BudgetAsset {
 
 impl PrintCsv for crate::units::Quantity {
     fn print(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use bitcoin::util::amount::Denomination::Bitcoin;
+        use bitcoin::amount::Denomination::Bitcoin;
         match *self {
             crate::units::Quantity::Bitcoin(btc) => fmt::Display::fmt(&btc.display_in(Bitcoin), f),
             crate::units::Quantity::Cents(n) => write!(f, "{}.{:02}", n / 100, n % 100),

@@ -38,7 +38,8 @@ pub struct MessageId([u8; 16]);
 
 impl fmt::Display for MessageId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        bitcoin::hashes::hex::format_hex(&self.0, f)
+        use hex_conservative::DisplayHex as _;
+        fmt::Display::fmt(&self.0.as_hex(), f)
     }
 }
 

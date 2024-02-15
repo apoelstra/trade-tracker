@@ -331,7 +331,11 @@ impl History {
                         format!("negative deposit amount {}", dep.amount.as_sats())
                     })?;
                     let addr = bitcoin::Address::from_str(&dep.address)
-                        .with_context(|| format!("parsing BTC address {}", dep.address))?;
+                        .with_context(|| format!("parsing BTC address {}", dep.address))?
+                        .require_network(bitcoin::Network::Bitcoin)
+                        .with_context(|| {
+                            format!("parsing address as BTC address {}", dep.address)
+                        })?;
 
                     // Look up transaction based on address. If we can't find one, error out.
                     let (tx, vout) = self

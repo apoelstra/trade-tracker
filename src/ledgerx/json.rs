@@ -190,13 +190,13 @@ pub struct UsdBalanceDetails {
 
 #[derive(Deserialize, Debug)]
 pub struct BtcBalanceDetails {
-    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    #[serde(with = "bitcoin::amount::serde::as_sat")]
     pub available_balance: bitcoin::Amount,
-    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    #[serde(with = "bitcoin::amount::serde::as_sat")]
     pub position_locked: bitcoin::Amount,
-    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    #[serde(with = "bitcoin::amount::serde::as_sat")]
     pub settlement_locked: bitcoin::Amount,
-    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
+    #[serde(with = "bitcoin::amount::serde::as_sat")]
     pub deliverable_locked: bitcoin::Amount,
 }
 
@@ -212,7 +212,7 @@ pub struct GetBalancesResponse {
 pub struct Balances {
     #[serde(rename = "USD", deserialize_with = "crate::units::deserialize_cents")]
     pub usd: Price,
-    #[serde(rename = "BTC", with = "bitcoin::util::amount::serde::as_sat")]
+    #[serde(rename = "BTC", with = "bitcoin::amount::serde::as_sat")]
     pub btc: bitcoin::Amount,
 }
 

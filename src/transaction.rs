@@ -57,7 +57,7 @@ impl Database {
     /// their users into reusing bitcoin addresses.
     pub fn find_tx_for_deposit(
         &self,
-        address: &bitcoin::Address,
+        address: &bitcoin::Address<bitcoin::address::NetworkChecked>,
         amount: bitcoin::Amount,
     ) -> Option<(&bitcoin::Transaction, u32)> {
         for tx in self.map.values() {

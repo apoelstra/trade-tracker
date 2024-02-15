@@ -374,7 +374,7 @@ impl History {
                             // A future iteration may consider this to be a taxable loss but this
                             // won't affect anything downstream, basically it'll just add an extra
                             // log line. FIXME implement this.
-                            let mut amount = bitcoin::Amount::from_sat(txout.value);
+                            let mut amount = txout.value;
                             if amount > total_btc {
                                 amount = total_btc;
                             };

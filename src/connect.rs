@@ -20,10 +20,11 @@
 
 use crate::http;
 use crate::ledgerx::{self, datafeed, LedgerX};
+use crate::price::BitcoinPrice;
 use crate::units::{Price, Quantity, Underlying, UtcTime};
 use anyhow::Context as _;
 use log::{info, warn};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Sender};
 use std::thread;
 
 // Because of DST we can't be super precise about when the market is actually
@@ -46,7 +47,7 @@ pub enum Message {
     /// A new book state has been retrieved from the contract lookup thread.
     BookState(ledgerx::json::BookStateMessage),
     /// An update from a price reference websocket
-    PriceReference(crate::price::BitcoinPrice),
+    PriceReference(BitcoinPrice),
     /// "Heartbeat" to wakes up the main thread for housekeeping
     Heartbeat,
     /// If heartbeats come in too quickly they are accumulated into a "delayed
@@ -58,8 +59,32 @@ pub enum Message {
     EmergencyShutdown { msg: String },
 }
 
-// Helper function to attempt cancelling all orders, sending a text
-// and panicking if this fails.
+/// Helper function to construct an initial LX tracker with all current contracts
+fn recreate_tracker(
+    initial_price: BitcoinPrice,
+    contract_thread_tx: &Sender<ledgerx::ContractId>,
+) -> LedgerX {
+    let all_contracts: Vec<ledgerx::Contract> =
+        http::get_json_from_data_field("https://api.ledgerx.com/trading/contracts", None)
+            .context("looking up list of contracts")
+            .expect("retrieving and parsing json from contract endpoint");
+    let mut tracker = LedgerX::new(initial_price);
+    for contr in all_contracts {
+        // For expired or non-BTC options, fetch the full book. Otherwise
+        // just record the contract's existence.
+        if contr.active() && contr.underlying() == Underlying::Btc {
+            contract_thread_tx
+                .send(contr.id())
+                .expect("book-states endpoint thread has not panicked");
+        }
+        tracker.add_contract(contr);
+    }
+    info!("Loaded contracts. Watching feed.");
+    tracker
+}
+
+/// Helper function to attempt cancelling all orders, sending a text
+/// and panicking if this fails.
 fn cancel_all_orders(api_key: &str) {
     if let Err(e) = http::lx_cancel_all_orders(api_key) {
         http::post_to_prowl(&format!("Tried to cancel all orders and failed: {e}"));
@@ -75,6 +100,7 @@ fn cancel_all_orders(api_key: &str) {
 /// Will panic if anything goes wrong during startup.
 pub fn main_loop(api_key: String, history: Option<ledgerx::history::History>) -> ! {
     let (tx, rx) = channel();
+    let initial_time = UtcTime::now();
 
     // Before doing anything else, connect to a price reference and
     // get an initial price. Otherwise we can't initialize our trade
@@ -206,7 +232,7 @@ pub fn main_loop(api_key: String, history: Option<ledgerx::history::History>) ->
             }
             net_usd += delta_usd;
             net_btc += delta_btc;
-            if UtcTime::now() - time < chrono::Duration::days(500) {
+            if initial_time - time < chrono::Duration::days(500) {
                 recent_net_usd += delta_usd;
                 recent_net_btc += delta_btc;
             }
@@ -244,27 +270,12 @@ pub fn main_loop(api_key: String, history: Option<ledgerx::history::History>) ->
     // ...and output
 
     // Setup
-    let all_contracts: Vec<ledgerx::Contract> =
-        http::get_json_from_data_field("https://api.ledgerx.com/trading/contracts", None)
-            .context("looking up list of contracts")
-            .expect("retrieving and parsing json from contract endpoint");
-
-    let mut last_heartbeat_time = UtcTime::now() - chrono::Duration::hours(48);
+    let mut last_heartbeat_time = initial_time - chrono::Duration::hours(48);
+    let mut last_market_open = market_is_open(initial_time);
     let mut heartbeat_price_ref = initial_price;
     let mut current_price = initial_price;
 
-    let mut tracker = LedgerX::new(initial_price);
-    for contr in all_contracts {
-        // For expired or non-BTC options, fetch the full book. Otherwise
-        // just record the contract's existence.
-        if contr.active() && contr.underlying() == Underlying::Btc {
-            contract_thread_tx
-                .send(contr.id())
-                .expect("book-states endpoint thread has not panicked");
-        }
-        tracker.add_contract(contr);
-    }
-    info!("Loaded contracts. Watching feed.");
+    let mut tracker = recreate_tracker(initial_price, &contract_thread_tx);
 
     // Wait 30 seconds for LX to pile up some messages (in particular,
     // the balances) and for the contract lookup thread to finish all
@@ -280,6 +291,11 @@ pub fn main_loop(api_key: String, history: Option<ledgerx::history::History>) ->
     // Main thread
     for msg in rx.iter() {
         let now = UtcTime::now();
+        if market_is_open(now) && !last_market_open {
+            tracker = recreate_tracker(current_price, &contract_thread_tx);
+        }
+        last_market_open = market_is_open(now);
+
         match msg {
             Message::LedgerX(obj) => {
                 match obj {

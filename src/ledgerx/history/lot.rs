@@ -73,7 +73,8 @@ impl Id {
     /// want to keep careful track of our state to ensure that
     /// our records have consistent lot IDs from year to year.
     pub fn from_outpoint(outpoint: bitcoin::OutPoint) -> Id {
-        Id(format!("{:.8}-{:02}", outpoint.txid, outpoint.vout))
+        let short_txid = outpoint.txid.to_string();
+        Id(format!("{:.8}-{:02}", short_txid, outpoint.vout))
     }
 }
 

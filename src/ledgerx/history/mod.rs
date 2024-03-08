@@ -827,12 +827,21 @@ impl History {
                     format!("{dir_path}/{year}-ledgerx.csv"),
                     "which should match the LX-provided CSV.",
                 )?;
-                writeln!(
-                    new_lx,
-                    "Reference,Description,Date Acquired,Date Sold or Disposed of,\
-                     Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,\
-                     Note that column C and column F reflect * where cost basis could not be obtained."
-                )?;
+                if year < 2023 {
+                    writeln!(
+                        new_lx,
+                        "Reference,Description,Date Acquired,Date Sold or Disposed of,\
+                         Proceeds,Cost or other basis,Gain/(Loss),Short-term/Long-term,,,\
+                         Note that column C and column F reflect * where cost basis could not be obtained."
+                    )?;
+                } else {
+                    writeln!(
+                        new_lx,
+                        "User,Reference,Property Quantity,Property Symbol,Date Acquired,\
+                        Date Sold Or Disposed Of,Proceeds,Cost Or Other Basis,Gain Loss,\
+                        Short Term Long Term"
+                    )?;
+                }
                 e.insert(new_lx);
             }
             let report_lx = reports_lx.get_mut(&year).unwrap();

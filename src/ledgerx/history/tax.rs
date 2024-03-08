@@ -329,7 +329,12 @@ impl PositionTracker {
         let asset = TaxAsset::Option { underlying, option };
         debug!("[position-tracker] expiry of asset {} size {}", asset, size);
         // Force expiry date to match LX goofiness
-        let expiry: TaxDate = option.expiry.forced_to_hour(22).into();
+        let expiry: TaxDate = if option.expiry.year() <= 2022 {
+            option.expiry.forced_to_hour(22).into()
+        } else {
+            option.expiry.forced_to_hour(22).into()
+            //option.expiry.into()
+        };
         let pos = match self.positions.get_mut(&asset) {
             Some(pos) => pos,
             None => {

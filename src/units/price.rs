@@ -153,6 +153,8 @@ impl str::FromStr for Price {
 
 impl fmt::Display for Price {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use rust_decimal::MathematicalOps as _;
+        let prec = f.precision().unwrap_or(2);
         // Alternate display adds a 000s separator
         if f.alternate() {
             if self.0 < Decimal::ZERO {
@@ -164,7 +166,9 @@ impl fmt::Display for Price {
             } else {
                 let (trunc, fract) = (
                     val.trunc().to_i64().unwrap(),
-                    (val.fract() * Decimal::ONE_HUNDRED).to_i64().unwrap(),
+                    (val.fract() * Decimal::TEN.powu(prec as u64))
+                        .to_i64()
+                        .unwrap(),
                 );
                 if trunc >= 1_000_000 {
                     write!(f, "{},", trunc / 1_000_000)?;
@@ -178,7 +182,7 @@ impl fmt::Display for Price {
                 }
             }
         } else {
-            let mut copy = self.0.round_dp(2);
+            let mut copy = self.0.round_dp(prec as u32);
             copy.rescale(2);
             fmt::Display::fmt(&copy, f)
         }

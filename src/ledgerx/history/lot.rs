@@ -486,8 +486,10 @@ impl<'close> csv::PrintCsv for CloseCsv<'close> {
                     mem::swap(&mut basis, &mut proceeds);
                 }
                 // also wtf
-                proceeds = proceeds.abs();
-                basis = basis.abs();
+                if self.close.close_date.year() < 2024 {
+                    proceeds = proceeds.abs();
+                    basis = basis.abs();
+                }
 
                 if self.close.close_date.year() == 2021 {
                     let description = match self.close.quantity {

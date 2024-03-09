@@ -102,7 +102,7 @@ impl Historic {
             .data
             .most_recent(time)
             .expect("price map has some entry prior to lookup time");
-        log::debug!("lookup price at {}; got {}", time, result.1);
+        log::trace!("lookup price at {}; got {}", time, result.1);
         *result.1
     }
 

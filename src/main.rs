@@ -209,9 +209,12 @@ fn main() -> Result<(), anyhow::Error> {
                 .with_context(|| format!("decoding CSV data from {url}"))?;
 
             data_path.push("pricedata");
-            history
-                .write_out(&data_path)
-                .context("writing out price history")?;
+            history.write_out(&data_path).with_context(|| {
+                format!(
+                    "writing out price history to {}",
+                    data_path.to_string_lossy()
+                )
+            })?;
             data_path.pop();
         }
         Command::LatestPrice {} => {

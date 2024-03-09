@@ -48,12 +48,12 @@ impl log::Log for StdoutOnly {
 
     fn log(&self, record: &log::Record) {
         // Unless we have debug logging on, discard datafeed/json messages
-        if log::max_level() > log::LevelFilter::Debug && record.target() == "lx_http_get" {
+        if log::max_level() < log::LevelFilter::Debug && record.target() == "lx_http_get" {
             return;
         }
         if self.enabled(record.metadata()) {
             set_color_on_thread_local();
-            println!("{}", record.args());
+            println!("[{:.5}] {}", record.level(), record.args());
             set_color_off_thread_local();
         }
     }

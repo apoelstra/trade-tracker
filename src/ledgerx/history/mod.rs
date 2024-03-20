@@ -784,26 +784,50 @@ impl History {
             writeln!(metadata, "Year: {year}")?;
             writeln!(metadata, "    Lot selection strategy: {strat}")?;
             let mut n_events = 0;
-            let mut total_1256 = Price::ZERO;
-            let mut total_st = Price::ZERO;
-            let mut total_lt = Price::ZERO;
+            let mut total_1256_proceeds = Price::ZERO;
+            let mut total_1256_basis = Price::ZERO;
+            let mut total_st_proceeds = Price::ZERO;
+            let mut total_st_basis = Price::ZERO;
+            let mut total_lt_proceeds = Price::ZERO;
+            let mut total_lt_basis = Price::ZERO;
             for ev in tracker.events().iter().filter(|ev| ev.date.year() == *year) {
                 n_events += 1;
                 if let tax::OpenClose::Close(ref close) = ev.open_close {
                     match close.gain_loss_type() {
-                        tax::GainType::Option1256 => total_1256 += close.gain_loss(),
-                        tax::GainType::ShortTerm => total_st += close.gain_loss(),
-                        tax::GainType::LongTerm => total_lt += close.gain_loss(),
+                        tax::GainType::Option1256 => {
+                            total_1256_proceeds += close.proceeds();
+                            total_1256_basis += close.basis();
+                        }
+                        tax::GainType::ShortTerm => {
+                            total_st_proceeds += close.proceeds();
+                            total_st_basis += close.basis();
+                        }
+                        tax::GainType::LongTerm => {
+                            total_lt_proceeds += close.proceeds();
+                            total_lt_basis += close.basis();
+                        }
                     }
                 }
             }
+            let total_1256 = total_1256_proceeds - total_1256_basis;
+            let total_lt = total_lt_proceeds - total_lt_basis;
+            let total_st = total_st_proceeds - total_st_basis;
             writeln!(metadata, "    Number of events: {n_events}")?;
             writeln!(metadata, "    Total LT gain/loss: {total_lt}")?;
+            writeln!(metadata, "             (Proceeds: {total_lt_proceeds}")?;
+            writeln!(metadata, "          minus Basis): {total_lt_basis}")?;
             writeln!(metadata, "    Total ST gain/loss: {total_st}")?;
+            writeln!(metadata, "             (Proceeds: {total_st_proceeds}")?;
+            writeln!(metadata, "          minus Basis): {total_st_basis}")?;
             writeln!(metadata, "    Total 1256 gain/loss: {total_1256}")?;
+            writeln!(metadata, "             (Proceeds: {total_1256_proceeds}")?;
+            writeln!(metadata, "          minus Basis): {total_1256_basis}")?;
             let lt = total_lt + total_1256.sixty();
             let st = total_st + total_1256.forty();
-            writeln!(metadata, "    After 60/40 splitting {lt} LT {st} ST")?;
+            writeln!(
+                metadata,
+                "Net after 60/40 splitting 1256 and adding to ST/LT: {lt} LT {st} ST"
+            )?;
             if st < Price::ZERO {
                 let total = lt + st;
                 if total >= Price::ZERO {
